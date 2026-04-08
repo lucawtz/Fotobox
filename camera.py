@@ -1,27 +1,37 @@
 import logging
 import os
+import subprocess
 import time
-from picamera2 import Picamera2
 
 logger = logging.getLogger(__name__)
 
 
 class Camera:
     def __init__(self):
-        self._cam = Picamera2()
-        config = self._cam.create_still_configuration()
-        self._cam.configure(config)
-        self._cam.start()
-        logger.info("Kamera initialisiert")
+        result = subprocess.run(
+            ["gphoto2", "--auto-detect"],
+            capture_output=True, text=True
+        )
+        if "usb" not in result.stdout:
+            raise RuntimeError("Keine Kamera gefunden. Kabel prüfen.")
+        logger.info("Kamera erkannt: %s", result.stdout.strip().splitlines()[-1])
 
     def capture(self, directory: str) -> str:
         os.makedirs(directory, exist_ok=True)
-        timestamp = int(time.time())
-        path = os.path.join(directory, f"foto_{timestamp}.jpg")
-        self._cam.capture_file(path)
+        filename = f"foto_{int(time.time())}.jpg"
+        path = os.path.join(directory, filename)
+
+        result = subprocess.run(
+            ["gphoto2", "--capture-image-and-download", "--filename", path],
+            capture_output=True, text=True
+        )
+
+        if result.returncode != 0:
+            logger.error("gphoto2 Fehler: %s", result.stderr)
+            raise RuntimeError(f"Aufnahme fehlgeschlagen: {result.stderr.strip()}")
+
         logger.info("Foto gespeichert: %s", path)
         return path
 
     def close(self):
-        self._cam.stop()
-        self._cam.close()
+        pass  # gphoto2 hat keine persistente Verbindung
