@@ -109,6 +109,11 @@ class UI:
                 return True
         return False
 
+    def space_pressed(self) -> bool:
+        """Leertaste als Button-Ersatz für Tests ohne Hardware."""
+        keys = pygame.key.get_pressed()
+        return bool(keys[pygame.K_SPACE])
+
     def close(self):
         self._live.close()
         pygame.quit()

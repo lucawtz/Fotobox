@@ -30,30 +30,46 @@ def main():
 
     try:
         button = PhotoButton(config.BUTTON_PIN)
+    except Exception as exc:
+        logger.warning("GPIO-Button nicht verfügbar (%s) — nur Leertaste", exc)
+
+    try:
         camera = Camera()
+    except Exception as exc:
+        logger.warning("Kamera nicht verfügbar (%s) — Foto-Aufnahme deaktiviert", exc)
+
+    try:
         ui = UI(config.CAPTURE_DEVICE)
+    except Exception as exc:
+        logger.error("UI konnte nicht gestartet werden: %s", exc)
+        sys.exit(1)
 
-        logger.info("Fotobox bereit — warte auf Knopfdruck")
+    logger.info("Fotobox bereit — Knopf oder Leertaste zum Auslösen")
 
+    try:
         while running:
             if ui.check_quit_events():
                 break
 
-            if button.is_pressed():
-                logger.info("Knopfdruck erkannt — starte Countdown")
+            triggered = ui.space_pressed()
+            if button and button.is_pressed():
+                triggered = True
+
+            if triggered:
+                logger.info("Auslöser — starte Countdown")
                 ui.show_countdown(config.COUNTDOWN_SECONDS)
-                path = camera.capture(config.PICTURE_PATH)
-                ui.add_photo(path)
-                button.wait_for_release()
+                if camera:
+                    path = camera.capture(config.PICTURE_PATH)
+                    ui.add_photo(path)
+                else:
+                    logger.info("Kein Foto — Kamera nicht verbunden")
+                if button:
+                    button.wait_for_release()
 
             ui.render()
 
-    except RuntimeError as exc:
-        logger.error("%s", exc)
-        sys.exit(1)
     except Exception as exc:
         logger.error("Unerwarteter Fehler: %s", exc, exc_info=True)
-        sys.exit(1)
     finally:
         if button:
             button.close()
