@@ -28,28 +28,18 @@ class Camera:
         filename = f"foto_{int(time.time())}.jpg"
         path = os.path.join(directory, filename)
 
-        # Shutter auslösen ohne Live-View zu verlassen
-        subprocess.run(
-            ["gphoto2", "--set-config", "eosremoterelease=Immediate"],
-            capture_output=True
-        )
-        time.sleep(0.1)
-        subprocess.run(
-            ["gphoto2", "--set-config", "eosremoterelease=None"],
-            capture_output=True
-        )
-
-        # Auf neue Datei warten und herunterladen (max. 15 Sekunden)
+        # Foto aufnehmen und herunterladen
         result = subprocess.run(
-            ["gphoto2", "--wait-event-and-download=FILEADDED", "--filename", path],
-            capture_output=True, text=True,
-            timeout=15
+            ["gphoto2", "--capture-image-and-download", "--filename", path],
+            capture_output=True, text=True
         )
 
         if result.returncode != 0:
             logger.error("gphoto2 Fehler: %s", result.stderr)
-            raise RuntimeError(f"Download fehlgeschlagen: {result.stderr.strip()}")
+            raise RuntimeError(f"Aufnahme fehlgeschlagen: {result.stderr.strip()}")
 
+        # reviewtime=0 → Kamera zeigt keine Vorschau → sofort bereit
+        subprocess.run(["gphoto2", "--set-config", "viewfinder=1"], capture_output=True)
         logger.info("Foto gespeichert: %s", path)
         return path
 
