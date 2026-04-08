@@ -28,18 +28,22 @@ class Camera:
         filename = f"foto_{int(time.time())}.jpg"
         path = os.path.join(directory, filename)
 
-        # Foto aufnehmen und herunterladen
+        # Live-View kurz pausieren — PTP-Capture braucht freien Bus
+        subprocess.run(["gphoto2", "--set-config", "viewfinder=0"], capture_output=True)
+        time.sleep(0.5)
+
         result = subprocess.run(
             ["gphoto2", "--capture-image-and-download", "--filename", path],
             capture_output=True, text=True
         )
 
+        # Live-View sofort wieder starten
+        subprocess.run(["gphoto2", "--set-config", "viewfinder=1"], capture_output=True)
+
         if result.returncode != 0:
             logger.error("gphoto2 Fehler: %s", result.stderr)
             raise RuntimeError(f"Aufnahme fehlgeschlagen: {result.stderr.strip()}")
 
-        # reviewtime=0 → Kamera zeigt keine Vorschau → sofort bereit
-        subprocess.run(["gphoto2", "--set-config", "viewfinder=1"], capture_output=True)
         logger.info("Foto gespeichert: %s", path)
         return path
 
