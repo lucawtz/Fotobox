@@ -36,6 +36,8 @@ class Camera:
 
     def _restart_liveview(self):
         time.sleep(1.5)  # Kamera braucht Zeit nach dem Auslösen
+        subprocess.run(["gphoto2", "--set-config", "viewfinder=0"], capture_output=True)
+        time.sleep(0.5)
         result = subprocess.run(
             ["gphoto2", "--set-config", "viewfinder=1"],
             capture_output=True, text=True
