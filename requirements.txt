@@ -1,0 +1,3 @@
+gpiozero
+picamera2
+pygame
