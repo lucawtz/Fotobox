@@ -35,11 +35,15 @@ class Camera:
         return path
 
     def _restart_liveview(self):
-        subprocess.run(
+        time.sleep(1.5)  # Kamera braucht Zeit nach dem Auslösen
+        result = subprocess.run(
             ["gphoto2", "--set-config", "viewfinder=1"],
             capture_output=True, text=True
         )
-        logger.info("Live-View neu gestartet")
+        if result.returncode == 0:
+            logger.info("Live-View neu gestartet")
+        else:
+            logger.warning("Live-View Neustart fehlgeschlagen: %s", result.stderr.strip())
 
     def close(self):
         pass  # gphoto2 hat keine persistente Verbindung
