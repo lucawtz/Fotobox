@@ -31,7 +31,7 @@ def main():
     try:
         button = PhotoButton(config.BUTTON_PIN)
         camera = Camera()
-        ui = UI(config.SCREEN_SIZE, config.LAYOUT_PATH)
+        ui = UI(config.CAPTURE_DEVICE)
 
         logger.info("Fotobox bereit — warte auf Knopfdruck")
 
@@ -43,14 +43,13 @@ def main():
                 logger.info("Knopfdruck erkannt — starte Countdown")
                 ui.show_countdown(config.COUNTDOWN_SECONDS)
                 path = camera.capture(config.PICTURE_PATH)
-                logger.info("Foto gespeichert: %s", path)
-                # Warten bis Knopf losgelassen, damit kein Doppel-Auslöser
+                ui.add_photo(path)
                 button.wait_for_release()
 
-            ui.show_overlay()
+            ui.render()
 
-    except FileNotFoundError as exc:
-        logger.error("Datei nicht gefunden: %s", exc)
+    except RuntimeError as exc:
+        logger.error("%s", exc)
         sys.exit(1)
     except Exception as exc:
         logger.error("Unerwarteter Fehler: %s", exc, exc_info=True)
