@@ -13,11 +13,11 @@ PICTURE_PATH = os.path.join(BASE_DIR, "Picture_Box")
 # Layout
 OVERLAY_PATH = os.path.join(BASE_DIR, "Layout", "Overlay_Allgemein.png")
 
-# Positionen der drei Polaroid-Foto-Slots (x, y, breite, höhe)
+# Positionen der drei Polaroid-Foto-Slots (x, y, breite, höhe) — alle gleich groß
 PHOTO_SLOTS = [
-    (200,  88, 449, 333),   # Polaroid links
-    (620, 119, 449, 309),   # Polaroid mitte
-    (1010, 105, 350, 317),  # Polaroid rechts
+    (249,  99, 350, 310),   # Polaroid links
+    (669, 118, 350, 310),   # Polaroid mitte
+    (1010, 108, 350, 310),  # Polaroid rechts
 ]
 
 # Live-View Bereich (x, y, breite, höhe)
