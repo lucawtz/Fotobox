@@ -39,7 +39,12 @@ def main():
         logger.warning("Kamera nicht verfügbar (%s) — Foto-Aufnahme deaktiviert", exc)
 
     try:
-        ui = UI(config.CAPTURE_DEVICE)
+        ui = UI(
+            config.CAPTURE_DEVICE,
+            config.OVERLAY_PATH,
+            config.PHOTO_SLOTS,
+            config.LIVE_VIEW_RECT,
+        )
     except Exception as exc:
         logger.error("UI konnte nicht gestartet werden: %s", exc)
         sys.exit(1)

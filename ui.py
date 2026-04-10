@@ -1,7 +1,7 @@
 import logging
 import threading
 from collections import deque
-from typing import Optional
+from typing import Optional, List, Tuple
 
 import cv2
 import numpy as np
@@ -9,20 +9,7 @@ import pygame
 
 logger = logging.getLogger(__name__)
 
-# ── Layout-Konstanten ──────────────────────────────────────────────────────────
-W, H         = 1920, 1080
-HEADER_H     = 60
-GALLERY_H    = 320
-LIVE_H       = H - HEADER_H - GALLERY_H   # 700
-SLOT_W       = W // 3                      # 640
-
-# ── Farben ─────────────────────────────────────────────────────────────────────
-C_BG         = (10,  10,  15)
-C_HEADER     = (20,  20,  40)
-C_SLOT_EMPTY = (30,  30,  50)
-C_ACCENT     = (220, 50,  80)
-C_TEXT       = (255, 255, 255)
-C_TEXT_DIM   = (140, 140, 160)
+W, H = 1920, 1080
 
 
 class _LiveReader:
@@ -56,18 +43,31 @@ class _LiveReader:
 
 
 class UI:
-    def __init__(self, capture_device: int):
+    def __init__(
+        self,
+        capture_device: int,
+        overlay_path: str,
+        photo_slots: List[Tuple[int, int, int, int]],
+        live_rect: Tuple[int, int, int, int],
+    ):
         pygame.init()
         self._screen = pygame.display.set_mode((W, H), pygame.FULLSCREEN)
         pygame.display.set_caption("Fotobox")
         pygame.mouse.set_visible(False)
 
-        self._font_title = pygame.font.SysFont("sans-serif", 32, bold=True)
-        self._font_count = pygame.font.SysFont("sans-serif", 260, bold=True)
-        self._font_empty = pygame.font.SysFont("sans-serif", 22)
+        try:
+            img = pygame.image.load(overlay_path).convert_alpha()
+            self._overlay = pygame.transform.smoothscale(img, (W, H))
+        except FileNotFoundError:
+            logger.error("Overlay nicht gefunden: %s", overlay_path)
+            raise
 
-        # Letzte 3 Fotos (Pfad → gecachte Surface)
-        self._gallery: deque = deque(maxlen=3)
+        self._photo_slots = photo_slots
+        self._live_rect = live_rect
+
+        self._font_count = pygame.font.SysFont("sans-serif", 260, bold=True)
+
+        self._gallery: deque = deque(maxlen=len(photo_slots))
         self._cache: dict = {}
 
         self._live = _LiveReader(capture_device)
@@ -76,24 +76,23 @@ class UI:
     # ── Öffentliche API ────────────────────────────────────────────────────────
 
     def add_photo(self, path: str):
-        """Foto zur Galerie hinzufügen und Surface cachen."""
         self._gallery.append(path)
         try:
             img = pygame.image.load(path).convert()
-            self._cache[path] = pygame.transform.smoothscale(img, (SLOT_W, GALLERY_H))
+            # Auf Slot-Größe skalieren (erster Slot als Referenz)
+            sw, sh = self._photo_slots[0][2], self._photo_slots[0][3]
+            self._cache[path] = self._scale_to_fill(img, sw, sh)
         except Exception as exc:
-            logger.warning("Foto konnte nicht geladen werden (%s): %s", path, exc)
+            logger.warning("Foto konnte nicht geladen werden: %s", exc)
 
     def render(self):
-        """Einen Frame zeichnen."""
-        self._screen.fill(C_BG)
-        self._draw_header()
-        self._draw_gallery()
-        self._draw_live()
+        self._screen.fill((0, 0, 0))
+        self._screen.blit(self._overlay, (0, 0))   # Overlay als Hintergrund
+        self._draw_live()                            # Live-View in schwarzen Bereich
+        self._draw_photos()                          # Fotos in Polaroid-Slots
         pygame.display.flip()
 
     def show_countdown(self, seconds: int):
-        """Countdown über Live-View anzeigen — Live-View läuft weiter."""
         for i in range(seconds, 0, -1):
             deadline = pygame.time.get_ticks() + 1000
             while pygame.time.get_ticks() < deadline:
@@ -110,7 +109,6 @@ class UI:
         return False
 
     def space_pressed(self) -> bool:
-        """Leertaste als Button-Ersatz für Tests ohne Hardware."""
         keys = pygame.key.get_pressed()
         return bool(keys[pygame.K_SPACE])
 
@@ -120,60 +118,51 @@ class UI:
 
     # ── Zeichen-Helfer ─────────────────────────────────────────────────────────
 
-    def _draw_header(self):
-        pygame.draw.rect(self._screen, C_HEADER, (0, 0, W, HEADER_H))
-        pygame.draw.rect(self._screen, C_ACCENT, (0, HEADER_H - 3, W, 3))
-        lbl = self._font_title.render("FOTOBOX", True, C_TEXT)
-        self._screen.blit(lbl, (W // 2 - lbl.get_width() // 2,
-                                HEADER_H // 2 - lbl.get_height() // 2))
-
-    def _draw_gallery(self):
-        photos = list(self._gallery)
-        for i in range(3):
-            x, y = i * SLOT_W, HEADER_H
-            slot = pygame.Rect(x, y, SLOT_W, GALLERY_H)
-            if i < len(photos):
-                surf = self._cache.get(photos[i])
-                if surf:
-                    self._screen.blit(surf, (x, y))
-            else:
-                pygame.draw.rect(self._screen, C_SLOT_EMPTY, slot)
-                lbl = self._font_empty.render("Kein Foto", True, C_TEXT_DIM)
-                self._screen.blit(lbl, (x + SLOT_W // 2 - lbl.get_width() // 2,
-                                        y + GALLERY_H // 2 - lbl.get_height() // 2))
-            # Trennlinie zwischen Slots
-            pygame.draw.rect(self._screen, C_BG, slot, 2)
-
     def _draw_live(self):
-        y0 = HEADER_H + GALLERY_H
+        x, y, w, h = self._live_rect
         frame = self._live.latest()
         if frame is not None:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             fh, fw = frame.shape[:2]
-            scale = min(W / fw, LIVE_H / fh)
+            scale = min(w / fw, h / fh)
             nw, nh = int(fw * scale), int(fh * scale)
             frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
             surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
-            # Zentriert im Live-Bereich
-            self._screen.blit(surf, ((W - nw) // 2, y0 + (LIVE_H - nh) // 2))
-        else:
-            pygame.draw.rect(self._screen, C_SLOT_EMPTY, (0, y0, W, LIVE_H))
-            lbl = self._font_title.render("Warte auf Kamera...", True, C_TEXT_DIM)
-            self._screen.blit(lbl, (W // 2 - lbl.get_width() // 2,
-                                    y0 + LIVE_H // 2 - lbl.get_height() // 2))
+            self._screen.blit(surf, (x + (w - nw) // 2, y + (h - nh) // 2))
+
+    def _draw_photos(self):
+        photos = list(self._gallery)
+        for i, (sx, sy, sw, sh) in enumerate(self._photo_slots):
+            if i < len(photos):
+                surf = self._cache.get(photos[i])
+                if surf:
+                    # Auf aktuellen Slot skalieren
+                    scaled = pygame.transform.smoothscale(surf, (sw, sh))
+                    self._screen.blit(scaled, (sx, sy))
 
     def _draw_countdown_frame(self, number: int):
-        """Live-View + abgedunkeltes Overlay + Countdown-Zahl."""
-        self._screen.fill(C_BG)
-        self._draw_header()
-        self._draw_gallery()
+        self._screen.fill((0, 0, 0))
+        self._screen.blit(self._overlay, (0, 0))
         self._draw_live()
+        self._draw_photos()
         # Abdunkeln
         dim = pygame.Surface((W, H), pygame.SRCALPHA)
         dim.fill((0, 0, 0, 160))
         self._screen.blit(dim, (0, 0))
-        # Zahl
-        lbl = self._font_count.render(str(number), True, C_TEXT)
+        # Countdown-Zahl
+        lbl = self._font_count.render(str(number), True, (255, 255, 255))
         self._screen.blit(lbl, (W // 2 - lbl.get_width() // 2,
                                 H // 2 - lbl.get_height() // 2))
         pygame.display.flip()
+
+    @staticmethod
+    def _scale_to_fill(surf: pygame.Surface, w: int, h: int) -> pygame.Surface:
+        """Skaliert und beschneidet auf exakte Größe (kein Letterboxing)."""
+        sw, sh = surf.get_size()
+        scale = max(w / sw, h / sh)
+        nw, nh = int(sw * scale), int(sh * scale)
+        scaled = pygame.transform.smoothscale(surf, (nw, nh))
+        # Mitte ausschneiden
+        x = (nw - w) // 2
+        y = (nh - h) // 2
+        return scaled.subsurface(pygame.Rect(x, y, w, h)).copy()
