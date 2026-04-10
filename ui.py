@@ -1,6 +1,5 @@
 import logging
 import math
-import random
 import threading
 from collections import deque
 from typing import List, Optional, Tuple
@@ -14,17 +13,16 @@ logger = logging.getLogger(__name__)
 W, H = 1920, 1080
 
 # ── Farben ─────────────────────────────────────────────────────────────────────
-WOOD_BASE   = ( 85,  55,  28)
 POLAROID    = (248, 244, 235)
-PIN_RED     = (210,  45,  35)
-PIN_LIGHT   = (240,  80,  70)
-WIRE_COLOR  = ( 55,  35,  15)
-ACCENT      = (190, 145,  65)
-BTN_BG      = ( 45,  28,  12)
-BTN_BORDER  = (175, 135,  60)
-TEXT_LIGHT  = (230, 205, 155)
-TEXT_DIM    = (160, 130,  80)
-LIVE_BORDER = ( 60,  40,  18)
+PIN_RED     = (198,  38,  28)
+PIN_HIGH    = (240,  80,  65)
+PIN_DARK    = (130,  20,  12)
+WIRE_COL    = ( 48,  30,  12)
+ACCENT      = (185, 140,  58)
+BTN_BG      = ( 38,  24,  10)
+BTN_BORDER  = (165, 125,  52)
+TEXT_LIGHT  = (235, 208, 158)
+TEXT_DIM    = (155, 120,  65)
 
 
 class _LiveReader:
@@ -58,10 +56,9 @@ class _LiveReader:
 
 
 class UI:
-    # Polaroid-Rahmen Abmessungen
-    _FW, _FH = 390, 450         # Gesamt-Rahmen
-    _PW, _PH = 350, 310         # Foto-Bereich
-    _PX, _PY = 20, 25           # Foto-Offset im Rahmen
+    _FW, _FH = 390, 450     # Polaroid-Rahmen gesamt
+    _PW, _PH = 350, 310     # Foto-Bereich
+    _PX, _PY =  20,  25     # Foto-Offset im Rahmen
 
     def __init__(
         self,
@@ -74,21 +71,21 @@ class UI:
         pygame.display.set_caption("Fotobox")
         pygame.mouse.set_visible(False)
 
-        self._frames = polaroid_frames   # [(cx, cy, angle), ...]
+        self._frames   = polaroid_frames
         self._live_rect = live_rect
 
-        self._font_btn    = pygame.font.SysFont("sans-serif", 28, bold=True)
-        self._font_count  = pygame.font.SysFont("sans-serif", 260, bold=True)
-        self._font_small  = pygame.font.SysFont("sans-serif", 20)
+        self._font_btn   = pygame.font.SysFont("sans-serif", 28, bold=True)
+        self._font_count = pygame.font.SysFont("sans-serif", 260, bold=True)
 
         self._gallery: deque = deque(maxlen=len(polaroid_frames))
         self._cache: dict = {}
 
-        # Hintergrund einmalig vorrendern
-        self._bg = self._build_background()
+        logger.info("Generiere Holz-Textur …")
+        self._bg = self._make_wood()
+        self._draw_static_elements(self._bg)
+        logger.info("UI initialisiert")
 
         self._live = _LiveReader(capture_device)
-        logger.info("UI initialisiert")
 
     # ── Öffentliche API ────────────────────────────────────────────────────────
 
@@ -129,90 +126,162 @@ class UI:
         self._live.close()
         pygame.quit()
 
-    # ── Hintergrund vorrendern ─────────────────────────────────────────────────
+    # ── Holz-Textur (numpy) ────────────────────────────────────────────────────
 
-    def _build_background(self) -> pygame.Surface:
-        surf = pygame.Surface((W, H))
+    @staticmethod
+    def _make_wood() -> pygame.Surface:
+        rng = np.random.RandomState(17)
+        px = np.zeros((H, W, 3), dtype=np.float32)
 
-        # Holz-Maserung
-        rng = random.Random(7)
-        surf.fill(WOOD_BASE)
-        for y in range(0, H, 5):
-            v = rng.randint(-22, 22)
-            r = max(0, min(255, WOOD_BASE[0] + v))
-            g = max(0, min(255, WOOD_BASE[1] + v))
-            b = max(0, min(255, WOOD_BASE[2] + v))
-            t = rng.choice([1, 1, 2, 3])
-            dy = rng.randint(-4, 4)
-            pygame.draw.line(surf, (r, g, b), (0, y), (W, y + dy), t)
+        # Horizontale Bretter
+        y = 0
+        while y < H:
+            ph = int(rng.uniform(130, 195))
+            y_end = min(y + ph, H)
 
-        # Senkrechte Bretter-Trennlinien
-        for x in range(0, W, rng.randint(160, 260)):
-            pygame.draw.line(surf, (50, 32, 14), (x, 0), (x, H), 2)
+            br = float(82 + rng.randint(-14, 14))
+            bg = float(53 + rng.randint(-10, 10))
+            bb = float(27 + rng.randint(-7,   7))
 
-        # Horizontaler Draht für die Polaroids
-        wire_y = 60
-        pygame.draw.line(surf, WIRE_COLOR, (120, wire_y), (W - 120, wire_y), 3)
+            x_arr = np.arange(W, dtype=np.float32)
+            for row in range(y, y_end):
+                local = (row - y) / max(ph - 1, 1)
+                # Zwei überlagerte Sinuswellen für Maserung
+                f1 = float(rng.uniform(0.04, 0.09))
+                f2 = f1 * float(rng.uniform(1.9, 2.4))
+                ph1 = float(rng.uniform(0, 20))
+                ph2 = float(rng.uniform(0, 10))
+                grain = (np.sin(row * f1 + x_arr * 0.0025 + ph1) * 14
+                       + np.sin(row * f2 + x_arr * 0.0009 + ph2) *  6
+                       + np.sin(x_arr * 0.018 + row * 0.004)      *  3)
+                # Randschatten innerhalb des Bretts
+                edge = math.sin(local * math.pi) * 10 - 5
+                px[row, :, 0] = br + grain + edge
+                px[row, :, 1] = bg + grain * 0.62 + edge * 0.62
+                px[row, :, 2] = bb + grain * 0.30 + edge * 0.30
 
-        # Linke Seitenleiste
+            # Fuge zwischen Brettern
+            gap_s = max(0, y_end - 3)
+            px[gap_s:y_end, :] = [24, 14,  6]
+            y = y_end
+
+        # Holzknoten
+        x_arr2 = np.arange(W, dtype=np.float32)
+        for _ in range(int(rng.randint(4, 7))):
+            kx = float(rng.randint(120, W - 120))
+            ky = float(rng.randint(40,  H - 40))
+            kr = float(rng.randint(22, 48))
+            y_arr = np.arange(H, dtype=np.float32).reshape(-1, 1)
+            dist = np.sqrt((x_arr2 - kx) ** 2 + (y_arr - ky) ** 2)
+            ring   = np.where((dist < kr) & (dist > kr * 0.45), -22.0, 0.0)
+            center = np.where(dist < kr * 0.45, -38.0, 0.0)
+            total  = ring + center
+            px[:, :, 0] = np.clip(px[:, :, 0] + total,        0, 255)
+            px[:, :, 1] = np.clip(px[:, :, 1] + total * 0.68, 0, 255)
+            px[:, :, 2] = np.clip(px[:, :, 2] + total * 0.38, 0, 255)
+
+        # Vignette
+        y_a = np.linspace(-1, 1, H, dtype=np.float32).reshape(-1, 1)
+        x_a = np.linspace(-1, 1, W, dtype=np.float32).reshape(1, -1)
+        vig = np.clip((x_a ** 2 + y_a ** 2) * 38 - 8, 0, 55)
+        for c in range(3):
+            px[:, :, c] = np.clip(px[:, :, c] - vig, 0, 255)
+
+        arr = np.clip(px, 0, 255).astype(np.uint8)
+        return pygame.surfarray.make_surface(arr.swapaxes(0, 1))
+
+    # ── Statische Elemente einmalig auf Hintergrund zeichnen ───────────────────
+
+    def _draw_static_elements(self, surf: pygame.Surface):
+        self._draw_wire(surf)
         self._draw_left_sidebar(surf)
-
-        # Rechte Seitenleiste
         self._draw_right_sidebar(surf)
 
-        return surf
+    def _pin_position(self, cx: int, cy: int, angle: float) -> Tuple[int, int]:
+        """Mitte-oben des Polaroid-Rahmens nach Rotation."""
+        rad = math.radians(angle)
+        return (int(cx - self._FH / 2 * math.sin(rad)),
+                int(cy - self._FH / 2 * math.cos(rad)))
+
+    def _draw_wire(self, surf: pygame.Surface):
+        """Durchhängender Draht zwischen den Pin-Positionen."""
+        anchors = [(80, 55)] + \
+                  [self._pin_position(cx, cy, a) for cx, cy, a in self._frames] + \
+                  [(W - 80, 55)]
+        for i in range(len(anchors) - 1):
+            p1, p2 = anchors[i], anchors[i + 1]
+            prev = p1
+            segs = 30
+            for j in range(1, segs + 1):
+                t  = j / segs
+                x  = int(p1[0] + t * (p2[0] - p1[0]))
+                sag = int(18 * 4 * t * (1 - t))
+                y  = int(p1[1] + t * (p2[1] - p1[1]) + sag)
+                pygame.draw.line(surf, WIRE_COL, prev, (x, y), 2)
+                prev = (x, y)
 
     def _draw_left_sidebar(self, surf: pygame.Surface):
+        font = self._font_btn
         cx = 72
 
-        # Logo-Kreis
-        pygame.draw.circle(surf, (20, 15, 8), (cx, 95), 55)
-        pygame.draw.circle(surf, ACCENT, (cx, 95), 55, 2)
-        lbl = self._font_btn.render("LOGO", True, TEXT_DIM)
-        surf.blit(lbl, (cx - lbl.get_width() // 2, 95 - lbl.get_height() // 2))
+        # Logo
+        pygame.draw.circle(surf, (18, 12,  6), (cx, 100), 56)
+        pygame.draw.circle(surf, ACCENT,       (cx, 100), 56, 2)
+        lbl = font.render("LOGO", True, TEXT_DIM)
+        surf.blit(lbl, (cx - lbl.get_width() // 2, 100 - lbl.get_height() // 2))
 
-        # QR-Code Platzhalter
-        qr_x, qr_y, qr_s = cx - 42, 200, 84
-        pygame.draw.rect(surf, (240, 235, 220), (qr_x, qr_y, qr_s, qr_s))
-        # Einfaches QR-Gitter
-        cell = qr_s // 7
+        # QR-Code
+        qx, qy, qs = cx - 40, 205, 80
+        pygame.draw.rect(surf, (238, 232, 218), (qx, qy, qs, qs))
+        cell = qs // 7
         for row in range(7):
             for col in range(7):
-                if (row + col) % 2 == 0 or (row < 3 and col < 3) or \
-                   (row < 3 and col > 3) or (row > 3 and col < 3):
-                    pygame.draw.rect(surf, (20, 15, 8),
-                                     (qr_x + col * cell + 2, qr_y + row * cell + 2,
-                                      cell - 2, cell - 2))
+                dark = (
+                    (row < 3 and col < 3) or (row < 3 and col > 3) or
+                    (row > 3 and col < 3) or (row + col) % 3 == 0
+                )
+                if dark:
+                    pygame.draw.rect(surf, (15, 10, 5),
+                                     (qx + col * cell + 1, qy + row * cell + 1,
+                                      cell - 1, cell - 1))
 
-        # Instagram-Icon (stilisiertes Quadrat + Kreis)
-        ig_x, ig_y = cx - 30, 340
-        pygame.draw.rect(surf, (0, 0, 0, 0), (ig_x, ig_y, 60, 60))
-        # Gradient simulieren via mehrere Rechtecke
-        for i, color in enumerate([(193, 53, 132), (225, 48, 108),
-                                    (253, 29, 29), (245, 96, 64), (250, 175, 51)]):
-            pygame.draw.rect(surf, color,
-                             (ig_x + i * 2, ig_y + i * 2, 60 - i * 4, 60 - i * 4),
-                             border_radius=12 - i)
-        pygame.draw.circle(surf, (255, 255, 255), (cx, ig_y + 30), 16, 3)
-        pygame.draw.circle(surf, (255, 255, 255), (cx + 18, ig_y + 12), 4)
+        # Instagram-Icon
+        ig_cx, ig_cy = cx, 355
+        r = 30
+        # Äußerer Kreis-Gradient simuliert
+        for i, col in enumerate([(193, 53, 132), (220, 48, 108),
+                                  (253, 29,  29), (245, 96,  64), (250, 175, 51)]):
+            pygame.draw.circle(surf, col, (ig_cx, ig_cy), r - i * 2)
+        pygame.draw.circle(surf, (255, 255, 255), (ig_cx, ig_cy), 14, 3)
+        pygame.draw.circle(surf, (255, 255, 255), (ig_cx + 14, ig_cy - 14), 4)
 
     def _draw_right_sidebar(self, surf: pygame.Surface):
-        lx = W - 370
+        lx = W - 365
         for i, label in enumerate(["Foto", "Collage", "Filter"]):
-            y = 565 + i * 145
-            pygame.draw.rect(surf, BTN_BG, (lx, y, 340, 75), border_radius=6)
-            pygame.draw.rect(surf, BTN_BORDER, (lx, y, 340, 75), 2, border_radius=6)
+            y = 540 + i * 148
+            # Schatten
+            pygame.draw.rect(surf, (15, 9, 4), (lx + 4, y + 4, 335, 76),
+                             border_radius=7)
+            # Button
+            pygame.draw.rect(surf, BTN_BG,     (lx, y, 335, 76), border_radius=7)
+            pygame.draw.rect(surf, BTN_BORDER, (lx, y, 335, 76), 2, border_radius=7)
+            # Highlight-Linie oben
+            pygame.draw.line(surf, (200, 158, 72),
+                             (lx + 12, y + 2), (lx + 323, y + 2))
             txt = self._font_btn.render(f"{label}  ▶", True, TEXT_LIGHT)
-            surf.blit(txt, (lx + 170 - txt.get_width() // 2,
-                            y + 37 - txt.get_height() // 2))
+            surf.blit(txt, (lx + 167 - txt.get_width() // 2,
+                            y + 38 - txt.get_height() // 2))
 
-    # ── Laufzeit-Rendering ─────────────────────────────────────────────────────
+    # ── Live-View ──────────────────────────────────────────────────────────────
 
     def _draw_live(self):
         x, y, w, h = self._live_rect
-        # Rahmen
-        pygame.draw.rect(self._screen, LIVE_BORDER, (x - 4, y - 4, w + 8, h + 8),
+        # Holz-Rahmen (mehrschichtig für Tiefe)
+        pygame.draw.rect(self._screen, (20, 12,  5), (x - 8, y - 8, w + 16, h + 16),
                          border_radius=4)
+        pygame.draw.rect(self._screen, (60, 38, 16), (x - 4, y - 4, w + 8,  h + 8),
+                         border_radius=3)
+
         frame = self._live.latest()
         if frame is not None:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -220,13 +289,15 @@ class UI:
             scale = min(w / fw, h / fh)
             nw, nh = int(fw * scale), int(fh * scale)
             frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
-            surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+            surf  = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
             self._screen.blit(surf, (x + (w - nw) // 2, y + (h - nh) // 2))
         else:
-            pygame.draw.rect(self._screen, (10, 10, 10), (x, y, w, h))
+            pygame.draw.rect(self._screen, (8, 8, 8), (x, y, w, h))
             lbl = self._font_btn.render("Warte auf Kamera…", True, TEXT_DIM)
             self._screen.blit(lbl, (x + w // 2 - lbl.get_width() // 2,
                                     y + h // 2 - lbl.get_height() // 2))
+
+    # ── Polaroid-Rahmen ────────────────────────────────────────────────────────
 
     def _draw_polaroids(self):
         photos = list(self._gallery)
@@ -236,56 +307,82 @@ class UI:
 
     def _draw_polaroid(self, cx: int, cy: int, angle: float,
                        photo: Optional[pygame.Surface]):
-        # Rahmen-Surface
-        frame_surf = pygame.Surface((self._FW, self._FH), pygame.SRCALPHA)
+        # ── Schatten (mehrere Schichten = weicher Schatten) ──────────────
+        for off, alpha in ((12, 28), (9, 42), (6, 56), (3, 70)):
+            sh = pygame.Surface((self._FW, self._FH), pygame.SRCALPHA)
+            pygame.draw.rect(sh, (0, 0, 0, alpha), (0, 0, self._FW, self._FH),
+                             border_radius=3)
+            sr = pygame.transform.rotate(sh, angle)
+            self._screen.blit(sr, sr.get_rect(center=(cx + off, cy + off)))
 
-        # Schatten
-        shadow = pygame.Surface((self._FW, self._FH), pygame.SRCALPHA)
-        pygame.draw.rect(shadow, (0, 0, 0, 90),
-                         (0, 0, self._FW, self._FH), border_radius=3)
-        shadow_rot = pygame.transform.rotate(shadow, angle)
-        sr = shadow_rot.get_rect(center=(cx + 8, cy + 8))
-        self._screen.blit(shadow_rot, sr)
+        # ── Rahmen-Surface ───────────────────────────────────────────────
+        fs = pygame.Surface((self._FW, self._FH), pygame.SRCALPHA)
 
-        # Weißer Rahmen
-        pygame.draw.rect(frame_surf, POLAROID, (0, 0, self._FW, self._FH),
-                         border_radius=3)
+        # Weißer Polaroid-Körper mit leicht vergilbtem Ton
+        pygame.draw.rect(fs, POLAROID, (0, 0, self._FW, self._FH), border_radius=3)
 
-        # Foto oder schwarzer Platzhalter
+        # Papier-Textur (feine Linien simulieren Fasern)
+        for row in range(0, self._FH, 4):
+            alpha_t = 8 if row % 8 == 0 else 4
+            pygame.draw.line(fs, (180, 175, 165, alpha_t),
+                             (0, row), (self._FW, row))
+
+        # Innenschatten um Foto-Bereich
+        for i in range(4):
+            shade = 60 - i * 12
+            pygame.draw.rect(fs, (0, 0, 0, shade),
+                             (self._PX - i, self._PY - i,
+                              self._PW + i * 2, self._PH + i * 2), 1)
+
+        # Foto oder Platzhalter
         if photo:
-            frame_surf.blit(photo, (self._PX, self._PY))
+            fs.blit(photo, (self._PX, self._PY))
         else:
-            pygame.draw.rect(frame_surf, (12, 12, 12),
+            pygame.draw.rect(fs, (10, 10, 10),
                              (self._PX, self._PY, self._PW, self._PH))
+            # Kamera-Icon-Platzhalter
+            icx = self._PX + self._PW // 2
+            icy = self._PY + self._PH // 2
+            pygame.draw.rect(fs, (35, 35, 35),
+                             (icx - 35, icy - 22, 70, 44), border_radius=5)
+            pygame.draw.circle(fs, (55, 55, 55), (icx, icy), 14)
+            pygame.draw.circle(fs, (28, 28, 28), (icx, icy), 9)
+            pygame.draw.circle(fs, (70, 70, 70), (icx - 25, icy - 14), 5)
 
-        # Rahmen rotieren und zeichnen
-        rotated = pygame.transform.rotate(frame_surf, angle)
-        rr = rotated.get_rect(center=(cx, cy))
-        self._screen.blit(rotated, rr)
+        # Rotieren und blиtten
+        rotated = pygame.transform.rotate(fs, angle)
+        self._screen.blit(rotated, rotated.get_rect(center=(cx, cy)))
 
-        # Roter Pin oben an der Befestigungsstelle
-        rad = math.radians(angle)
-        pin_x = int(cx - (self._FH / 2) * math.sin(rad))
-        pin_y = int(cy - (self._FH / 2) * math.cos(rad))
-        pygame.draw.circle(self._screen, PIN_RED, (pin_x, pin_y), 11)
-        pygame.draw.circle(self._screen, PIN_LIGHT, (pin_x - 3, pin_y - 3), 5)
+        # ── Realistischer Pin ────────────────────────────────────────────
+        px, py = self._pin_position(cx, cy, angle)
+        # Stift-Körper
+        pygame.draw.circle(self._screen, PIN_DARK,  (px,     py    ), 13)
+        pygame.draw.circle(self._screen, PIN_RED,   (px,     py    ), 11)
+        pygame.draw.circle(self._screen, (220, 55, 45), (px, py    ),  8)
+        # Glanz-Highlight
+        pygame.draw.circle(self._screen, PIN_HIGH,  (px - 3, py - 3),  4)
+        pygame.draw.circle(self._screen, (255, 200, 195), (px - 4, py - 4), 2)
+
+    # ── Countdown ─────────────────────────────────────────────────────────────
 
     def _draw_countdown_frame(self, number: int):
         self._screen.blit(self._bg, (0, 0))
         self._draw_live()
         self._draw_polaroids()
         dim = pygame.Surface((W, H), pygame.SRCALPHA)
-        dim.fill((0, 0, 0, 160))
+        dim.fill((0, 0, 0, 165))
         self._screen.blit(dim, (0, 0))
         lbl = self._font_count.render(str(number), True, (255, 255, 255))
         self._screen.blit(lbl, (W // 2 - lbl.get_width() // 2,
                                 H // 2 - lbl.get_height() // 2))
         pygame.display.flip()
 
+    # ── Hilfsmethoden ─────────────────────────────────────────────────────────
+
     @staticmethod
     def _scale_to_fill(surf: pygame.Surface, w: int, h: int) -> pygame.Surface:
         sw, sh = surf.get_size()
-        scale = max(w / sw, h / sh)
+        scale  = max(w / sw, h / sh)
         nw, nh = int(sw * scale), int(sh * scale)
         scaled = pygame.transform.smoothscale(surf, (nw, nh))
         x = (nw - w) // 2
