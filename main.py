@@ -41,8 +41,7 @@ def main():
     try:
         ui = UI(
             config.CAPTURE_DEVICE,
-            config.OVERLAY_PATH,
-            config.PHOTO_SLOTS,
+            config.POLAROID_FRAMES,
             config.LIVE_VIEW_RECT,
         )
     except Exception as exc:
