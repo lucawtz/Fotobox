@@ -105,6 +105,7 @@ class UI:
                 self._draw_countdown_frame(i)
                 pygame.event.pump()
                 pygame.time.wait(30)
+        self.render()
 
     def check_quit_events(self) -> bool:
         for event in pygame.event.get():
