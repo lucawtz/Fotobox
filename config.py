@@ -20,8 +20,8 @@ POLAROID_FRAMES = [
     (1633, 257,  12),    # rechts
 ]
 
-# Größe des schwarzen Foto-Bereichs je Polaroid (aus minAreaRect: 317×302)
-POLAROID_PHOTO_SIZE = (310, 295)
+# Größe des schwarzen Foto-Bereichs je Polaroid — etwas größer als Slot (317×302) damit kein Rand sichtbar
+POLAROID_PHOTO_SIZE = (322, 308)
 
-# Live-View Bereich — 40px Abstand vom unteren Bildschirmrand
-LIVE_VIEW_RECT = (560, 601, 800, 439)
+# Live-View Bereich — horizontal auf 860px verbreitert, zentriert bei x=960
+LIVE_VIEW_RECT = (530, 601, 860, 450)
