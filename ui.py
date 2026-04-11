@@ -108,7 +108,7 @@ class UI:
 
     def show_countdown(self, seconds: int, on_trigger=None):
         for i in range(seconds, 0, -1):
-            if i == 2 and on_trigger:
+            if i == 3 and on_trigger:
                 threading.Thread(target=on_trigger, daemon=True).start()
             deadline = pygame.time.get_ticks() + 1000
             while pygame.time.get_ticks() < deadline:
