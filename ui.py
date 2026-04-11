@@ -63,7 +63,7 @@ class UI:
         self._PW, self._PH = photo_size
 
         self._font_btn   = pygame.font.SysFont("sans-serif", 28, bold=True)
-        self._font_count = pygame.font.SysFont("sans-serif", 260, bold=True)
+        self._font_count = pygame.font.SysFont("sans-serif", 200, bold=True)
 
         self._gallery: deque = deque(maxlen=len(polaroid_frames))
         self._cache: dict = {}
@@ -187,12 +187,13 @@ class UI:
         self._screen.blit(self._bg, (0, 0))
         self._draw_live()
         self._draw_polaroids()
-        dim = pygame.Surface((W, H), pygame.SRCALPHA)
+        lx, ly, lw, lh = self._live_rect
+        dim = pygame.Surface((lw, lh), pygame.SRCALPHA)
         dim.fill((0, 0, 0, 165))
-        self._screen.blit(dim, (0, 0))
+        self._screen.blit(dim, (lx, ly))
         lbl = self._font_count.render(str(number), True, (255, 255, 255))
-        self._screen.blit(lbl, (W // 2 - lbl.get_width() // 2,
-                                H // 2 - lbl.get_height() // 2))
+        self._screen.blit(lbl, (lx + lw // 2 - lbl.get_width() // 2,
+                                ly + lh // 2 - lbl.get_height() // 2))
         pygame.display.flip()
 
     # ── Hilfsmethoden ─────────────────────────────────────────────────────────
