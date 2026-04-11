@@ -139,11 +139,16 @@ class UI:
         if frame is not None:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             fh, fw = frame.shape[:2]
-            scale = min(w / fw, h / fh)
+            # Fill: skalieren bis Breite/Höhe voll ausgenutzt, dann mittig zuschneiden
+            scale = max(w / fw, h / fh)
             nw, nh = int(fw * scale), int(fh * scale)
             frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+            # Zuschnitt auf Rect-Größe
+            cx = (nw - w) // 2
+            cy = (nh - h) // 2
+            frame = frame[cy:cy + h, cx:cx + w]
             surf  = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
-            self._screen.blit(surf, (x + (w - nw) // 2, y + (h - nh) // 2))
+            self._screen.blit(surf, (x, y))
         else:
             # Kein draw.rect — schwarzer Kasten kommt aus dem Overlay
             lbl = self._font_btn.render("Warte auf Kamera…", True, TEXT_DIM)
