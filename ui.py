@@ -67,9 +67,10 @@ class UI:
         self._font_cheese = pygame.font.SysFont("sans-serif", 110, bold=True)
 
         self._gallery: deque = deque(maxlen=len(polaroid_frames))
-        self._cache: dict = {}
-        self._fade_start: dict = {}   # path -> ticks beim Hinzufügen
-        self._FADE_MS = 1500          # Einblend-Dauer in Millisekunden
+        self._cache: dict = {}       # path -> skaliertes Surface
+        self._rot_cache: dict = {}   # (path, angle) -> rotiertes SRCALPHA Surface
+        self._fade_start: dict = {}  # path -> ticks beim Hinzufügen
+        self._FADE_MS = 1500         # Einblend-Dauer in Millisekunden
 
         if overlay_path:
             logger.info("Lade Overlay: %s", overlay_path)
@@ -88,8 +89,14 @@ class UI:
         self._gallery.append(path)
         try:
             img = pygame.image.load(path).convert()
-            self._cache[path] = self._scale_to_fill(img, self._PW, self._PH)
+            scaled = self._scale_to_fill(img, self._PW, self._PH)
+            self._cache[path] = scaled
             self._fade_start[path] = pygame.time.get_ticks()
+            # Rotierte Surfaces vorab berechnen (einmalig pro Foto)
+            for _, _, angle in self._frames:
+                surf = pygame.Surface((self._PW, self._PH), pygame.SRCALPHA)
+                surf.blit(scaled, (0, 0))
+                self._rot_cache[(path, angle)] = pygame.transform.rotate(surf, angle)
         except Exception as exc:
             logger.warning("Foto konnte nicht geladen werden: %s", exc)
 
@@ -123,6 +130,12 @@ class UI:
 
     def space_pressed(self) -> bool:
         return bool(pygame.key.get_pressed()[pygame.K_SPACE])
+
+    def wait_for_space_release(self):
+        """Wartet bis die Leertaste losgelassen wird — verhindert Doppel-Trigger."""
+        while pygame.key.get_pressed()[pygame.K_SPACE]:
+            pygame.event.pump()
+            pygame.time.wait(30)
 
     def close(self):
         self._live.close()
@@ -167,8 +180,8 @@ class UI:
                 photo = self._cache.get(path)
                 alpha = self._photo_alpha(path)
             else:
-                photo, alpha = None, 255
-            self._draw_polaroid(cx, cy, angle, photo, alpha)
+                path, photo, alpha = None, None, 255
+            self._draw_polaroid(cx, cy, angle, path, photo, alpha)
 
     def _photo_alpha(self, path: str) -> int:
         """Berechnet aktuellen Alpha-Wert für Fade-in (0–255)."""
@@ -178,14 +191,20 @@ class UI:
         return min(255, int(elapsed / self._FADE_MS * 255))
 
     def _draw_polaroid(self, cx: int, cy: int, angle: float,
-                       photo: Optional[pygame.Surface], alpha: int = 255):
+                       path: Optional[str], photo: Optional[pygame.Surface],
+                       alpha: int = 255):
         if photo is None:
             return  # Schwarzer Platzhalter aus dem Overlay bleibt sichtbar
-        # SRCALPHA: Rotations-Ecken transparent + Fade-in über alpha
-        surf = pygame.Surface((self._PW, self._PH), pygame.SRCALPHA)
-        surf.blit(photo, (0, 0))
-        surf.set_alpha(alpha)
-        rotated = pygame.transform.rotate(surf, angle)
+        # Gecachte rotierte Surface verwenden (einmalig berechnet in add_photo)
+        rotated = self._rot_cache.get((path, angle))
+        if rotated is None:
+            surf = pygame.Surface((self._PW, self._PH), pygame.SRCALPHA)
+            surf.blit(photo, (0, 0))
+            rotated = pygame.transform.rotate(surf, angle)
+            self._rot_cache[(path, angle)] = rotated
+        if alpha < 255:
+            rotated = rotated.copy()
+            rotated.set_alpha(alpha)
         self._screen.blit(rotated, rotated.get_rect(center=(cx, cy)))
 
     # ── Countdown ─────────────────────────────────────────────────────────────

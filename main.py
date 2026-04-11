@@ -65,12 +65,16 @@ def main():
                 logger.info("Auslöser — starte Countdown")
                 ui.show_countdown(config.COUNTDOWN_SECONDS)
                 if camera:
-                    path = camera.capture(config.PICTURE_PATH)
-                    ui.add_photo(path)
+                    try:
+                        path = camera.capture(config.PICTURE_PATH)
+                        ui.add_photo(path)
+                    except Exception as exc:
+                        logger.error("Aufnahme fehlgeschlagen: %s", exc)
                 else:
                     logger.info("Kein Foto — Kamera nicht verbunden")
                 if button:
                     button.wait_for_release()
+                ui.wait_for_space_release()
 
             ui.render()
 
