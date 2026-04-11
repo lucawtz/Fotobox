@@ -67,6 +67,8 @@ class UI:
 
         self._gallery: deque = deque(maxlen=len(polaroid_frames))
         self._cache: dict = {}
+        self._fade_start: dict = {}   # path -> ticks beim Hinzufügen
+        self._FADE_MS = 1500          # Einblend-Dauer in Millisekunden
 
         if overlay_path:
             logger.info("Lade Overlay: %s", overlay_path)
@@ -86,6 +88,7 @@ class UI:
         try:
             img = pygame.image.load(path).convert()
             self._cache[path] = self._scale_to_fill(img, self._PW, self._PH)
+            self._fade_start[path] = pygame.time.get_ticks()
         except Exception as exc:
             logger.warning("Foto konnte nicht geladen werden: %s", exc)
 
@@ -152,16 +155,29 @@ class UI:
     def _draw_polaroids(self):
         photos = list(self._gallery)
         for i, (cx, cy, angle) in enumerate(self._frames):
-            photo = self._cache.get(photos[i]) if i < len(photos) else None
-            self._draw_polaroid(cx, cy, angle, photo)
+            if i < len(photos):
+                path  = photos[i]
+                photo = self._cache.get(path)
+                alpha = self._photo_alpha(path)
+            else:
+                photo, alpha = None, 255
+            self._draw_polaroid(cx, cy, angle, photo, alpha)
+
+    def _photo_alpha(self, path: str) -> int:
+        """Berechnet aktuellen Alpha-Wert für Fade-in (0–255)."""
+        if path not in self._fade_start:
+            return 255
+        elapsed = pygame.time.get_ticks() - self._fade_start[path]
+        return min(255, int(elapsed / self._FADE_MS * 255))
 
     def _draw_polaroid(self, cx: int, cy: int, angle: float,
-                       photo: Optional[pygame.Surface]):
+                       photo: Optional[pygame.Surface], alpha: int = 255):
         if photo is None:
             return  # Schwarzer Platzhalter aus dem Overlay bleibt sichtbar
-        # SRCALPHA damit Rotations-Ecken transparent sind (nicht schwarz)
+        # SRCALPHA: Rotations-Ecken transparent + Fade-in über alpha
         surf = pygame.Surface((self._PW, self._PH), pygame.SRCALPHA)
         surf.blit(photo, (0, 0))
+        surf.set_alpha(alpha)
         rotated = pygame.transform.rotate(surf, angle)
         self._screen.blit(rotated, rotated.get_rect(center=(cx, cy)))
 
