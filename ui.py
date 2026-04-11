@@ -62,8 +62,9 @@ class UI:
         self._live_rect = live_rect
         self._PW, self._PH = photo_size
 
-        self._font_btn   = pygame.font.SysFont("sans-serif", 28, bold=True)
-        self._font_count = pygame.font.SysFont("sans-serif", 200, bold=True)
+        self._font_btn    = pygame.font.SysFont("sans-serif", 28, bold=True)
+        self._font_count  = pygame.font.SysFont("sans-serif", 200, bold=True)
+        self._font_cheese = pygame.font.SysFont("sans-serif", 110, bold=True)
 
         self._gallery: deque = deque(maxlen=len(polaroid_frames))
         self._cache: dict = {}
@@ -105,6 +106,11 @@ class UI:
                 self._draw_countdown_frame(i)
                 pygame.event.pump()
                 pygame.time.wait(30)
+        deadline = pygame.time.get_ticks() + 1000
+        while pygame.time.get_ticks() < deadline:
+            self._draw_cheese_frame()
+            pygame.event.pump()
+            pygame.time.wait(30)
         self.render()
 
     def check_quit_events(self) -> bool:
@@ -188,14 +194,33 @@ class UI:
         self._screen.blit(self._bg, (0, 0))
         self._draw_live()
         self._draw_polaroids()
-        lx, ly, lw, lh = self._live_rect
-        dim = pygame.Surface((lw, lh), pygame.SRCALPHA)
-        dim.fill((0, 0, 0, 165))
-        self._screen.blit(dim, (lx, ly))
-        lbl = self._font_count.render(str(number), True, (255, 255, 255))
-        self._screen.blit(lbl, (lx + lw // 2 - lbl.get_width() // 2,
-                                ly + lh // 2 - lbl.get_height() // 2))
+        self._draw_label_box(
+            self._font_count.render(str(number), True, (255, 255, 255)),
+            pad=30,
+        )
         pygame.display.flip()
+
+    def _draw_cheese_frame(self):
+        self._screen.blit(self._bg, (0, 0))
+        self._draw_live()
+        self._draw_polaroids()
+        self._draw_label_box(
+            self._font_cheese.render("Cheese!", True, (255, 230, 50)),
+            pad=25,
+        )
+        pygame.display.flip()
+
+    def _draw_label_box(self, lbl: pygame.Surface, pad: int):
+        """Zeichnet einen halbtransparenten Kasten mit Text zentriert im Live-View."""
+        lx, ly, lw, lh = self._live_rect
+        bw = lbl.get_width()  + pad * 2
+        bh = lbl.get_height() + pad * 2
+        bx = lx + (lw - bw) // 2
+        by = ly + (lh - bh) // 2
+        box = pygame.Surface((bw, bh), pygame.SRCALPHA)
+        box.fill((0, 0, 0, 180))
+        self._screen.blit(box, (bx, by))
+        self._screen.blit(lbl, (bx + pad, by + pad))
 
     # ── Hilfsmethoden ─────────────────────────────────────────────────────────
 
