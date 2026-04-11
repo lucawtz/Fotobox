@@ -11,7 +11,7 @@ COUNTDOWN_SECONDS = 3
 PICTURE_PATH = os.path.join(BASE_DIR, "Picture_Box")
 
 # Overlay-Bild (bereits 1920×1080, wird 1:1 geladen)
-OVERLAY_PATH = os.path.join(BASE_DIR, "Layout", "Overlay_Allgemein2.png")
+OVERLAY_PATH = os.path.join(BASE_DIR, "Layout", "Overlay_Allgemein.png")
 
 # Polaroid-Foto-Bereiche im Overlay (Mittelpunkt X, Mittelpunkt Y, Rotation in Grad)
 POLAROID_FRAMES = [
