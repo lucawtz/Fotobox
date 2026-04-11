@@ -44,9 +44,6 @@ class _LiveReader:
 
 
 class UI:
-    # Größe des Foto-Bereichs im Overlay (schwarze Fläche je Polaroid)
-    # Berechnet aus Originalbild 1248×832 → gestreckt auf 1920×1080
-    _PW, _PH = 245, 205
 
     def __init__(
         self,
@@ -54,6 +51,7 @@ class UI:
         polaroid_frames: List[Tuple[int, int, int]],
         live_rect: Tuple[int, int, int, int],
         overlay_path: Optional[str] = None,
+        photo_size: Tuple[int, int] = (295, 290),
     ):
         pygame.init()
         self._screen = pygame.display.set_mode((W, H), pygame.FULLSCREEN)
@@ -62,6 +60,7 @@ class UI:
 
         self._frames    = polaroid_frames
         self._live_rect = live_rect
+        self._PW, self._PH = photo_size
 
         self._font_btn   = pygame.font.SysFont("sans-serif", 28, bold=True)
         self._font_count = pygame.font.SysFont("sans-serif", 260, bold=True)
@@ -124,7 +123,10 @@ class UI:
     @staticmethod
     def _load_overlay(path: str) -> pygame.Surface:
         img = pygame.image.load(path).convert()
-        return pygame.transform.scale(img, (W, H))
+        iw, ih = img.get_size()
+        if (iw, ih) != (W, H):
+            img = pygame.transform.scale(img, (W, H))
+        return img
 
     # ── Live-View ──────────────────────────────────────────────────────────────
 

@@ -10,16 +10,19 @@ CAPTURE_DEVICE = 0      # Index der Capture Card
 COUNTDOWN_SECONDS = 3
 PICTURE_PATH = os.path.join(BASE_DIR, "Picture_Box")
 
-# Overlay-Bild (wird auf 1920×1080 gestreckt)
-OVERLAY_PATH = os.path.join(BASE_DIR, "Layout", "Overlay-Fotobox.jpg")
+# Overlay-Bild (bereits 1920×1080, wird 1:1 geladen)
+OVERLAY_PATH = os.path.join(BASE_DIR, "Layout", "Overlay_Allgemein2.png")
 
 # Polaroid-Foto-Bereiche im Overlay (Mittelpunkt X, Mittelpunkt Y, Rotation in Grad)
-# Automatisch aus schwarzen Bereichen des Overlays berechnet (1248×832 → 1920×1080)
+# Automatisch aus schwarzen Bereichen erkannt (Bild ist 1920×1080)
 POLAROID_FRAMES = [
-    (574,  314,  10),   # links  (top lehnt nach links)
-    (946,  347,   0),   # mitte  (gerade)
-    (1332, 327,  -8),   # rechts (top lehnt nach rechts)
+    (567,  255,   5),   # links  (top lehnt leicht nach links)
+    (1098, 256,  -5),   # mitte  (leicht nach rechts)
+    (1633, 257, -12),   # rechts (stärker nach rechts)
 ]
 
-# Live-View Bereich (x, y, breite, höhe)
-LIVE_VIEW_RECT = (320, 694, 1058, 317)
+# Größe des Foto-Bereichs in jedem Polaroid (schwarze Fläche)
+POLAROID_PHOTO_SIZE = (295, 290)
+
+# Live-View Bereich (x, y, breite, höhe) — unter den Polaroids
+LIVE_VIEW_RECT = (145, 460, 1440, 600)

@@ -44,6 +44,7 @@ def main():
             config.POLAROID_FRAMES,
             config.LIVE_VIEW_RECT,
             config.OVERLAY_PATH,
+            config.POLAROID_PHOTO_SIZE,
         )
     except Exception as exc:
         logger.error("UI konnte nicht gestartet werden: %s", exc)
