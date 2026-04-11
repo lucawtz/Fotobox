@@ -1,6 +1,7 @@
 import logging
 import signal
 import sys
+import threading
 
 import config
 from camera import Camera
@@ -63,13 +64,25 @@ def main():
 
             if triggered:
                 logger.info("Auslöser — starte Countdown")
-                ui.show_countdown(config.COUNTDOWN_SECONDS)
-                if camera:
+                capture_result: dict = {"path": None}
+                done = threading.Event()
+
+                def _capture():
                     try:
-                        path = camera.capture(config.PICTURE_PATH)
-                        ui.add_photo(path)
+                        capture_result["path"] = camera.capture(config.PICTURE_PATH)
                     except Exception as exc:
                         logger.error("Aufnahme fehlgeschlagen: %s", exc)
+                    finally:
+                        done.set()
+
+                ui.show_countdown(
+                    config.COUNTDOWN_SECONDS,
+                    on_trigger=_capture if camera else None,
+                )
+                if camera:
+                    done.wait()
+                    if capture_result["path"]:
+                        ui.add_photo(capture_result["path"])
                 else:
                     logger.info("Kein Foto — Kamera nicht verbunden")
                 if button:

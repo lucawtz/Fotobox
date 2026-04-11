@@ -106,14 +106,16 @@ class UI:
         self._draw_polaroids()
         pygame.display.flip()
 
-    def show_countdown(self, seconds: int):
+    def show_countdown(self, seconds: int, on_trigger=None):
         for i in range(seconds, 0, -1):
+            if i == 2 and on_trigger:
+                threading.Thread(target=on_trigger, daemon=True).start()
             deadline = pygame.time.get_ticks() + 1000
             while pygame.time.get_ticks() < deadline:
                 self._draw_countdown_frame(i)
                 pygame.event.pump()
                 pygame.time.wait(30)
-        deadline = pygame.time.get_ticks() + 7000
+        deadline = pygame.time.get_ticks() + 1000
         while pygame.time.get_ticks() < deadline:
             self._draw_cheese_frame()
             pygame.event.pump()
