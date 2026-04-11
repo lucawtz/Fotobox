@@ -24,4 +24,4 @@ POLAROID_FRAMES = [
 POLAROID_PHOTO_SIZE = (310, 295)
 
 # Live-View Bereich — gleicher Abstand oben (zu Polaroids) und unten (zum Rand)
-LIVE_VIEW_RECT = (440, 535, 1040, 490)
+LIVE_VIEW_RECT = (440, 600, 1040, 450)
