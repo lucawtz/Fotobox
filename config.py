@@ -14,16 +14,14 @@ PICTURE_PATH = os.path.join(BASE_DIR, "Picture_Box")
 OVERLAY_PATH = os.path.join(BASE_DIR, "Layout", "Overlay_Allgemein2.png")
 
 # Polaroid-Foto-Bereiche im Overlay (Mittelpunkt X, Mittelpunkt Y, Rotation in Grad)
-# Automatisch aus schwarzen Bereichen berechnet (Bild 1920×1080)
-# Links: +4.9° CCW (top lehnt links), Mitte: -5.4° CW, Rechts: -12.3° CW
 POLAROID_FRAMES = [
-    (567,  255,   5),    # links
-    (1098, 256,  -5),    # mitte
-    (1633, 257, -12),    # rechts
+    (567,  255,  -5),    # links
+    (1098, 256,   5),    # mitte
+    (1633, 257,  12),    # rechts
 ]
 
 # Größe des schwarzen Foto-Bereichs je Polaroid (aus minAreaRect: 317×302)
 POLAROID_PHOTO_SIZE = (310, 295)
 
-# Live-View Bereich — aus erkanntem schwarzen Kasten im Overlay
-LIVE_VIEW_RECT = (560, 601, 800, 479)
+# Live-View Bereich — 40px Abstand vom unteren Bildschirmrand
+LIVE_VIEW_RECT = (560, 601, 800, 439)
