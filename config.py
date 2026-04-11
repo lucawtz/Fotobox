@@ -24,5 +24,7 @@ POLAROID_FRAMES = [
 # Größe des Foto-Bereichs in jedem Polaroid (schwarze Fläche)
 POLAROID_PHOTO_SIZE = (295, 290)
 
-# Live-View Bereich (x, y, breite, höhe) — unter den Polaroids
-LIVE_VIEW_RECT = (145, 460, 1440, 600)
+# Live-View Bereich (x, y, breite, höhe) — unter den Polaroids, zentriert zwischen Sidebar und Buttons
+# Horizontal: Sidebar endet ~x=130, Buttons beginnen ~x=1610 → 1100px zentriert → x=320
+# Vertikal:   Polaroids enden ~y=440 → y=470, Höhe=500
+LIVE_VIEW_RECT = (320, 470, 1100, 500)
