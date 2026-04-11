@@ -142,7 +142,7 @@ class UI:
             surf  = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
             self._screen.blit(surf, (x + (w - nw) // 2, y + (h - nh) // 2))
         else:
-            pygame.draw.rect(self._screen, (8, 8, 8), (x, y, w, h))
+            # Kein draw.rect — schwarzer Kasten kommt aus dem Overlay
             lbl = self._font_btn.render("Warte auf Kamera…", True, TEXT_DIM)
             self._screen.blit(lbl, (x + w // 2 - lbl.get_width() // 2,
                                     y + h // 2 - lbl.get_height() // 2))
@@ -159,7 +159,10 @@ class UI:
                        photo: Optional[pygame.Surface]):
         if photo is None:
             return  # Schwarzer Platzhalter aus dem Overlay bleibt sichtbar
-        rotated = pygame.transform.rotate(photo, angle)
+        # SRCALPHA damit Rotations-Ecken transparent sind (nicht schwarz)
+        surf = pygame.Surface((self._PW, self._PH), pygame.SRCALPHA)
+        surf.blit(photo, (0, 0))
+        rotated = pygame.transform.rotate(surf, angle)
         self._screen.blit(rotated, rotated.get_rect(center=(cx, cy)))
 
     # ── Countdown ─────────────────────────────────────────────────────────────
