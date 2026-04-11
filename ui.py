@@ -113,7 +113,7 @@ class UI:
                 self._draw_countdown_frame(i)
                 pygame.event.pump()
                 pygame.time.wait(30)
-        deadline = pygame.time.get_ticks() + 1000
+        deadline = pygame.time.get_ticks() + 2500
         while pygame.time.get_ticks() < deadline:
             self._draw_cheese_frame()
             pygame.event.pump()
