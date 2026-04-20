@@ -232,16 +232,9 @@ class UI:
         pygame.display.flip()
 
     def _draw_label_box(self, lbl: pygame.Surface, pad: int):
-        """Zeichnet einen halbtransparenten Kasten mit Text zentriert im Live-View."""
         lx, ly, lw, lh = self._live_rect
-        bw = lbl.get_width()  + pad * 2
-        bh = lbl.get_height() + pad * 2
-        bx = lx + (lw - bw) // 2
-        by = ly + (lh - bh) // 2
-        box = pygame.Surface((bw, bh), pygame.SRCALPHA)
-        box.fill((0, 0, 0, 180))
-        self._screen.blit(box, (bx, by))
-        self._screen.blit(lbl, (bx + pad, by + pad))
+        self._screen.blit(lbl, (lx + (lw - lbl.get_width()) // 2,
+                                ly + (lh - lbl.get_height()) // 2))
 
     # ── Hilfsmethoden ─────────────────────────────────────────────────────────
 
