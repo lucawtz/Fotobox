@@ -6,7 +6,6 @@ logger = logging.getLogger(__name__)
 
 class PhotoButton:
     def __init__(self, pin: int):
-        # bounce_time=0.1 erledigt das Entprellen zuverlässig
         self._button = Button(pin, pull_up=True, bounce_time=0.1)
         logger.info("Button initialisiert auf GPIO-Pin %d", pin)
 
