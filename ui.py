@@ -115,12 +115,27 @@ class UI:
                 self._draw_countdown_frame(i)
                 pygame.event.pump()
                 pygame.time.wait(30)
+        self._flash()
         deadline = pygame.time.get_ticks() + 1000
         while pygame.time.get_ticks() < deadline:
             self._draw_cheese_frame()
             pygame.event.pump()
             pygame.time.wait(30)
         self.render()
+
+    def show_preview(self, path: str, duration_ms: int = 2500):
+        try:
+            img = pygame.image.load(path).convert()
+            scaled = pygame.transform.smoothscale(img, (W, H))
+        except Exception as exc:
+            logger.warning("Vorschau konnte nicht geladen werden: %s", exc)
+            return
+        deadline = pygame.time.get_ticks() + duration_ms
+        while pygame.time.get_ticks() < deadline:
+            self._screen.blit(scaled, (0, 0))
+            pygame.display.flip()
+            pygame.event.pump()
+            pygame.time.wait(30)
 
     def check_quit_events(self) -> bool:
         for event in pygame.event.get():
@@ -211,24 +226,46 @@ class UI:
 
     # ── Countdown ─────────────────────────────────────────────────────────────
 
+    def _draw_live_fullscreen(self):
+        frame = self._live.latest()
+        if frame is not None:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            fh, fw = frame.shape[:2]
+            scale = min(W / fw, H / fh)
+            nw, nh = int(fw * scale), int(fh * scale)
+            frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+            surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+            self._screen.fill((0, 0, 0))
+            self._screen.blit(surf, ((W - nw) // 2, (H - nh) // 2))
+        else:
+            self._screen.fill((0, 0, 0))
+
+    def _flash(self, duration_ms: int = 300):
+        start = pygame.time.get_ticks()
+        flash_surf = pygame.Surface((W, H))
+        flash_surf.fill((255, 255, 255))
+        while True:
+            elapsed = pygame.time.get_ticks() - start
+            if elapsed >= duration_ms:
+                break
+            alpha = max(0, 255 - int(elapsed / duration_ms * 255))
+            self._draw_live_fullscreen()
+            flash_surf.set_alpha(alpha)
+            self._screen.blit(flash_surf, (0, 0))
+            pygame.display.flip()
+            pygame.event.pump()
+            pygame.time.wait(16)
+
     def _draw_countdown_frame(self, number: int):
-        self._screen.blit(self._bg, (0, 0))
-        self._draw_live()
-        self._draw_polaroids()
-        self._draw_label_box(
-            self._font_count.render(str(number), True, (255, 255, 255)),
-            pad=30,
-        )
+        self._draw_live_fullscreen()
+        lbl = self._font_count.render(str(number), True, (255, 255, 255))
+        self._screen.blit(lbl, lbl.get_rect(center=(W // 2, H // 2)))
         pygame.display.flip()
 
     def _draw_cheese_frame(self):
-        self._screen.blit(self._bg, (0, 0))
-        self._draw_live()
-        self._draw_polaroids()
-        self._draw_label_box(
-            self._font_cheese.render("Cheese!", True, (255, 230, 50)),
-            pad=25,
-        )
+        self._draw_live_fullscreen()
+        lbl = self._font_cheese.render("Cheese!", True, (255, 230, 50))
+        self._screen.blit(lbl, lbl.get_rect(center=(W // 2, H // 2)))
         pygame.display.flip()
 
     def _draw_label_box(self, lbl: pygame.Surface, pad: int):

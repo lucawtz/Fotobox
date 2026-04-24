@@ -82,6 +82,7 @@ def main():
                 if camera:
                     done.wait()
                     if capture_result["path"]:
+                        ui.show_preview(capture_result["path"])
                         ui.add_photo(capture_result["path"])
                 else:
                     logger.info("Kein Foto — Kamera nicht verbunden")
