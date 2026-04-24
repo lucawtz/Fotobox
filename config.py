@@ -25,3 +25,17 @@ POLAROID_PHOTO_SIZE = (310, 295)
 
 # Live-View Bereich — gleicher Abstand oben (zu Polaroids) und unten (zum Rand)
 LIVE_VIEW_RECT = (440, 600, 1040, 450)
+
+# Idle-Diashow: Sekunden ohne Auslöser bis die Slideshow startet
+IDLE_TIMEOUT = 60
+# Anzeigedauer pro Foto in der Diashow (Millisekunden)
+SLIDE_DURATION_MS = 5000
+
+# Galerie-Webserver
+GALLERY_PORT = 5000
+
+# WLAN-Hotspot (Option B)
+HOTSPOT_SSID     = "Fotobox"
+HOTSPOT_PASSWORD = "fotobox123"
+HOTSPOT_IP       = "192.168.4.1"
+GALLERY_URL      = f"http://{HOTSPOT_IP}:{GALLERY_PORT}"

@@ -1,3 +1,6 @@
 gpiozero
 pygame
 opencv-python
+flask
+qrcode[pil]
+pillow

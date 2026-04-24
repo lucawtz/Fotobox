@@ -1,4 +1,6 @@
 import logging
+import math
+import os
 import threading
 from collections import deque
 from typing import List, Optional, Tuple
@@ -52,6 +54,7 @@ class UI:
         live_rect: Tuple[int, int, int, int],
         overlay_path: Optional[str] = None,
         photo_size: Tuple[int, int] = (295, 290),
+        gallery_url: Optional[str] = None,
     ):
         pygame.init()
         self._screen = pygame.display.set_mode((W, H), pygame.FULLSCREEN)
@@ -62,9 +65,16 @@ class UI:
         self._live_rect = live_rect
         self._PW, self._PH = photo_size
 
-        self._font_btn    = pygame.font.SysFont("sans-serif", 28, bold=True)
-        self._font_count  = pygame.font.SysFont("sans-serif", 200, bold=True)
-        self._font_cheese = pygame.font.SysFont("sans-serif", 110, bold=True)
+        self._font_btn     = pygame.font.SysFont("sans-serif", 28, bold=True)
+        self._font_count   = pygame.font.SysFont("sans-serif", 200, bold=True)
+        self._font_cheese  = pygame.font.SysFont("sans-serif", 110, bold=True)
+        self._font_standby = pygame.font.SysFont("sans-serif", 52, bold=True)
+
+        self._slide_paths: List[str] = []
+        self._slide_idx: int = 0
+        self._slide_start_ms: int = 0
+        self._slide_surf: Optional[pygame.Surface] = None
+        self._SLIDE_FADE_MS = 800
 
         self._gallery: deque = deque(maxlen=len(polaroid_frames))
         self._cache: dict = {}       # path -> skaliertes Surface
@@ -79,6 +89,10 @@ class UI:
             self._bg = pygame.Surface((W, H))
             self._bg.fill((40, 25, 10))
             logger.warning("Kein Overlay angegeben — dunkler Hintergrund")
+
+        self._qr_surf: Optional[pygame.Surface] = None
+        if gallery_url:
+            self._qr_surf = self._make_qr_surface(gallery_url, size=160)
 
         logger.info("UI initialisiert")
         self._live = _LiveReader(capture_device)
@@ -104,6 +118,8 @@ class UI:
         self._screen.blit(self._bg, (0, 0))
         self._draw_live()
         self._draw_polaroids()
+        self._draw_standby_hint()
+        self._draw_qr()
         pygame.display.flip()
 
     def show_countdown(self, seconds: int, on_trigger=None):
@@ -136,6 +152,51 @@ class UI:
             pygame.display.flip()
             pygame.event.pump()
             pygame.time.wait(30)
+
+    def refresh_slideshow(self, folder: str, slide_duration_ms: int = 5000):
+        exts = {".jpg", ".jpeg", ".png"}
+        try:
+            paths = sorted(
+                p for p in (os.path.join(folder, f) for f in os.listdir(folder))
+                if os.path.splitext(p)[1].lower() in exts
+            )
+        except FileNotFoundError:
+            paths = []
+        self._slide_paths = paths
+        self._slide_duration_ms = slide_duration_ms
+        self._slide_idx = 0
+        self._slide_start_ms = pygame.time.get_ticks()
+        self._slide_surf = None
+        logger.info("Slideshow: %d Fotos geladen", len(paths))
+
+    def render_slideshow(self):
+        if not self._slide_paths:
+            self.render()
+            return
+
+        now = pygame.time.get_ticks()
+        if now - self._slide_start_ms > self._slide_duration_ms:
+            self._slide_idx = (self._slide_idx + 1) % len(self._slide_paths)
+            self._slide_start_ms = now
+            self._slide_surf = None
+
+        if self._slide_surf is None:
+            try:
+                img = pygame.image.load(self._slide_paths[self._slide_idx]).convert()
+                self._slide_surf = pygame.transform.smoothscale(img, (W, H))
+            except Exception as exc:
+                logger.warning("Slideshow-Foto nicht ladbar: %s", exc)
+                self._slide_surf = pygame.Surface((W, H))
+                self._slide_surf.fill((0, 0, 0))
+
+        elapsed = now - self._slide_start_ms
+        alpha = min(255, int(elapsed / self._SLIDE_FADE_MS * 255))
+        self._slide_surf.set_alpha(alpha)
+        self._screen.fill((0, 0, 0))
+        self._screen.blit(self._slide_surf, (0, 0))
+        self._draw_standby_hint()
+        self._draw_qr()
+        pygame.display.flip()
 
     def check_quit_events(self) -> bool:
         for event in pygame.event.get():
@@ -274,6 +335,42 @@ class UI:
                                 ly + (lh - lbl.get_height()) // 2))
 
     # ── Hilfsmethoden ─────────────────────────────────────────────────────────
+
+    def _draw_standby_hint(self):
+        x, y, w, h = self._live_rect
+        pulse = (math.sin(pygame.time.get_ticks() / 600) + 1) / 2  # 0.0 – 1.0
+        alpha = int(60 + pulse * 195)                                # 60 – 255
+        lbl = self._font_standby.render("Drück den Knopf!", True, (255, 255, 255))
+        surf = pygame.Surface(lbl.get_size(), pygame.SRCALPHA)
+        surf.blit(lbl, (0, 0))
+        surf.set_alpha(alpha)
+        self._screen.blit(surf, surf.get_rect(center=(x + w // 2, y + h - 48)))
+
+    def _draw_qr(self):
+        if self._qr_surf is None:
+            return
+        QR = self._qr_surf.get_width()
+        PAD = 12
+        x = W - QR - PAD
+        y = H - QR - PAD
+        bg = pygame.Surface((QR + PAD * 2, QR + PAD * 2))
+        bg.fill((255, 255, 255))
+        bg.set_alpha(230)
+        self._screen.blit(bg, (x - PAD, y - PAD))
+        self._screen.blit(self._qr_surf, (x, y))
+
+    @staticmethod
+    def _make_qr_surface(url: str, size: int = 160) -> Optional[pygame.Surface]:
+        try:
+            import qrcode
+            from PIL import Image
+            qr = qrcode.make(url).convert("RGB").resize((size, size), Image.NEAREST)
+            return pygame.image.frombuffer(qr.tobytes("raw", "RGB"), (size, size), "RGB").copy()
+        except ImportError:
+            logger.warning("qrcode/pillow nicht installiert — QR-Code deaktiviert")
+        except Exception as exc:
+            logger.warning("QR-Code-Fehler: %s", exc)
+        return None
 
     @staticmethod
     def _scale_to_fill(surf: pygame.Surface, w: int, h: int) -> pygame.Surface:

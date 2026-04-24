@@ -2,8 +2,11 @@ import logging
 import signal
 import sys
 import threading
+import time
 
 import config
+import gallery_server
+import hotspot
 from camera import Camera
 from hardware import PhotoButton
 from ui import UI
@@ -29,6 +32,10 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
+    hotspot.start()
+    threading.Thread(target=gallery_server.run, daemon=True).start()
+    logger.info("Galerie erreichbar unter: %s", config.GALLERY_URL)
+
     try:
         button = PhotoButton(config.BUTTON_PIN)
     except Exception as exc:
@@ -46,12 +53,16 @@ def main():
             config.LIVE_VIEW_RECT,
             config.OVERLAY_PATH,
             config.POLAROID_PHOTO_SIZE,
+            gallery_url=config.GALLERY_URL,
         )
     except Exception as exc:
         logger.error("UI konnte nicht gestartet werden: %s", exc)
         sys.exit(1)
 
     logger.info("Fotobox bereit — Knopf oder Leertaste zum Auslösen")
+
+    idle_since = time.monotonic()
+    in_slideshow = False
 
     try:
         while running:
@@ -63,34 +74,46 @@ def main():
                 triggered = True
 
             if triggered:
-                logger.info("Auslöser — starte Countdown")
-                capture_result: dict = {"path": None}
-                done = threading.Event()
-
-                def _capture():
-                    try:
-                        capture_result["path"] = camera.capture(config.PICTURE_PATH)
-                    except Exception as exc:
-                        logger.error("Aufnahme fehlgeschlagen: %s", exc)
-                    finally:
-                        done.set()
-
-                ui.show_countdown(
-                    config.COUNTDOWN_SECONDS,
-                    on_trigger=_capture if camera else None,
-                )
-                if camera:
-                    done.wait()
-                    if capture_result["path"]:
-                        ui.show_preview(capture_result["path"])
-                        ui.add_photo(capture_result["path"])
+                idle_since = time.monotonic()
+                if in_slideshow:
+                    in_slideshow = False
+                    ui.wait_for_space_release()
                 else:
-                    logger.info("Kein Foto — Kamera nicht verbunden")
-                if button:
-                    button.wait_for_release()
-                ui.wait_for_space_release()
+                    logger.info("Auslöser — starte Countdown")
+                    capture_result: dict = {"path": None}
+                    done = threading.Event()
 
-            ui.render()
+                    def _capture():
+                        try:
+                            capture_result["path"] = camera.capture(config.PICTURE_PATH)
+                        except Exception as exc:
+                            logger.error("Aufnahme fehlgeschlagen: %s", exc)
+                        finally:
+                            done.set()
+
+                    ui.show_countdown(
+                        config.COUNTDOWN_SECONDS,
+                        on_trigger=_capture if camera else None,
+                    )
+                    if camera:
+                        done.wait()
+                        if capture_result["path"]:
+                            ui.show_preview(capture_result["path"])
+                            ui.add_photo(capture_result["path"])
+                    else:
+                        logger.info("Kein Foto — Kamera nicht verbunden")
+                    if button:
+                        button.wait_for_release()
+                    ui.wait_for_space_release()
+            elif not in_slideshow and time.monotonic() - idle_since >= config.IDLE_TIMEOUT:
+                logger.info("Idle — starte Diashow")
+                ui.refresh_slideshow(config.PICTURE_PATH, config.SLIDE_DURATION_MS)
+                in_slideshow = True
+
+            if in_slideshow:
+                ui.render_slideshow()
+            else:
+                ui.render()
 
     except Exception as exc:
         logger.error("Unerwarteter Fehler: %s", exc, exc_info=True)
