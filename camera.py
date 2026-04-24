@@ -25,7 +25,8 @@ class Camera:
     def capture(self, directory: str) -> str:
         os.makedirs(directory, exist_ok=True)
         filename = f"foto_{int(time.time())}.jpg"
-        path = os.path.join(directory, filename)
+
+        before = set(os.listdir(directory))
 
         subprocess.run(
             ["gphoto2", "--set-config", "viewfinder=0"],
@@ -35,8 +36,9 @@ class Camera:
 
         try:
             result = subprocess.run(
-                ["gphoto2", "--capture-image-and-download", "--filename", path],
-                capture_output=True, text=True, timeout=30
+                ["gphoto2", "--capture-image-and-download", "--filename", filename],
+                capture_output=True, text=True, timeout=30,
+                cwd=directory,
             )
             if result.returncode != 0:
                 logger.error("gphoto2 Fehler: %s", result.stderr)
@@ -45,12 +47,18 @@ class Camera:
             logger.error("gphoto2 Timeout — Kamera reagiert nicht")
             raise RuntimeError("Aufnahme Timeout")
         finally:
-            # Viewfinder IMMER wieder einschalten, auch bei Fehler
             subprocess.run(
                 ["gphoto2", "--set-config", "viewfinder=1"],
                 capture_output=True, timeout=5
             )
 
+        after = set(os.listdir(directory))
+        new_files = after - before
+        if new_files:
+            name = max(new_files, key=lambda f: os.path.getmtime(os.path.join(directory, f)))
+        else:
+            name = filename
+        path = os.path.join(directory, name)
         logger.info("Foto gespeichert: %s", path)
         return path
 
