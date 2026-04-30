@@ -175,7 +175,7 @@ export default function PhotoView() {
           >
             <div className="swiper-zoom-container" style={{ width: "100%", height: "100%" }}>
               <img
-                src={api.imgUrl(p)}
+                src={api.previewUrl(p)}
                 alt={p.filename}
                 style={{
                   maxWidth: "100%",

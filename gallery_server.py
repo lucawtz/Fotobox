@@ -99,10 +99,41 @@ def _make_thumb(event: str, filename: str) -> Optional[str]:
             os.makedirs(td, exist_ok=True)
             with Image.open(src) as img:
                 img.thumbnail((400, 400))
-                img.save(thumb)
+                # quality=75 + progressive: ~50% kleiner, schnelles Anzeigen
+                img.save(thumb, "JPEG", quality=75,
+                         progressive=True, optimize=True)
             return thumb
         except Exception as exc:
             logger.warning("Thumbnail '%s/%s': %s", event, filename, exc)
+            return None
+
+
+def _preview_dir() -> str:
+    return os.path.join(_thumb_dir(), "_preview")
+
+
+def _make_preview(event: str, filename: str) -> Optional[str]:
+    """Mid-Size-Vorschau (~1280px lange Seite, ~150-300 KB) für die Detail-
+    Ansicht. Spart Faktor 10-20 ggü. Originalfoto auf langsamen Hotspots.
+    """
+    pd = os.path.join(_preview_dir(), event)
+    preview = os.path.join(pd, filename)
+    with _thumb_lock:
+        if os.path.exists(preview):
+            return preview
+        src = _safe_path(event, filename)
+        if src is None:
+            return None
+        try:
+            from PIL import Image
+            os.makedirs(pd, exist_ok=True)
+            with Image.open(src) as img:
+                img.thumbnail((1280, 1280))
+                img.save(preview, "JPEG", quality=80,
+                         progressive=True, optimize=True)
+            return preview
+        except Exception as exc:
+            logger.warning("Preview '%s/%s': %s", event, filename, exc)
             return None
 
 
@@ -152,6 +183,17 @@ def thumb(event, filename):
     if t is None:
         abort(404)
     response = send_file(t)
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    return response
+
+
+@app.route("/preview/<event>/<filename>")
+def preview(event, filename):
+    """1280px-Vorschau für die Detail-Ansicht — viel kleiner als Original."""
+    p = _make_preview(event, filename)
+    if p is None:
+        abort(404)
+    response = send_file(p)
     response.headers["Cache-Control"] = "public, max-age=3600"
     return response
 
@@ -233,7 +275,12 @@ def _zip_safe_name(name: str) -> str:
 
 @app.route("/api/download-zip")
 def api_download_zip():
-    event_filter = request.args.get("event") or None
+    # Bulk-Download nur pro Event — sonst könnte ein Gast alte Bilder
+    # voriger Mieter mit ziehen. Datenschutzthema.
+    event_filter = (request.args.get("event") or "").strip()
+    if not event_filter or not events.is_safe_event(event_filter):
+        return jsonify(ok=False, error="Event-Parameter erforderlich"), 400
+
     pic_dir = _pic_dir()
     items: list[tuple[str, str]] = []
     for ev, f in _photo_list(event_filter):
@@ -241,11 +288,7 @@ def api_download_zip():
     if not items:
         abort(404)
 
-    if event_filter:
-        zip_name = f"{_zip_safe_name(event_filter)}.zip"
-    else:
-        date = datetime.now().strftime("%Y-%m-%d")
-        zip_name = f"Fotobox_{_zip_safe_name(config.cfg.get('event_name', 'Fotobox'))}_{date}.zip"
+    zip_name = f"{_zip_safe_name(event_filter)}.zip"
 
     return Response(
         _stream_zip(items),

@@ -20,6 +20,7 @@ export interface EventInfo {
   display: string;
   count:   number;
   mtime:   number;
+  cover:   string;
   active:  boolean;
 }
 
@@ -88,6 +89,9 @@ export const api = {
   events: () => fetch("/api/events", FETCH_OPTS).then(json<EventsResponse>),
 
   thumbUrl:    (p: Pick<Photo, "event" | "filename">) => `/thumb/${evPath(p)}`,
+  // Preview = 1280px JPEG mit Quality 80 — viel schneller über Hotspot als
+  // Original. Nur Download und Originalansicht nutzen imgUrl.
+  previewUrl:  (p: Pick<Photo, "event" | "filename">) => `/preview/${evPath(p)}`,
   imgUrl:      (p: Pick<Photo, "event" | "filename">) => `/img/${evPath(p)}`,
   downloadUrl: (p: Pick<Photo, "event" | "filename">) => `/download/${evPath(p)}`,
   zipUrl:      (event?: string | null) =>
