@@ -83,8 +83,6 @@ def gallery():
     if _spa_enabled():
         return send_file(SPA_INDEX)
     photos = _photo_list()
-    for f in photos:
-        threading.Thread(target=_make_thumb, args=(f,), daemon=True).start()
     return render_template("gallery.html", photos=photos,
                            event_name=config.cfg.get("event_name", "Fotobox"))
 
@@ -156,7 +154,8 @@ def api_photos():
             out.append({"filename": f, "mtime": st.st_mtime, "size": st.st_size})
         except OSError:
             continue
-        threading.Thread(target=_make_thumb, args=(f,), daemon=True).start()
+    # Thumbnails werden beim Server-Start vorab generiert (siehe _prewarm_thumbnails).
+    # Falls trotzdem mal eines fehlt: /thumb/<f> generiert es lazy beim ersten Hit.
     return jsonify({
         "event_name": config.cfg.get("event_name", "Fotobox"),
         "count": len(out),
