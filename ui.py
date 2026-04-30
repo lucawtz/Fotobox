@@ -140,6 +140,18 @@ class UI:
         # QR-Code
         self._qr_surf = self._make_qr(cfg.get("gallery_url", ""), size=160)
 
+        # Live-Reload-Tracking — gallery_server.py läuft im gleichen Prozess
+        # (siehe main.py: threading.Thread(target=gallery_server.run, ...)),
+        # also teilen wir config.cfg direkt. Werte (event_name, countdown,
+        # WLAN-Texte) sind sofort sichtbar — nur die pygame-Surfaces hier
+        # müssen wir bei Datei-/URL-Änderungen neu bauen.
+        self._logo_path_seen    = cfg.get("logo_path", "")
+        self._logo_mtime        = self._mtime(self._logo_path_seen)
+        self._overlay_path_seen = overlay
+        self._overlay_mtime     = self._mtime(overlay)
+        self._qr_url_seen       = cfg.get("gallery_url", "")
+        self._last_reload_check = 0.0
+
         # Polaroid-Galerie
         frames = cfg.get("polaroid_frames", [[567, 255, -5], [1098, 256, 5], [1633, 257, 12]])
         self._frames = [tuple(f) for f in frames]
@@ -185,13 +197,61 @@ class UI:
                 return True
         return False
 
-    def reload_logo(self):
-        self._logo_surf = self._load_logo(self._cfg.get("logo_path", ""))
+    @staticmethod
+    def _mtime(path: str) -> float:
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            return 0.0
+
+    def _check_config_reload(self):
+        """1× pro Sekunde prüfen ob sich gecachte Asset-Dateien oder die
+        Galerie-URL geändert haben. Wird vor jedem Render aufgerufen — billig
+        durch das 1-Sekunden-Throttle, sodass die Render-Schleife nicht
+        bei jedem Frame stat()-Calls macht.
+        """
+        now = time.monotonic()
+        if now - self._last_reload_check < 1.0:
+            return
+        self._last_reload_check = now
+
+        # Logo — Path und/oder mtime können sich ändern (Upload überschreibt
+        # die gleiche Datei, daher reicht Path-Vergleich allein nicht).
+        logo_path = self._cfg.get("logo_path", "")
+        logo_mt   = self._mtime(logo_path)
+        if logo_path != self._logo_path_seen or logo_mt != self._logo_mtime:
+            logger.info("Live-Reload: Logo geändert (%s)", logo_path)
+            self._logo_surf      = self._load_logo(logo_path)
+            self._logo_path_seen = logo_path
+            self._logo_mtime     = logo_mt
+
+        # Overlay-Hintergrund — gleiche Logik wie Logo.
+        overlay_path = self._cfg.get("overlay_path", "")
+        overlay_mt   = self._mtime(overlay_path)
+        if overlay_path != self._overlay_path_seen or overlay_mt != self._overlay_mtime:
+            if overlay_path and os.path.isfile(overlay_path):
+                try:
+                    img = pygame.image.load(overlay_path).convert()
+                    self._bg = pygame.transform.scale(img, (W, H)) if img.get_size() != (W, H) else img
+                    logger.info("Live-Reload: Overlay geändert (%s)", overlay_path)
+                except Exception as exc:
+                    logger.warning("Live-Reload Overlay: %s", exc)
+            self._overlay_path_seen = overlay_path
+            self._overlay_mtime     = overlay_mt
+
+        # QR-Code — neu generieren wenn sich gallery_url ändert (z.B. Port
+        # oder hotspot_ip vom Admin verstellt).
+        url = self._cfg.get("gallery_url", "")
+        if url != self._qr_url_seen:
+            logger.info("Live-Reload: gallery_url geändert (%s)", url)
+            self._qr_surf     = self._make_qr(url, size=160)
+            self._qr_url_seen = url
 
     # ── Homescreen ─────────────────────────────────────────────────────────────
 
     def render_homescreen(self, camera_ok: bool, camera_msg: str,
                           free_mb: int, photo_count: int):
+        self._check_config_reload()
         self._screen.blit(self._bg, (0, 0))
         self._draw_live()
         self._draw_polaroids()
@@ -403,6 +463,7 @@ class UI:
     # ── Result-Screen ──────────────────────────────────────────────────────────
 
     def render_result(self, photo_path: str, time_left: float):
+        self._check_config_reload()
         self._screen.fill((10, 6, 2))
         self._draw_result_photo(photo_path)
         self._draw_qr_result()
@@ -556,6 +617,7 @@ class UI:
         logger.info("Slideshow: %d Fotos", len(paths))
 
     def render_slideshow(self):
+        self._check_config_reload()
         if not self._slide_paths:
             self.render_homescreen(True, "", 0, 0)
             return
@@ -702,8 +764,24 @@ class UI:
         bg.set_alpha(220)
         self._screen.blit(bg, (x - PAD, y - PAD))
         self._screen.blit(self._qr_surf, (x, y))
+
+        cx = x + QR // 2
+        text_y = y + QR + PAD + 6
         hint = self._f_small.render("Galerie scannen", True, C_WHITE)
-        self._screen.blit(hint, hint.get_rect(centerx=x + QR // 2, top=y + QR + PAD + 6))
+        self._screen.blit(hint, hint.get_rect(centerx=cx, top=text_y))
+        text_y += hint.get_height() + 8
+
+        # WLAN-Daten direkt unter dem QR — falls jemand das Passwort nicht
+        # automatisch durch den QR-Code bekommt (oder am Eingang einfach
+        # nachschauen will). Nur anzeigen wenn konfiguriert.
+        ssid = (self._cfg.get("wifi_ssid") or "").strip()
+        pwd  = (self._cfg.get("wifi_password") or "").strip()
+        for label, value in (("WLAN", ssid), ("Passwort", pwd)):
+            if not value:
+                continue
+            line = self._f_small.render(f"{label}: {value}", True, C_WHITE)
+            self._screen.blit(line, line.get_rect(centerx=cx, top=text_y))
+            text_y += line.get_height() + 2
 
     # ── Hilfsmethoden ─────────────────────────────────────────────────────────
 
