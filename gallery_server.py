@@ -303,3 +303,10 @@ def run(host: str = "0.0.0.0", port: int = None):
     app.run(host=host, port=port, threaded=True, use_reloader=False)
 
 
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(levelname)s] %(message)s")
+    os.makedirs(_pic_dir(), exist_ok=True)
+    run(host="127.0.0.1")
+
+

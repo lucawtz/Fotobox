@@ -16,6 +16,7 @@
   "gallery_port": 5000,
   "hotspot_enabled": false,
   "hotspot_ip": "192.168.4.1",
+  "hotspot_interface": "wlan0",
   "picture_dir": "Picture_Box",
   "capture_device": 0,
   "overlay_path": "Layout/Overlay_Allgemein.png",

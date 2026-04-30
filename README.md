@@ -70,6 +70,7 @@ tail -f logs/fotobox.log         # Logs live anzeigen
 | `wifi_ssid` | Hotspot-Name | `"Fotobox"` |
 | `wifi_password` | Hotspot-Passwort | `"fotobox123"` |
 | `hotspot_ip` | IP-Adresse des Pi im Hotspot | `"192.168.4.1"` |
+| `hotspot_interface` | WLAN-Interface für den Hotspot (eingebauter Chip = `wlan0`) | `"wlan0"` |
 | `gallery_port` | Port des Galerie-Webservers | `5000` |
 | `gpio_pins.left` | GPIO-Pin für Links-Button | `17` |
 | `gpio_pins.trigger` | GPIO-Pin für Auslöser-Button | `27` |
@@ -121,6 +122,12 @@ Der Hotspot wird über NetworkManager (`nmcli`) gestartet. `hotspot_enabled: tru
 
 ```bash
 sudo apt install network-manager
+```
+
+Standardmäßig wird der **eingebaute Pi-WLAN-Chip** (`wlan0`) verwendet — auch wenn ein USB-WLAN-Stick eingesteckt ist. Falls dein Setup ein anderes Interface braucht, kann es per `hotspot_interface` in der `config.json` überschrieben werden. Verfügbare Interfaces zeigt:
+
+```bash
+nmcli device
 ```
 
 Nach Änderung des WLAN-Namens oder Passworts: `sudo systemctl restart fotobox`.
