@@ -4,6 +4,7 @@ import sys
 import threading
 import time
 
+import pygame
 import config
 import gallery_server
 import hotspot
@@ -63,6 +64,7 @@ def main():
 
     idle_since = time.monotonic()
     in_slideshow = False
+    clock = pygame.time.Clock()
 
     try:
         while running:
@@ -114,6 +116,7 @@ def main():
                 ui.render_slideshow()
             else:
                 ui.render()
+            clock.tick(30)
 
     except Exception as exc:
         logger.error("Unerwarteter Fehler: %s", exc, exc_info=True)

@@ -2,6 +2,7 @@ import logging
 import math
 import os
 import threading
+import time
 from collections import deque
 from typing import List, Optional, Tuple
 
@@ -29,12 +30,20 @@ class _LiveReader:
         threading.Thread(target=self._loop, daemon=True).start()
         logger.info("LiveReader gestartet (device=%d)", device)
 
+    _TARGET_FPS = 30
+
     def _loop(self):
+        interval = 1.0 / self._TARGET_FPS
         while self._running:
+            t0 = time.monotonic()
             ok, frame = self._cap.read()
             if ok:
                 with self._lock:
                     self._frame = frame
+            elapsed = time.monotonic() - t0
+            sleep = interval - elapsed
+            if sleep > 0:
+                time.sleep(sleep)
 
     def latest(self):
         with self._lock:
@@ -340,9 +349,11 @@ class UI:
         x, y, w, h = self._live_rect
         pulse = (math.sin(pygame.time.get_ticks() / 600) + 1) / 2  # 0.0 – 1.0
         alpha = int(60 + pulse * 195)                                # 60 – 255
-        lbl = self._font_standby.render("Drück den Knopf!", True, (255, 255, 255))
-        surf = pygame.Surface(lbl.get_size(), pygame.SRCALPHA)
-        surf.blit(lbl, (0, 0))
+        if not hasattr(self, "_standby_surf"):
+            lbl = self._font_standby.render("Drück den Knopf!", True, (255, 255, 255))
+            self._standby_surf = pygame.Surface(lbl.get_size(), pygame.SRCALPHA)
+            self._standby_surf.blit(lbl, (0, 0))
+        surf = self._standby_surf.copy()
         surf.set_alpha(alpha)
         self._screen.blit(surf, surf.get_rect(center=(x + w // 2, y + h - 48)))
 
