@@ -485,10 +485,23 @@ class UI:
 
     def _draw_qr_bottom_left(self):
         """QR im Holzfeld links neben der Live-Vorschau."""
-        if self._qr_surf is None:
-            return
-        QR, PAD = self._qr_surf.get_width(), 12
+        QR_SIZE = 160
+        PAD = 12
         x, y = 220, 700
+
+        if self._qr_surf is None:
+            # Placeholder damit das Fehlen sofort sichtbar ist
+            bg = pygame.Surface((QR_SIZE + PAD * 2, QR_SIZE + PAD * 2))
+            bg.fill((80, 30, 20))
+            bg.set_alpha(220)
+            self._screen.blit(bg, (x - PAD, y - PAD))
+            err = self._f_small.render("QR-Code fehlt", True, C_WHITE)
+            self._screen.blit(err, err.get_rect(center=(x + QR_SIZE // 2, y + QR_SIZE // 2 - 10)))
+            err2 = self._f_small.render("(qrcode-Paket?)", True, C_WHITE)
+            self._screen.blit(err2, err2.get_rect(center=(x + QR_SIZE // 2, y + QR_SIZE // 2 + 14)))
+            return
+
+        QR = self._qr_surf.get_width()
         bg = pygame.Surface((QR + PAD * 2, QR + PAD * 2))
         bg.fill(C_WHITE)
         bg.set_alpha(220)
@@ -518,17 +531,20 @@ class UI:
     @staticmethod
     def _make_qr(url: str, size: int = 160) -> Optional[pygame.Surface]:
         if not url:
+            logger.warning("QR-Code: keine URL — gallery_url leer in config?")
             return None
         try:
             import qrcode
             from PIL import Image
             qr = qrcode.make(url).convert("RGB").resize((size, size), Image.NEAREST)
-            return pygame.image.frombuffer(
+            surf = pygame.image.frombuffer(
                 qr.tobytes("raw", "RGB"), (size, size), "RGB").copy()
-        except ImportError:
-            logger.warning("qrcode/pillow fehlt — QR-Code deaktiviert")
+            logger.info("QR-Code erstellt für %s (%dx%d)", url, size, size)
+            return surf
+        except ImportError as exc:
+            logger.warning("qrcode/pillow fehlt: %s — QR deaktiviert", exc)
         except Exception as exc:
-            logger.warning("QR-Code: %s", exc)
+            logger.warning("QR-Code-Fehler: %s", exc)
         return None
 
     @staticmethod
