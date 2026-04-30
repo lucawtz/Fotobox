@@ -184,7 +184,9 @@ def main():
                         logger.warning("Auslöser ignoriert: %s", camera.error_message)
                         btns.wait_for_release()
                     elif mode == "single":
-                        camera.wake_liveview()  # Kamera vor Aufnahme aufwecken
+                        # Kein Auto-Wake — Live-View muss manuell per Camera-Knopf
+                        # oder Q auf der Fotobox aktiviert werden, sonst killt der
+                        # capture-preview-Pull eine eventuell laufende manuelle LV.
                         photo = _do_countdown(ui, camera, cfg, 1, 1)
                         if photo:
                             result_photo = photo
@@ -192,7 +194,6 @@ def main():
                             state = "RESULT"
                         btns.wait_for_release()
                     else:  # collage
-                        camera.wake_liveview()
                         shots: list[str] = []
                         for i in range(4):
                             photo = _do_countdown(ui, camera, cfg, i + 1, 4)

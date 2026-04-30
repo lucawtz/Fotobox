@@ -73,11 +73,14 @@ class Camera:
             except Exception:
                 pass
 
-        self.wake_liveview()
+        # Beim Start nur output-Mode setzen (sonst kommt später kein HDMI),
+        # aber kein Preview-Pull — das würde der manuellen LV-Aktivierung
+        # in die Quere kommen.
+        self.wake_liveview(with_preview=False)
 
         self.available = True
         self.error_message = ""
-        logger.info("Kamera bereit")
+        logger.info("Kamera bereit (manuelle LV-Aktivierung)")
 
     # ── Live-View Wake (ohne capture-preview!) ─────────────────────────────────
 
@@ -162,12 +165,9 @@ class Camera:
                 self.available = False
                 self.error_message = "Kamera getrennt – USB prüfen"
                 logger.warning("Watchdog: Kamera verloren")
-            elif detected and self.available:
-                # Keep-Alive MIT Preview-Pull: bei der EOS 700D fällt
-                # Live-View ohne den Pull nach 1-2s wieder zurück.
-                # Macht alle KEEPALIVE_S einen kurzen Spiegelhub-Klick,
-                # dafür bleibt das HDMI-Signal kontinuierlich aktiv.
-                self.wake_liveview(with_preview=True)
+            # Sonst: nichts tun. Live-View aktiviert der Nutzer manuell
+            # über den Display-Knopf an der Kamera oder Q auf der Fotobox.
+            # Automatisches Wake würde die manuelle Aktivierung killen.
 
     # ── Capture ────────────────────────────────────────────────────────────────
 
