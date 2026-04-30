@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 import signal
@@ -80,7 +81,16 @@ def _count_photos(picture_dir: str) -> int:
 
 # ── Haupt-Funktion ─────────────────────────────────────────────────────────────
 
+def _parse_args():
+    p = argparse.ArgumentParser(description="Fotobox")
+    p.add_argument("--no-hotspot", action="store_true",
+                   help="Hotspot trotz hotspot_enabled=true NICHT starten "
+                        "(für Setup/Test mit VNC über Heim-WLAN)")
+    return p.parse_args()
+
+
 def main():
+    args = _parse_args()
     _setup_logging()
     cfg = config.cfg
 
@@ -98,12 +108,15 @@ def main():
     os.makedirs(cfg["picture_dir"],   exist_ok=True)
     os.makedirs(cfg["thumbnail_dir"], exist_ok=True)
 
-    # Hotspot — defensiv: darf die App-Initialisierung niemals blockieren
-    if cfg.get("hotspot_enabled"):
+    # Hotspot — defensiv: darf die App-Initialisierung niemals blockieren.
+    # CLI-Flag --no-hotspot überschreibt config (für VNC-Setup-Betrieb).
+    if cfg.get("hotspot_enabled") and not args.no_hotspot:
         try:
             hotspot.start()
         except Exception as exc:
             logger.warning("Hotspot-Start fehlgeschlagen: %s", exc)
+    elif args.no_hotspot:
+        logger.info("Hotspot per --no-hotspot übersprungen — Heim-WLAN bleibt aktiv")
 
     # Galerie-Server (Daemon-Thread)
     threading.Thread(target=gallery_server.run, daemon=True).start()
