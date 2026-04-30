@@ -23,8 +23,9 @@ class Camera:
 
     DEFAULT_KEEPALIVE_S = 30
 
-    # Config-Namen für Live-View je nach Kamera-Modell
-    _VIEWFINDER_KEYS = ("viewfinder", "eosviewfinder")
+    # Output-Mode für die EOS-700D: TFT = HDMI/Display, PC = USB-Preview.
+    # Wir brauchen beides: TFT für die Capture-Card, PC für capture-preview.
+    OUTPUT_MODE = "3"  # = TFT + PC
 
     def __init__(self, keepalive_s: int = DEFAULT_KEEPALIVE_S):
         self.available = False
@@ -84,33 +85,46 @@ class Camera:
     def wake_liveview(self, with_preview: bool = True) -> bool:
         """Aktiviert Live-View an der Kamera.
 
-        Schritt 1: viewfinder=1 setzen (Spiegel hoch, Live-View-Modus an).
-        Schritt 2 (optional): einen Preview-Frame über USB abrufen damit
-            die Kamera den Live-View-Modus tatsächlich hält. Ohne diesen
-            zweiten Schritt fällt die EOS 700D nach dem Spiegelhub sofort
-            wieder zurück (man hört nur Klick-Klick aber sieht nichts).
+        Schritt 1: output=3 (TFT+PC) setzen — bei der EOS 700D ist
+            output per Default auf "Off"; ohne das kommt überhaupt
+            kein Bild aus der Kamera (weder Display noch HDMI noch USB).
+        Schritt 2: viewfinder=1 (Live-View-Modus an, Spiegel hoch).
+        Schritt 3 (optional): einen Preview-Frame über USB abrufen, damit
+            die Kamera im Live-View-Modus bleibt — ohne diesen Pull fällt
+            die 700D nach dem Spiegelhub sofort zurück.
 
-        with_preview=False für Keep-Alive-Calls vom Watchdog — wir wollen
-        nicht alle 8s einen Spiegelhub plus Preview-Pull triggern.
+        with_preview=False für Watchdog-Calls — den Preview-Pull machen
+        wir nur wenn der Nutzer aktiv weckt (Q-Knopf, vor Aufnahme), nicht
+        alle 30s im Watchdog.
         """
         logger.info("wake_liveview(with_preview=%s)", with_preview)
         ok = False
 
-        # Schritt 1: viewfinder-Config setzen
-        for key in self._VIEWFINDER_KEYS:
-            try:
-                r = self._gphoto(["--set-config", f"{key}=1"], timeout=5)
-                if r.returncode == 0:
-                    logger.info("  → %s=1 OK", key)
-                    ok = True
-                    break
-                else:
-                    err = r.stderr.strip()[:120] if r.stderr else "(kein Fehlertext)"
-                    logger.info("  → %s=1 fehlgeschlagen: %s", key, err)
-            except Exception as exc:
-                logger.debug("  → %s Exception: %s", key, exc)
+        # Schritt 1: output auf TFT+PC stellen (Default ist Off!)
+        try:
+            r = self._gphoto(["--set-config", f"output={self.OUTPUT_MODE}"], timeout=5)
+            if r.returncode == 0:
+                logger.info("  → output=%s (TFT+PC) OK", self.OUTPUT_MODE)
+            else:
+                err = r.stderr.strip()[:120] if r.stderr else "(kein Fehlertext)"
+                logger.info("  → output=%s fehlgeschlagen: %s",
+                            self.OUTPUT_MODE, err)
+        except Exception as exc:
+            logger.debug("  → output Exception: %s", exc)
 
-        # Schritt 2: Preview-Pull damit Live-View aktiv bleibt
+        # Schritt 2: viewfinder einschalten
+        try:
+            r = self._gphoto(["--set-config", "viewfinder=1"], timeout=5)
+            if r.returncode == 0:
+                logger.info("  → viewfinder=1 OK")
+                ok = True
+            else:
+                err = r.stderr.strip()[:120] if r.stderr else "(kein Fehlertext)"
+                logger.info("  → viewfinder=1 fehlgeschlagen: %s", err)
+        except Exception as exc:
+            logger.debug("  → viewfinder Exception: %s", exc)
+
+        # Schritt 3: Preview-Pull damit Live-View aktiv bleibt
         if with_preview:
             try:
                 with self._cmd_lock:
@@ -121,7 +135,7 @@ class Camera:
                         timeout=8,
                     )
                 if r.returncode == 0:
-                    logger.info("  → capture-preview OK (Live-View aktiv gehalten)")
+                    logger.info("  → capture-preview OK (Live-View hält)")
                     ok = True
                 else:
                     err = r.stderr.decode("utf-8", errors="replace").strip()[:200]
