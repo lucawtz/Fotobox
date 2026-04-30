@@ -35,6 +35,7 @@ SLIDE_DURATION_MS = 5000
 GALLERY_PORT = 5000
 
 # WLAN-Hotspot (Option B)
+HOTSPOT_ENABLED  = False          # auf False setzen zum Testen via VNC/SSH
 HOTSPOT_SSID     = "Fotobox"
 HOTSPOT_PASSWORD = "fotobox123"
 HOTSPOT_IP       = "192.168.4.1"

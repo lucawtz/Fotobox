@@ -33,7 +33,8 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
-    hotspot.start()
+    if config.HOTSPOT_ENABLED:
+        hotspot.start()
     threading.Thread(target=gallery_server.run, daemon=True).start()
     logger.info("Galerie erreichbar unter: %s", config.GALLERY_URL)
 
