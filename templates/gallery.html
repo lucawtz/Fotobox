@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fotobox Galerie</title>
+  <title>{{ event_name }} – Galerie</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #110a03; color: #f0e6cc; font-family: system-ui, sans-serif; min-height: 100vh; }
@@ -17,6 +17,8 @@
     }
     header h1 { font-size: 1.4rem; color: #d4a86a; letter-spacing: .05em; }
     header p  { font-size: 0.8rem; color: #6a4f2e; margin-top: .25rem; }
+    .admin-link { position: absolute; top: 1rem; right: 1rem; font-size: .75rem; color: #3a2810; text-decoration: none; }
+    .admin-link:hover { color: #d4a86a; }
 
     .grid {
       display: grid;
@@ -42,16 +44,14 @@
     }
     .empty span { font-size: 3rem; }
 
-    #status {
-      text-align: center; padding: .6rem;
-      font-size: .7rem; color: #3a2810;
-    }
+    #status { text-align: center; padding: .6rem; font-size: .7rem; color: #3a2810; }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Fotobox Galerie</h1>
+  <header style="position:relative">
+    <h1>{{ event_name }}</h1>
     <p id="count-label">{{ photos|length }} Foto{{ 's' if photos|length != 1 else '' }}</p>
+    <a href="/admin" class="admin-link">Admin</a>
   </header>
 
   {% if photos %}
@@ -74,7 +74,6 @@
   <div id="status">Aktualisiert alle 10 Sekunden</div>
 
   <script>
-    // Lazy-load images
     const imgs = document.querySelectorAll('img[data-src]');
     const io = new IntersectionObserver(entries => {
       entries.forEach(e => {
@@ -88,7 +87,6 @@
     });
     imgs.forEach(img => io.observe(img));
 
-    // Auto-refresh when new photos arrive
     let known = {{ photos|length }};
     setInterval(async () => {
       try {

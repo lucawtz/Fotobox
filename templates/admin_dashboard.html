@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin – {{ event_name }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #110a03; color: #f0e6cc;
+      font-family: system-ui, sans-serif; min-height: 100vh;
+    }
+    header {
+      background: #1c0e04; border-bottom: 1px solid #2e1a08;
+      padding: 1rem 1.5rem;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    header h1 { font-size: 1.3rem; color: #d4a86a; }
+    header a { color: #6a4f2e; font-size: .85rem; text-decoration: none; }
+    header a:hover { color: #d4a86a; }
+
+    main { max-width: 680px; margin: 0 auto; padding: 1.5rem 1rem 4rem; display: flex; flex-direction: column; gap: 1.5rem; }
+
+    .section {
+      background: #1c0e04; border: 1px solid #2e1a08;
+      border-radius: 12px; padding: 1.5rem;
+    }
+    .section h2 { font-size: 1rem; color: #d4a86a; margin-bottom: 1.25rem; padding-bottom: .5rem; border-bottom: 1px solid #2e1a08; }
+
+    .field { display: flex; flex-direction: column; gap: .35rem; margin-bottom: 1rem; }
+    label { font-size: .82rem; color: #a07848; }
+    input[type="text"], input[type="password"], input[type="number"] {
+      padding: .6rem .9rem;
+      background: #0d0704; border: 1px solid #3a2010;
+      border-radius: 8px; color: #f0e6cc; font-size: .95rem;
+    }
+    input:focus { outline: 2px solid #d4a86a; border-color: transparent; }
+    input[type="file"] { color: #a07848; font-size: .85rem; }
+
+    .btn {
+      display: inline-block; padding: .65rem 1.4rem;
+      border: none; border-radius: 8px;
+      font-size: .95rem; font-weight: 600; cursor: pointer;
+      text-decoration: none; transition: opacity .15s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn-primary { background: #d4a86a; color: #1a0a02; }
+    .btn-danger  { background: #7a1a08; color: #ffddd5; }
+    .btn-sm      { padding: .45rem .9rem; font-size: .85rem; }
+
+    .status-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: .75rem; margin-bottom: .5rem;
+    }
+    .stat {
+      background: #0d0704; border-radius: 8px; padding: .75rem 1rem;
+    }
+    .stat .label { font-size: .75rem; color: #6a4f2e; margin-bottom: .25rem; }
+    .stat .value { font-size: 1.1rem; font-weight: 700; }
+    .ok   { color: #5dba70; }
+    .warn { color: #e8a830; }
+    .err  { color: #e05535; }
+
+    .msg   { background: #0a2a10; color: #7de89a; border: 1px solid #1a5a28; border-radius: 8px; padding: .65rem 1rem; font-size: .9rem; }
+    .error { background: #3a0a02; color: #ff8870; border: 1px solid #6a1808; border-radius: 8px; padding: .65rem 1rem; font-size: .9rem; }
+
+    .danger-zone h2 { color: #e05535; border-color: #3a1010; }
+    .confirm-input { display: flex; gap: .75rem; margin-top: .75rem; }
+    .confirm-input input { flex: 1; }
+
+    .hint { font-size: .78rem; color: #4a3520; margin-top: .35rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Admin — {{ event_name }}</h1>
+    <div style="display:flex;gap:1rem">
+      <a href="/">Galerie</a>
+      <a href="/admin/logout">Abmelden</a>
+    </div>
+  </header>
+
+  <main>
+    {% if msg   %}<div class="msg">✓ {{ msg }}</div>{% endif %}
+    {% if error %}<div class="error">⚠ {{ error }}</div>{% endif %}
+
+    <!-- Status -->
+    <div class="section">
+      <h2>System-Status</h2>
+      <div class="status-grid" id="status-grid">
+        <div class="stat"><div class="label">Kamera</div><div class="value" id="s-cam">…</div></div>
+        <div class="stat"><div class="label">Fotos</div><div class="value" id="s-count">…</div></div>
+        <div class="stat"><div class="label">Speicher frei</div><div class="value" id="s-disk">…</div></div>
+        <div class="stat"><div class="label">Hotspot</div><div class="value {{ 'ok' if cfg.hotspot_enabled else 'warn' }}">{{ 'aktiv' if cfg.hotspot_enabled else 'deaktiviert' }}</div></div>
+      </div>
+      <p class="hint">Aktualisiert alle 15 Sekunden</p>
+    </div>
+
+    <!-- Einstellungen -->
+    <div class="section">
+      <h2>Einstellungen</h2>
+      <form method="post" action="/admin/config">
+        <div class="field">
+          <label>Event-Name</label>
+          <input type="text" name="event_name" value="{{ cfg.event_name }}" required>
+        </div>
+        <div class="field">
+          <label>Countdown-Dauer (Sekunden)</label>
+          <input type="number" name="countdown_duration" value="{{ cfg.countdown_duration }}" min="1" max="10">
+        </div>
+        <div class="field">
+          <label>WLAN-Name (SSID)</label>
+          <input type="text" name="wifi_ssid" value="{{ cfg.wifi_ssid }}">
+          <p class="hint">Änderung erfordert Neustart des Hotspots</p>
+        </div>
+        <div class="field">
+          <label>WLAN-Passwort</label>
+          <input type="text" name="wifi_password" value="{{ cfg.wifi_password }}">
+        </div>
+        <div class="field">
+          <label>Neuer Admin-PIN (min. 4 Zeichen, leer = unverändert)</label>
+          <input type="password" name="admin_pin" placeholder="••••" autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn btn-primary">Speichern</button>
+      </form>
+    </div>
+
+    <!-- Logo -->
+    <div class="section">
+      <h2>Logo hochladen</h2>
+      <form method="post" action="/admin/logo" enctype="multipart/form-data">
+        <div class="field">
+          <label>Bilddatei (PNG, JPG – wird auf 80 px Höhe skaliert)</label>
+          <input type="file" name="logo" accept="image/*" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Hochladen</button>
+      </form>
+    </div>
+
+    <!-- Alle Fotos löschen -->
+    <div class="section danger-zone">
+      <h2>Alle Fotos löschen</h2>
+      <p style="font-size:.9rem;color:#a07848;margin-bottom:.75rem">
+        Löscht alle Fotos unwiderruflich. Tippe <strong style="color:#f0e6cc">LOESCHEN</strong> zur Bestätigung.
+      </p>
+      <form method="post" action="/admin/reset">
+        <div class="confirm-input">
+          <input type="text" name="confirm" placeholder="LOESCHEN" required>
+          <button type="submit" class="btn btn-danger">Alle löschen</button>
+        </div>
+      </form>
+    </div>
+  </main>
+
+  <script>
+    async function fetchStatus() {
+      try {
+        const r = await fetch('/admin/status');
+        if (!r.ok) return;
+        const d = await r.json();
+        document.getElementById('s-cam').textContent   = d.camera_ok ? 'erkannt' : 'fehlt';
+        document.getElementById('s-cam').className     = 'value ' + (d.camera_ok ? 'ok' : 'err');
+        document.getElementById('s-count').textContent = d.photo_count + ' Fotos';
+        document.getElementById('s-disk').textContent  = d.free_gb + ' GB';
+        document.getElementById('s-disk').className    = 'value ' + (d.free_mb < 500 ? 'warn' : 'ok');
+      } catch {}
+    }
+    fetchStatus();
+    setInterval(fetchStatus, 15000);
+  </script>
+</body>
+</html>

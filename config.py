@@ -1,42 +1,78 @@
+import json
+import logging
 import os
 
+logger = logging.getLogger(__name__)
+
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
-# Hardware
-BUTTON_PIN = 17
-CAPTURE_DEVICE = 0      # Index der Capture Card
+_DEFAULTS: dict = {
+    "wifi_ssid": "Fotobox",
+    "wifi_password": "fotobox123",
+    "event_name": "Fotobox",
+    "countdown_duration": 3,
+    "max_photos": 500,
+    "gpio_pins": {"left": 17, "trigger": 27, "right": 22},
+    "logo_path": "Layout/logo.png",
+    "admin_pin": "1234",
+    "idle_timeout": 60,
+    "slide_duration_ms": 5000,
+    "gallery_port": 5000,
+    "hotspot_enabled": False,
+    "hotspot_ip": "192.168.4.1",
+    "picture_dir": "Picture_Box",
+    "capture_device": 0,
+    "overlay_path": "Layout/Overlay_Allgemein.png",
+    "polaroid_frames": [[567, 255, -5], [1098, 256, 5], [1633, 257, 12]],
+    "polaroid_photo_size": [310, 295],
+    "live_view_rect": [440, 600, 1040, 450],
+    "overlay_button_foto": [1475, 700, 385, 100],
+    "overlay_button_collage": [1475, 840, 385, 110],
+    "disk_warn_mb": 500,
+    "thumbnail_max_age_days": 30,
+}
 
-# Foto
-COUNTDOWN_SECONDS = 3
-PICTURE_PATH = os.path.join(BASE_DIR, "Picture_Box")
 
-# Overlay-Bild (bereits 1920×1080, wird 1:1 geladen)
-OVERLAY_PATH = os.path.join(BASE_DIR, "Layout", "Overlay_Allgemein.png")
+def load_config() -> dict:
+    data = {k: (list(v) if isinstance(v, (list, tuple)) else
+                dict(v) if isinstance(v, dict) else v)
+            for k, v in _DEFAULTS.items()}
 
-# Polaroid-Foto-Bereiche im Overlay (Mittelpunkt X, Mittelpunkt Y, Rotation in Grad)
-POLAROID_FRAMES = [
-    (567,  255,  -5),    # links
-    (1098, 256,   5),    # mitte
-    (1633, 257,  12),    # rechts
-]
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            data.update(saved)
+        except Exception as exc:
+            logger.warning("config.json unlesbar: %s — nutze Defaults", exc)
 
-# Größe des schwarzen Foto-Bereichs je Polaroid (etwas kleiner als Slot 317×302)
-POLAROID_PHOTO_SIZE = (310, 295)
+    # Relative Pfade → absolut
+    for key in ("logo_path", "overlay_path"):
+        if not os.path.isabs(data[key]):
+            data[key] = os.path.join(BASE_DIR, data[key])
+    if not os.path.isabs(data["picture_dir"]):
+        data["picture_dir"] = os.path.join(BASE_DIR, data["picture_dir"])
 
-# Live-View Bereich — gleicher Abstand oben (zu Polaroids) und unten (zum Rand)
-LIVE_VIEW_RECT = (440, 600, 1040, 450)
+    # Laufzeit-Werte
+    data["gallery_url"] = f"http://{data['hotspot_ip']}:{data['gallery_port']}"
+    data["thumbnail_dir"] = os.path.join(BASE_DIR, "thumbnails")
 
-# Idle-Diashow: Sekunden ohne Auslöser bis die Slideshow startet
-IDLE_TIMEOUT = 60
-# Anzeigedauer pro Foto in der Diashow (Millisekunden)
-SLIDE_DURATION_MS = 5000
+    return data
 
-# Galerie-Webserver
-GALLERY_PORT = 5000
 
-# WLAN-Hotspot (Option B)
-HOTSPOT_ENABLED  = False          # auf False setzen zum Testen via VNC/SSH
-HOTSPOT_SSID     = "Fotobox"
-HOTSPOT_PASSWORD = "fotobox123"
-HOTSPOT_IP       = "192.168.4.1"
-GALLERY_URL      = f"http://{HOTSPOT_IP}:{GALLERY_PORT}"
+def save_config(data: dict):
+    saveable = {k: v for k, v in data.items()
+                if k not in ("gallery_url", "thumbnail_dir")}
+    for key in ("logo_path", "overlay_path", "picture_dir"):
+        if key in saveable and os.path.isabs(saveable[key]):
+            try:
+                saveable[key] = os.path.relpath(saveable[key], BASE_DIR)
+            except ValueError:
+                pass
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(saveable, f, indent=2, ensure_ascii=False)
+    logger.info("config.json gespeichert")
+
+
+cfg: dict = load_config()
