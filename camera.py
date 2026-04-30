@@ -81,26 +81,56 @@ class Camera:
 
     # ── Live-View Wake (ohne capture-preview!) ─────────────────────────────────
 
-    def wake_liveview(self) -> bool:
-        """Aktiviert Live-View durch viewfinder=1 (sicher, kein Shutter-Trigger).
+    def wake_liveview(self, with_preview: bool = True) -> bool:
+        """Aktiviert Live-View an der Kamera.
 
-        Wird aufgerufen:
-        - Beim Init (Start-Display)
-        - Vor jeder Aufnahme (falls Kamera eingeschlafen ist)
-        - Vom Watchdog periodisch (Best-Effort-Keep-Alive)
-        - Manuell wenn der Nutzer den Wake-Knopf drückt
+        Schritt 1: viewfinder=1 setzen (Spiegel hoch, Live-View-Modus an).
+        Schritt 2 (optional): einen Preview-Frame über USB abrufen damit
+            die Kamera den Live-View-Modus tatsächlich hält. Ohne diesen
+            zweiten Schritt fällt die EOS 700D nach dem Spiegelhub sofort
+            wieder zurück (man hört nur Klick-Klick aber sieht nichts).
+
+        with_preview=False für Keep-Alive-Calls vom Watchdog — wir wollen
+        nicht alle 8s einen Spiegelhub plus Preview-Pull triggern.
         """
+        logger.info("wake_liveview(with_preview=%s)", with_preview)
         ok = False
+
+        # Schritt 1: viewfinder-Config setzen
         for key in self._VIEWFINDER_KEYS:
             try:
                 r = self._gphoto(["--set-config", f"{key}=1"], timeout=5)
                 if r.returncode == 0:
+                    logger.info("  → %s=1 OK", key)
                     ok = True
                     break
-            except Exception:
-                continue
-        if not ok:
-            logger.debug("wake_liveview: kein viewfinder-Config setzbar")
+                else:
+                    err = r.stderr.strip()[:120] if r.stderr else "(kein Fehlertext)"
+                    logger.info("  → %s=1 fehlgeschlagen: %s", key, err)
+            except Exception as exc:
+                logger.debug("  → %s Exception: %s", key, exc)
+
+        # Schritt 2: Preview-Pull damit Live-View aktiv bleibt
+        if with_preview:
+            try:
+                with self._cmd_lock:
+                    r = subprocess.run(
+                        ["gphoto2", "--capture-preview", "--stdout"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        timeout=8,
+                    )
+                if r.returncode == 0:
+                    logger.info("  → capture-preview OK (Live-View aktiv gehalten)")
+                    ok = True
+                else:
+                    err = r.stderr.decode("utf-8", errors="replace").strip()[:200]
+                    logger.warning("  → capture-preview failed: %s", err)
+            except subprocess.TimeoutExpired:
+                logger.warning("  → capture-preview Timeout")
+            except Exception as exc:
+                logger.warning("  → capture-preview Exception: %s", exc)
+
         return ok
 
     # ── Watchdog ───────────────────────────────────────────────────────────────
@@ -120,9 +150,11 @@ class Camera:
                 self.error_message = "Kamera getrennt – USB prüfen"
                 logger.warning("Watchdog: Kamera verloren")
             elif detected and self.available:
-                # Sicherer Keep-Alive: nur viewfinder=1 nachsetzen, nicht
-                # capture-preview (würde Shutter triggern bei der 700D)
-                self.wake_liveview()
+                # Sicherer Keep-Alive: nur viewfinder=1 nachsetzen ohne
+                # Preview-Pull — sonst klappert der Spiegel alle 30s.
+                # Live-View startet trotzdem nicht zuverlässig — der Nutzer
+                # muss Q drücken (= wake_liveview mit Preview-Pull).
+                self.wake_liveview(with_preview=False)
 
     # ── Capture ────────────────────────────────────────────────────────────────
 
