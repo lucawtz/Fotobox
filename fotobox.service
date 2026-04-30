@@ -5,8 +5,7 @@ Wants=graphical.target
 
 [Service]
 ExecStart=__PYTHON__ __INSTALL_DIR__/main.py
-Restart=always
-RestartSec=5
+Restart=no
 User=__USER__
 Group=__USER__
 Environment=DISPLAY=:0

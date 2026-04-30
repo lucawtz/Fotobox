@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 
 def _load_or_create_secret_key() -> bytes:
-    """Persistenter Flask-Secret-Key. Sonst werden bei `Restart=always`
-    alle Admin-Sessions invalidiert wenn der Service neu startet."""
+    """Persistenter Flask-Secret-Key. Sonst werden alle Admin-Sessions
+    invalidiert wenn der Service neu startet."""
     key_path = os.path.join(config.BASE_DIR, ".flask_secret")
     try:
         if os.path.isfile(key_path):
