@@ -88,7 +88,13 @@ sudo udevadm control --reload-rules
 sudo mkdir -p /run/fotobox
 sudo chown "$INSTALL_USER":"$INSTALL_USER" /run/fotobox 2>/dev/null || true
 
-# 7. Drucker-Gruppe
+# 7. Privilegierte Ports — venv-Python darf Port 80 binden, damit
+# Gäste nur 'http://192.168.4.1' eingeben müssen statt ':5000'.
+# setcap wirkt nur für genau diese Python-Binary, kein System-Risiko.
+echo "→ venv-Python für Port 80 berechtigen..."
+sudo setcap 'cap_net_bind_service=+ep' "$PYTHON_BIN" || true
+
+# 8. Drucker-Gruppe
 sudo usermod -aG lpadmin "$INSTALL_USER" 2>/dev/null || true
 
 echo ""
@@ -98,5 +104,9 @@ echo "Nächste Schritte:"
 echo "  1. config.json anpassen: nano $INSTALL_DIR/config.json"
 echo "  2. Fotobox starten:      sudo systemctl start fotobox"
 echo "  3. Logs:                 tail -f $INSTALL_DIR/logs/fotobox.log"
-echo "  4. Admin-Interface:      http://192.168.4.1:5000/admin  (wenn Hotspot aktiv)"
+echo "  4. Galerie:              http://192.168.4.1   (oder :5000 falls gallery_port=5000)"
+echo "  5. Admin-Interface:      http://192.168.4.1/admin"
+echo ""
+echo "Tipp: in config.json 'gallery_port: 80' setzen damit Gäste"
+echo "die URL ohne Port-Angabe nutzen können."
 echo ""
