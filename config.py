@@ -16,7 +16,7 @@ _DEFAULTS: dict = {
     "gpio_pins": {"left": 17, "trigger": 27, "right": 22},
     "logo_path": "Layout/logo.png",
     "admin_pin": "1234",
-    "idle_timeout": 60,
+    "idle_timeout": 300,
     "slide_duration_ms": 5000,
     "gallery_port": 5000,
     "hotspot_enabled": False,
