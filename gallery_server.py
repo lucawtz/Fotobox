@@ -1,8 +1,11 @@
 import logging
 import os
+import secrets
 import shutil
 import subprocess
 import threading
+import time
+from collections import deque
 from datetime import datetime
 from functools import wraps
 from typing import Optional
@@ -16,11 +19,52 @@ import events
 
 logger = logging.getLogger(__name__)
 
+
+def _load_or_create_secret_key() -> bytes:
+    """Persistenter Flask-Secret-Key. Sonst werden bei `Restart=always`
+    alle Admin-Sessions invalidiert wenn der Service neu startet."""
+    key_path = os.path.join(config.BASE_DIR, ".flask_secret")
+    try:
+        if os.path.isfile(key_path):
+            with open(key_path, "rb") as f:
+                data = f.read().strip()
+                if len(data) >= 32:
+                    return data
+        key = secrets.token_bytes(48)
+        # 0600 — nur der Service-User darf lesen
+        with open(key_path, "wb") as f:
+            f.write(key)
+        try:
+            os.chmod(key_path, 0o600)
+        except OSError:
+            pass
+        return key
+    except OSError as exc:
+        logger.warning("Secret-Key-Datei nicht beschreibbar (%s) — Fallback auf RAM", exc)
+        return secrets.token_bytes(48)
+
+
 app = Flask(__name__, template_folder=os.path.join(config.BASE_DIR, "templates"))
-app.secret_key = os.urandom(24)
+app.secret_key = _load_or_create_secret_key()
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    # 16 MB für Logo-Uploads — alles drüber wird von Flask abgewiesen,
+    # ohne dass der Request gelesen wird.
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024,
+)
 
 _EXTS = {".jpg", ".jpeg", ".png"}
 _thumb_lock = threading.Lock()
+
+# ── Brute-Force-Schutz für Admin-Login ───────────────────────────────────────
+# Per-IP Lockout: nach 5 Fehlversuchen 5 Minuten Sperre.
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_LOCKOUT_S    = 300
+_LOGIN_WINDOW_S     = 600
+_login_lock = threading.Lock()
+_login_attempts: dict[str, deque] = {}
+_login_locked_until: dict[str, float] = {}
 
 SPA_DIST  = os.path.join(config.BASE_DIR, "frontend", "dist")
 SPA_INDEX = os.path.join(SPA_DIST, "index.html")
@@ -135,6 +179,41 @@ def _make_preview(event: str, filename: str) -> Optional[str]:
         except Exception as exc:
             logger.warning("Preview '%s/%s': %s", event, filename, exc)
             return None
+
+
+# ── Captive-Portal-Detection ───────────────────────────────────────────────────
+# Wenn dnsmasq alle DNS-Anfragen auf den Pi umleitet, landen die Probe-URLs
+# der Phone-Betriebssysteme bei uns. Wir schicken einen 302-Redirect auf die
+# Galerie zurück → iOS/Android öffnen automatisch das Captive-Portal-Popup
+# mit unserer Galerie. Sehr UX-freundlich für Gäste — kein "URL eintippen".
+
+_PORTAL_PATHS = {
+    "/hotspot-detect.html",         # iOS, macOS
+    "/library/test/success.html",
+    "/generate_204",                # Android, Chrome
+    "/gen_204",
+    "/ncsi.txt",                    # Windows
+    "/connecttest.txt",
+    "/redirect",
+    "/success.txt",                 # Firefox
+    "/canonical.html",
+    "/check_network_status.txt",
+}
+
+
+@app.before_request
+def _captive_portal_redirect():
+    """Wenn ein Request mit fremdem Host hereinkommt (typisch:
+    captive.apple.com etc.), Phone zur Galerie umleiten."""
+    host = (request.host or "").split(":")[0]
+    cfg_ip = config.cfg.get("hotspot_ip", "192.168.4.1")
+    # Lokale Hosts NICHT umleiten
+    if host in (cfg_ip, "localhost", "127.0.0.1") or host.endswith(".local"):
+        return None
+    # Bekannte Probe-Pfade ODER fremder Host = Captive-Portal-Probe
+    if request.path in _PORTAL_PATHS or host not in (cfg_ip, ""):
+        from flask import redirect
+        return redirect(f"http://{cfg_ip}/", code=302)
 
 
 # ── Galerie-Routen ─────────────────────────────────────────────────────────────
@@ -402,13 +481,57 @@ def api_admin_me():
     return jsonify(authenticated=bool(session.get("admin_logged_in")))
 
 
+def _client_ip() -> str:
+    # Hinter Hotspot/lokal — kein Proxy. addr reicht.
+    return request.remote_addr or "unknown"
+
+
+def _login_check_locked(ip: str) -> Optional[int]:
+    """Liefert verbleibende Sekunden des Lockouts oder None."""
+    with _login_lock:
+        until = _login_locked_until.get(ip, 0)
+        remaining = int(until - time.time())
+        return remaining if remaining > 0 else None
+
+
+def _login_record_failure(ip: str):
+    now = time.time()
+    with _login_lock:
+        dq = _login_attempts.setdefault(ip, deque())
+        dq.append(now)
+        # Alte Versuche außerhalb des Fensters wegwerfen
+        while dq and now - dq[0] > _LOGIN_WINDOW_S:
+            dq.popleft()
+        if len(dq) >= _LOGIN_MAX_ATTEMPTS:
+            _login_locked_until[ip] = now + _LOGIN_LOCKOUT_S
+            dq.clear()
+            logger.warning("Admin-Login: %s gesperrt für %ds", ip, _LOGIN_LOCKOUT_S)
+
+
+def _login_record_success(ip: str):
+    with _login_lock:
+        _login_attempts.pop(ip, None)
+        _login_locked_until.pop(ip, None)
+
+
 @app.route("/api/admin/login", methods=["POST"])
 def api_admin_login():
+    ip = _client_ip()
+    locked = _login_check_locked(ip)
+    if locked is not None:
+        return jsonify(ok=False,
+                       error=f"Zu viele Fehlversuche – bitte {locked}s warten"), 429
+
     pin = (request.form.get("pin") or
            (request.get_json(silent=True) or {}).get("pin", "")).strip()
-    if pin and pin == config.cfg.get("admin_pin", "1234"):
+    expected = config.cfg.get("admin_pin", "1234")
+    # secrets.compare_digest gegen Timing-Attacks
+    if pin and secrets.compare_digest(pin, expected):
         session["admin_logged_in"] = True
+        _login_record_success(ip)
         return jsonify(ok=True)
+
+    _login_record_failure(ip)
     return jsonify(ok=False, error="Falscher PIN"), 401
 
 
@@ -477,31 +600,70 @@ def api_admin_config():
     })
 
     new_pin = (data.get("admin_pin") or "").strip()
-    if new_pin and len(new_pin) >= 4:
+    if new_pin:
+        if len(new_pin) < 4 or len(new_pin) > 12:
+            return jsonify(ok=False,
+                           error="PIN muss 4–12 Zeichen lang sein"), 400
         config.cfg["admin_pin"] = new_pin
 
     config.save_config(config.cfg)
     return jsonify(ok=True)
 
 
+_ALLOWED_LOGO_FORMATS = {"PNG", "JPEG", "GIF", "WEBP", "BMP"}
+# Pi 4B hat 4 GB RAM — 50 MP gibt PIL ~200 MB; alles drüber ist Bomb-Verdacht.
+_MAX_LOGO_PIXELS = 50_000_000
+
+
 @app.route("/api/admin/logo", methods=["POST"])
 @_api_admin_required
 def api_admin_logo():
     logo_file = request.files.get("logo")
-    if not logo_file or logo_file.filename == "":
+    if not logo_file or not logo_file.filename:
         return jsonify(ok=False, error="Keine Datei ausgewählt"), 400
+
     try:
-        from PIL import Image
-        img = Image.open(logo_file)
-        img.verify()
-    except Exception:
+        from PIL import Image, UnidentifiedImageError
+    except ImportError:
+        return jsonify(ok=False, error="PIL nicht verfügbar"), 500
+
+    # 1. Format-Check über verify() — verbraucht den Stream, danach reseek
+    try:
+        with Image.open(logo_file) as probe:
+            fmt = (probe.format or "").upper()
+            w, h = probe.size
+            if fmt not in _ALLOWED_LOGO_FORMATS:
+                return jsonify(ok=False,
+                               error=f"Format {fmt or '?'} nicht unterstützt"), 400
+            if w * h > _MAX_LOGO_PIXELS:
+                return jsonify(ok=False,
+                               error="Bild zu groß (max. 50 Megapixel)"), 400
+            probe.verify()
+    except (UnidentifiedImageError, Image.DecompressionBombError):
+        return jsonify(ok=False, error="Ungültige oder zu große Bilddatei"), 400
+    except Exception as exc:
+        logger.warning("Logo-Verify: %s", exc)
         return jsonify(ok=False, error="Ungültige Bilddatei"), 400
 
+    # 2. Konvertieren + Speichern. Auf Display-Größe runterskalieren — die UI
+    # zeigt das Logo eh nur mit max 80 px Höhe.
     logo_path = os.path.join(config.BASE_DIR, "Layout", "logo.png")
     os.makedirs(os.path.dirname(logo_path), exist_ok=True)
-    logo_file.seek(0)
-    with Image.open(logo_file) as img:
-        img.save(logo_path, "PNG")
+    try:
+        logo_file.seek(0)
+        with Image.open(logo_file) as img:
+            img.load()
+            if img.height > 200:
+                ratio = 200 / img.height
+                img = img.resize((int(img.width * ratio), 200), Image.LANCZOS)
+            if img.mode != "RGBA":
+                img = img.convert("RGBA")
+            img.save(logo_path, "PNG", optimize=True)
+    except (Image.DecompressionBombError, MemoryError):
+        return jsonify(ok=False, error="Bild zu groß zum Verarbeiten"), 400
+    except Exception as exc:
+        logger.error("Logo-Save: %s", exc)
+        return jsonify(ok=False, error="Speichern fehlgeschlagen"), 500
 
     config.cfg["logo_path"] = logo_path
     config.save_config(config.cfg)
@@ -582,8 +744,17 @@ def _prewarm_thumbnails():
 _running = True
 
 
-def run(host: str = "0.0.0.0", port: int = None):
+def run(host: Optional[str] = None, port: Optional[int] = None):
+    """Startet den Galerie-Server.
+
+    Wenn host nicht gesetzt wird, hängt das Bind davon ab ob der Hotspot aktiv
+    ist: mit Hotspot bindet der Server an alle Interfaces (Gäste sollen ja die
+    Galerie über WLAN erreichen), ohne Hotspot nur an 127.0.0.1 — sonst wäre
+    die Galerie ungewollt im Heim-WLAN exponiert.
+    """
     global _running
+    if host is None:
+        host = "0.0.0.0" if config.cfg.get("hotspot_enabled") else "127.0.0.1"
     port = port or config.cfg["gallery_port"]
 
     log_dir = os.path.join(config.BASE_DIR, "logs")

@@ -94,6 +94,17 @@ sudo chown "$INSTALL_USER":"$INSTALL_USER" /run/fotobox 2>/dev/null || true
 echo "→ venv-Python für Port 80 berechtigen..."
 sudo setcap 'cap_net_bind_service=+ep' "$PYTHON_BIN" || true
 
+# 7b. Captive-Portal: dnsmasq alle DNS-Anfragen auf die Hotspot-IP
+# auflösen lassen. Damit kommen iOS/Android-Probe-URLs (apple.com,
+# gstatic.com etc.) bei uns an, der Server schickt 302-Redirect zur
+# Galerie — Phone öffnet automatisch das "Anmelden"-Popup.
+echo "→ Captive-Portal-DNS einrichten..."
+sudo mkdir -p /etc/NetworkManager/dnsmasq-shared.d
+sudo tee /etc/NetworkManager/dnsmasq-shared.d/captive.conf > /dev/null <<'EOF'
+# Fotobox Captive-Portal: alle DNS-Anfragen auf Hotspot-IP umleiten
+address=/#/192.168.4.1
+EOF
+
 # 8. Drucker-Gruppe
 sudo usermod -aG lpadmin "$INSTALL_USER" 2>/dev/null || true
 
