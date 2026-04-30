@@ -12,8 +12,11 @@ def _interface_exists(ifname: str) -> bool:
         result = subprocess.run(
             ["nmcli", "-t", "-f", "DEVICE,TYPE", "device"],
             check=True, capture_output=True, text=True,
+            timeout=5,
         )
-    except (FileNotFoundError, subprocess.CalledProcessError):
+    except (FileNotFoundError, subprocess.CalledProcessError,
+            subprocess.TimeoutExpired) as exc:
+        logger.warning("nmcli device-Listing fehlgeschlagen: %s", exc)
         return False
     for line in result.stdout.splitlines():
         parts = line.split(":")
@@ -34,14 +37,23 @@ def start() -> bool:
 
     if not _interface_exists(ifname):
         logger.warning(
-            "Hotspot-Interface '%s' nicht gefunden — Hotspot wird nicht gestartet", ifname)
+            "Hotspot-Interface '%s' nicht gefunden — Hotspot wird nicht gestartet",
+            ifname)
         return False
 
-    # Alte Verbindung mit gleichem Namen entfernen, damit Interface-Wechsel sauber greift
-    subprocess.run(
-        ["nmcli", "connection", "delete", "fotobox-hotspot"],
-        capture_output=True, text=True,
-    )
+    # Alte Verbindung mit gleichem Namen entfernen — mit Timeout damit
+    # die App nicht hängenbleibt falls NetworkManager nicht reagiert.
+    try:
+        subprocess.run(
+            ["nmcli", "connection", "delete", "fotobox-hotspot"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("nmcli connection delete: Timeout — Hotspot übersprungen")
+        return False
+    except FileNotFoundError:
+        logger.warning("nmcli nicht gefunden — Hotspot nicht verfügbar")
+        return False
 
     try:
         subprocess.run(
@@ -55,12 +67,16 @@ def start() -> bool:
             check=True,
             capture_output=True,
             text=True,
+            timeout=20,
         )
         logger.info("Hotspot '%s' gestartet auf %s — IP: %s",
                     ssid, ifname, cfg["hotspot_ip"])
         return True
+    except subprocess.TimeoutExpired:
+        logger.warning("nmcli hotspot start: Timeout — Hotspot übersprungen")
     except FileNotFoundError:
         logger.warning("nmcli nicht gefunden — Hotspot nicht verfügbar")
     except subprocess.CalledProcessError as exc:
-        logger.warning("Hotspot-Fehler (%s): %s", ifname, exc.stderr.strip())
+        err = (exc.stderr or "").strip()
+        logger.warning("Hotspot-Fehler (%s): %s", ifname, err)
     return False

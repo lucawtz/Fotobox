@@ -98,9 +98,12 @@ def main():
     os.makedirs(cfg["picture_dir"],   exist_ok=True)
     os.makedirs(cfg["thumbnail_dir"], exist_ok=True)
 
-    # Hotspot
+    # Hotspot — defensiv: darf die App-Initialisierung niemals blockieren
     if cfg.get("hotspot_enabled"):
-        hotspot.start()
+        try:
+            hotspot.start()
+        except Exception as exc:
+            logger.warning("Hotspot-Start fehlgeschlagen: %s", exc)
 
     # Galerie-Server (Daemon-Thread)
     threading.Thread(target=gallery_server.run, daemon=True).start()
@@ -160,12 +163,15 @@ def main():
                 trigger = btns.trigger_pressed()
                 right   = btns.right_pressed()
 
-                # Linker Knopf (Q) auf dem Homescreen = Kamera-Display aufwecken
+                # Linker Knopf (Q) auf dem Homescreen = Kamera-Display aufwecken.
+                # Async ausführen damit die UI nicht 8-18 s blockiert während
+                # gphoto2 läuft.
                 if left and not (trigger or right):
                     idle_since = now
                     if camera.available:
                         logger.info("Manueller Wake — Live-View einschalten")
-                        camera.wake_liveview()
+                        threading.Thread(
+                            target=camera.wake_liveview, daemon=True).start()
                     btns.wait_for_release()
 
                 elif trigger or right:
