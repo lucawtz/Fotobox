@@ -90,6 +90,8 @@ export const api = {
   thumbUrl:    (p: Pick<Photo, "event" | "filename">) => `/thumb/${evPath(p)}`,
   imgUrl:      (p: Pick<Photo, "event" | "filename">) => `/img/${evPath(p)}`,
   downloadUrl: (p: Pick<Photo, "event" | "filename">) => `/download/${evPath(p)}`,
+  zipUrl:      (event?: string | null) =>
+    "/api/download-zip" + (event ? `?event=${encodeURIComponent(event)}` : ""),
   logoUrl:     () => `/api/admin/logo/preview?t=${Date.now()}`,
 
   delete: async (p: Pick<Photo, "event" | "filename">, pin: string): Promise<DeleteResult> => {

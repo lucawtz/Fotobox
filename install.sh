@@ -76,7 +76,19 @@ sed -e "s|__PYTHON__|$PYTHON_BIN|g" \
 sudo systemctl daemon-reload
 sudo systemctl enable fotobox.service
 
-# 6. Drucker-Gruppe
+# 6. USB-Auto-Export — udev-Regel installieren
+# Wenn ein USB-Stick eingesteckt wird, startet der Pi via udev
+# scripts/usb_export.py und kopiert alle Fotos rüber.
+echo "→ USB-Auto-Export einrichten..."
+chmod +x "$INSTALL_DIR/scripts/usb_export.py"
+sed "s|/home/pi/Fotobox|$INSTALL_DIR|g" \
+    "$INSTALL_DIR/scripts/99-fotobox-usb.rules" \
+    | sudo tee /etc/udev/rules.d/99-fotobox-usb.rules > /dev/null
+sudo udevadm control --reload-rules
+sudo mkdir -p /run/fotobox
+sudo chown "$INSTALL_USER":"$INSTALL_USER" /run/fotobox 2>/dev/null || true
+
+# 7. Drucker-Gruppe
 sudo usermod -aG lpadmin "$INSTALL_USER" 2>/dev/null || true
 
 echo ""

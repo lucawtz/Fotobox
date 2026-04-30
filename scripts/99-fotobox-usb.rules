@@ -1,0 +1,13 @@
+# Fotobox USB-Auto-Export
+#
+# Wenn ein USB-Stick (Block-Device, Partition) angeschlossen wird, startet
+# udev über systemd-run einen Hintergrund-Service, der scripts/usb_export.py
+# aufruft. So blockiert udev nicht und der Kopierprozess kann beliebig lange
+# laufen.
+#
+# Nur Partitionen (sd[a-z][0-9]) — niemals das ganze Device, weil rohe Disks
+# kein Filesystem haben. ENV{ID_FS_USAGE}=="filesystem" filtert nicht-FS-Sticks
+# heraus (z.B. unformatierte Sticks oder Container).
+
+ACTION=="add", KERNEL=="sd[a-z][0-9]", SUBSYSTEMS=="usb", ENV{ID_FS_USAGE}=="filesystem", \
+    RUN+="/bin/systemd-run --no-block --unit=fotobox-usb-export@%k.service --description='Fotobox USB-Export %k' /usr/bin/python3 /home/pi/Fotobox/scripts/usb_export.py /dev/%k"

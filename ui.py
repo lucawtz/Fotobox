@@ -422,6 +422,76 @@ class UI:
             hint = self._f_small.render(f"[ {key_hint} ]", True, C_DIM)
             self._screen.blit(hint, hint.get_rect(centerx=rect.centerx, centery=rect.centery + 20))
 
+    # ── USB-Export-Overlay ─────────────────────────────────────────────────────
+
+    def render_usb_overlay(self, status: dict):
+        """Vollbild-Overlay während ein USB-Stick-Export läuft.
+
+        status: {state, current, total, message}  — geliefert von usb_export.py
+        """
+        state    = status.get("state", "")
+        current  = int(status.get("current") or 0)
+        total    = int(status.get("total")   or 0)
+        message  = status.get("message", "") or ""
+
+        if state == "copying":
+            title       = "Fotos werden auf USB kopiert"
+            color       = C_GOLD
+            sub_text    = f"{current} / {total}"
+            hint        = message[-50:] if message else "bitte Stick stecken lassen"
+        elif state == "done":
+            title       = "Fertig"
+            color       = C_GREEN
+            sub_text    = f"{current} / {total}" if total else ""
+            hint        = "Stick kann jetzt entnommen werden"
+        elif state == "error":
+            title       = "Fehler"
+            color       = C_RED
+            sub_text    = ""
+            hint        = message or "Stick prüfen oder neu einstecken"
+        else:  # mounting / unbekannt
+            title       = "USB-Stick erkannt"
+            color       = C_GOLD
+            sub_text    = ""
+            hint        = message or "wird vorbereitet …"
+
+        # Verdunkelnder Hintergrund
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 220))
+        self._screen.blit(overlay, (0, 0))
+
+        # Titel
+        title_surf = self._f_large.render(title, True, color)
+        self._screen.blit(title_surf, title_surf.get_rect(center=(W // 2, H // 2 - 180)))
+
+        # Counter
+        if sub_text:
+            ct = self._f_big.render(sub_text, True, C_WHITE)
+            self._screen.blit(ct, ct.get_rect(center=(W // 2, H // 2 - 20)))
+
+        # Progress-Bar (nur bei copying mit total > 0 oder done)
+        if state in ("copying", "done") and total > 0:
+            bar_w = 900
+            bar_h = 22
+            bar_x = (W - bar_w) // 2
+            bar_y = H // 2 + 130
+            pct = max(0.0, min(1.0, current / total))
+            pygame.draw.rect(self._screen, C_BTN_BG,
+                             (bar_x, bar_y, bar_w, bar_h),
+                             border_radius=11)
+            fill_w = int(bar_w * pct)
+            if fill_w > 0:
+                pygame.draw.rect(self._screen, color,
+                                 (bar_x, bar_y, fill_w, bar_h),
+                                 border_radius=11)
+
+        # Hinweis-Zeile
+        if hint:
+            hsurf = self._f_normal.render(hint, True, C_DIM)
+            self._screen.blit(hsurf, hsurf.get_rect(center=(W // 2, H // 2 + 220)))
+
+        pygame.display.flip()
+
     # ── Slideshow ──────────────────────────────────────────────────────────────
 
     def refresh_slideshow(self, folder: str):

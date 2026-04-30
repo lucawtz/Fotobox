@@ -7,8 +7,11 @@ import {
   Typography,
   CircularProgress,
   Chip,
+  Button,
+  Tooltip,
 } from "@mui/material";
 import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
+import DownloadForOfflineRoundedIcon from "@mui/icons-material/DownloadForOfflineRounded";
 import { api, EventInfo, Photo } from "../api";
 import TopBar from "../components/TopBar";
 import PhotoTile from "../components/PhotoTile";
@@ -65,12 +68,56 @@ export default function Gallery() {
 
   const showChips = allEvents.length > 1;
 
+  const downloadLabel = filter === ALL ? "Alle herunterladen" : "Event herunterladen";
+  const handleDownload = () => {
+    window.location.href = api.zipUrl(filter === ALL ? null : filter);
+  };
+
+  const desktopAction = photos.length > 0 && (
+    <Button
+      onClick={handleDownload}
+      startIcon={<DownloadForOfflineRoundedIcon />}
+      variant="contained"
+      size="small"
+      sx={{
+        display: { xs: "none", sm: "inline-flex" },
+        px: 2.25,
+      }}
+    >
+      ZIP
+    </Button>
+  );
+  const mobileAction = photos.length > 0 && (
+    <Tooltip title={downloadLabel}>
+      <span style={{ display: "inline-flex" }}>
+        <Box
+          component="button"
+          onClick={handleDownload}
+          sx={{
+            display: { xs: "inline-flex", sm: "none" },
+            background: "transparent",
+            border: 0,
+            cursor: "pointer",
+            color: "primary.main",
+            p: 1,
+            borderRadius: "50%",
+            "&:hover": { bgcolor: "rgba(26,115,232,0.08)" },
+          }}
+          aria-label={downloadLabel}
+        >
+          <DownloadForOfflineRoundedIcon />
+        </Box>
+      </span>
+    </Tooltip>
+  );
+
   return (
     <>
       <TopBar
         title={eventName}
         subtitle={subtitle}
         onRefresh={() => load(filter)}
+        actions={<>{desktopAction}{mobileAction}</>}
       />
 
       {showChips && (

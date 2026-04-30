@@ -3,10 +3,12 @@ import os
 import shutil
 import subprocess
 import threading
+from datetime import datetime
 from functools import wraps
 from typing import Optional
+from zipfile import ZIP_STORED, ZipFile, ZipInfo
 
-from flask import (Flask, abort, jsonify, render_template,
+from flask import (Flask, Response, abort, jsonify, render_template,
                    request, send_file, session)
 
 import config
@@ -160,6 +162,100 @@ def download(event, filename):
     if path is None:
         abort(404)
     return send_file(path, as_attachment=True)
+
+
+# ── ZIP-Bulk-Download ──────────────────────────────────────────────────────────
+
+class _ChunkBuffer:
+    """File-like Buffer der ZipFile-Output sammelt; wird per flush() geleert."""
+    def __init__(self):
+        self._buf = bytearray()
+        self._pos = 0
+
+    def write(self, data):
+        self._buf.extend(data)
+        self._pos += len(data)
+        return len(data)
+
+    def tell(self):
+        return self._pos
+
+    def flush(self):
+        pass
+
+    def take(self) -> bytes:
+        if not self._buf:
+            return b""
+        out = bytes(self._buf)
+        self._buf = bytearray()
+        return out
+
+
+def _stream_zip(items: list[tuple[str, str]]):
+    """Generiert ZIP-Daten on-the-fly, ohne alles in den Speicher zu laden."""
+    buf = _ChunkBuffer()
+    with ZipFile(buf, mode="w", compression=ZIP_STORED, allowZip64=True) as zf:
+        for arcname, src in items:
+            try:
+                zinfo = ZipInfo.from_file(src, arcname)
+                zinfo.compress_type = ZIP_STORED
+                with zf.open(zinfo, mode="w", force_zip64=True) as zout, \
+                     open(src, "rb") as fsrc:
+                    while True:
+                        chunk = fsrc.read(64 * 1024)
+                        if not chunk:
+                            break
+                        zout.write(chunk)
+                        out = buf.take()
+                        if out:
+                            yield out
+            except Exception as exc:
+                logger.warning("ZIP-Skip %s: %s", arcname, exc)
+                continue
+            out = buf.take()
+            if out:
+                yield out
+    final = buf.take()
+    if final:
+        yield final
+
+
+def _zip_safe_name(name: str) -> str:
+    keep = []
+    for c in name:
+        if c.isalnum() or c in "_-":
+            keep.append(c)
+        else:
+            keep.append("_")
+    out = "".join(keep).strip("_") or "Fotobox"
+    return out[:60]
+
+
+@app.route("/api/download-zip")
+def api_download_zip():
+    event_filter = request.args.get("event") or None
+    pic_dir = _pic_dir()
+    items: list[tuple[str, str]] = []
+    for ev, f in _photo_list(event_filter):
+        items.append((f"{ev}/{f}", os.path.join(pic_dir, ev, f)))
+    if not items:
+        abort(404)
+
+    if event_filter:
+        zip_name = f"{_zip_safe_name(event_filter)}.zip"
+    else:
+        date = datetime.now().strftime("%Y-%m-%d")
+        zip_name = f"Fotobox_{_zip_safe_name(config.cfg.get('event_name', 'Fotobox'))}_{date}.zip"
+
+    return Response(
+        _stream_zip(items),
+        mimetype="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{zip_name}"',
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @app.route("/api/count")

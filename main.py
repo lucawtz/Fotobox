@@ -16,6 +16,7 @@ import disk_monitor
 import events
 import gallery_server
 import hotspot
+import usb_status
 from camera import Camera
 from hardware import Buttons
 from ui import UI
@@ -181,6 +182,16 @@ def main():
             now       = time.monotonic()
             free_mb   = disk_monitor.get_free_mb(config.BASE_DIR)
             photo_cnt = _count_photos(cfg["picture_dir"])
+
+            # ── USB-Export hat absolute Priorität ─────────────────────────────
+            # Wird vom udev-getriggerten scripts/usb_export.py geschrieben.
+            # Solange er aktiv ist, alle anderen UI-Aktionen pausieren.
+            usb = usb_status.read()
+            if usb is not None:
+                ui.render_usb_overlay(usb)
+                idle_since = now      # Slideshow-Idle nicht hochzählen lassen
+                clock.tick(15)
+                continue
 
             # ── HOMESCREEN ────────────────────────────────────────────────────
             if state == "HOMESCREEN":

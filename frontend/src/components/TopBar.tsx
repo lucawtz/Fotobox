@@ -1,3 +1,4 @@
+import { ReactNode } from "react";
 import { AppBar, Toolbar, Box, IconButton, Typography, Tooltip } from "@mui/material";
 import AdminPanelSettingsRoundedIcon from "@mui/icons-material/AdminPanelSettingsRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
@@ -8,9 +9,10 @@ interface Props {
   subtitle?: string;
   onRefresh?: () => void;
   showAdmin?: boolean;
+  actions?: ReactNode;
 }
 
-export default function TopBar({ title, subtitle, onRefresh, showAdmin = true }: Props) {
+export default function TopBar({ title, subtitle, onRefresh, showAdmin = true, actions }: Props) {
   return (
     <AppBar position="sticky" elevation={0}>
       <Toolbar sx={{ minHeight: { xs: 64, sm: 72 }, gap: 1, px: { xs: 2, sm: 3 } }}>
@@ -50,6 +52,8 @@ export default function TopBar({ title, subtitle, onRefresh, showAdmin = true }:
             </Typography>
           )}
         </Box>
+
+        {actions}
 
         {onRefresh && (
           <Tooltip title="Aktualisieren">
