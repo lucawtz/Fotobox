@@ -524,13 +524,14 @@ class UI:
         self._screen.blit(self._qr_surf, (x, y))
 
     def _draw_qr_bottom_left(self):
-        """QR im Holzfeld links neben der Live-Vorschau."""
+        """QR zentriert in der Sidebar unter dem Logo."""
         QR_SIZE = 160
         PAD = 12
-        x, y = 220, 700
+        SIDEBAR_CENTER_X = 160  # Sidebar geht von x=0 bis x=320
+        x = SIDEBAR_CENTER_X - QR_SIZE // 2
+        y = 360  # Unter dem Logo
 
         if self._qr_surf is None:
-            # Placeholder damit das Fehlen sofort sichtbar ist
             bg = pygame.Surface((QR_SIZE + PAD * 2, QR_SIZE + PAD * 2))
             bg.fill((80, 30, 20))
             bg.set_alpha(220)
