@@ -80,6 +80,10 @@ def save_config(data: dict):
                 saveable[key] = os.path.relpath(saveable[key], BASE_DIR)
             except ValueError:
                 pass
+        # Plattform-neutral speichern: Backslashes (Windows) auf Forward-Slashes,
+        # damit die config.json zwischen Dev-Maschine und Pi austauschbar bleibt.
+        if key in saveable and isinstance(saveable[key], str):
+            saveable[key] = saveable[key].replace("\\", "/")
 
     tmp_path = CONFIG_PATH + ".tmp"
     with _save_lock:

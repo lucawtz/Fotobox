@@ -9,7 +9,7 @@
     "trigger": 27,
     "right": 22
   },
-  "logo_path": "Layout\\logo.png",
+  "logo_path": "Layout/logo.png",
   "admin_pin": "1234",
   "idle_timeout": 0,
   "slide_duration_ms": 5000,
@@ -19,7 +19,7 @@
   "hotspot_interface": "wlan1",
   "picture_dir": "Picture_Box",
   "capture_device": 0,
-  "overlay_path": "Layout\\Overlay_Allgemein.png",
+  "overlay_path": "Layout/Overlay_Allgemein.png",
   "polaroid_frames": [
     [
       567,
