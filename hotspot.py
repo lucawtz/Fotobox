@@ -114,27 +114,30 @@ def stop() -> None:
     logger.info("Hotspot beendet")
 
 
-def _read_interface_ip(ifname: str) -> Optional[str]:
+def _read_interface_ip(ifname: str, retries: int = 6,
+                       delay_s: float = 0.5) -> Optional[str]:
     """Liest die tatsächlich zugewiesene IPv4-Adresse aus dem Interface.
 
-    NetworkManager mit 'shared mode' weist im Zweifel seine eigene Default-
-    Range zu (10.42.0.1/24) und ignoriert unser ipv4.addresses. Wir lesen
-    deshalb nach dem Start aus, was wirklich gesetzt ist, statt blind auf
-    die config-Einstellung zu vertrauen.
+    NetworkManager weist die IP nach 'connection up' asynchron zu — ggf.
+    erst 1-2 Sekunden später. Wir retryen deshalb mehrmals (Default: bis
+    zu 3 Sekunden warten) bevor wir aufgeben.
     """
-    try:
-        result = subprocess.run(
-            ["ip", "-4", "-o", "addr", "show", "dev", ifname],
-            capture_output=True, text=True, timeout=5,
-        )
-    except Exception:
-        return None
-    if result.returncode != 0:
-        return None
-    # Output: "4: wlan1    inet 10.42.0.1/24 brd 10.42.0.255 ..."
-    for token in result.stdout.split():
-        if token.startswith(("10.", "192.168.", "172.")) and "/" in token:
-            return token.split("/")[0]
+    import time
+    for _ in range(max(1, retries)):
+        try:
+            result = subprocess.run(
+                ["ip", "-4", "-o", "addr", "show", "dev", ifname],
+                capture_output=True, text=True, timeout=5,
+            )
+        except Exception:
+            time.sleep(delay_s)
+            continue
+        if result.returncode == 0:
+            # Output: "4: wlan1    inet 10.42.0.1/24 brd 10.42.0.255 ..."
+            for token in result.stdout.split():
+                if "/" in token and token.startswith(("10.", "192.168.", "172.")):
+                    return token.split("/")[0]
+        time.sleep(delay_s)
     return None
 
 
@@ -177,13 +180,18 @@ def start() -> bool:
     # unterscheiden weil NetworkManager im 'shared mode' standardmäßig
     # 10.42.0.1/24 zuweist und unser ipv4.addresses ignoriert.
     actual_ip = _read_interface_ip(ifname)
-    if actual_ip and actual_ip != hotspot_ip:
-        logger.info(
-            "Hotspot: NetworkManager nutzt %s statt %s — config in-memory updaten",
-            actual_ip, hotspot_ip)
+    if actual_ip:
+        if actual_ip != hotspot_ip:
+            logger.info(
+                "Hotspot: NetworkManager nutzt %s (config wollte %s) — cfg-update",
+                actual_ip, hotspot_ip)
         config.cfg["hotspot_ip"] = actual_ip
         config.cfg["gallery_url"] = (
             f"http://{actual_ip}:{config.cfg.get('gallery_port', 5000)}")
+    else:
+        logger.warning(
+            "Hotspot: Interface-IP konnte nach Start nicht ausgelesen werden "
+            "— QR-Code zeigt evtl. falsche IP (%s aus config)", hotspot_ip)
 
     logger.info("Hotspot '%s' gestartet auf %s — IP: %s, Channel 6 (2.4 GHz)",
                 ssid, ifname, actual_ip or hotspot_ip)
