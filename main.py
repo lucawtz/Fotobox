@@ -145,7 +145,8 @@ def main():
         btns.close()
         sys.exit(1)
 
-    logger.info("Fotobox bereit. Space=Einzelfoto  E=Collage  Q=Zurück  Esc=Beenden")
+    logger.info("Fotobox bereit. Space=Einzelfoto  E=Collage  "
+                "Q=Wake-Camera/Zurück  Esc=Beenden")
 
     # ── State-Machine ──────────────────────────────────────────────────────────
     state           = "HOMESCREEN"

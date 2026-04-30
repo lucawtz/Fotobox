@@ -6,8 +6,8 @@ import threading
 from functools import wraps
 from typing import Optional
 
-from flask import (Flask, abort, jsonify, redirect, render_template,
-                   request, send_file, session, url_for)
+from flask import (Flask, abort, jsonify, render_template,
+                   request, send_file, session)
 
 import config
 
@@ -74,15 +74,6 @@ def _make_thumb(filename: str) -> Optional[str]:
         except Exception as exc:
             logger.warning("Thumbnail '%s': %s", filename, exc)
             return None
-
-
-def admin_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not session.get("admin_logged_in"):
-            return redirect(url_for("admin_login_page"))
-        return f(*args, **kwargs)
-    return decorated
 
 
 # ── Galerie-Routen ─────────────────────────────────────────────────────────────
@@ -189,123 +180,158 @@ def api_delete(filename: str):
     return jsonify(ok=True)
 
 
-@app.route("/delete/<filename>", methods=["POST"])
-def delete_photo(filename):
-    pin = request.form.get("pin", "").strip()
-    if pin != config.cfg.get("admin_pin", "1234"):
-        return render_template("photo.html", filename=filename,
-                               event_name=config.cfg.get("event_name", "Fotobox"),
-                               error="Falscher PIN")
-    path = _safe_path(filename)
-    if path is None:
-        abort(404)
-    try:
-        os.remove(path)
-    except Exception as exc:
-        logger.error("Foto löschen: %s", exc)
-        abort(500)
-    thumb_path = os.path.join(_thumb_dir(), filename)
-    if os.path.exists(thumb_path):
-        os.remove(thumb_path)
-    logger.info("Foto gelöscht: %s", filename)
-    return redirect(url_for("gallery"))
+# ── Admin-SPA-Catch-all ────────────────────────────────────────────────────────
 
-
-# ── Admin-Routen ───────────────────────────────────────────────────────────────
-
-@app.route("/admin")
-def admin_root():
+@app.route("/admin", defaults={"_path": ""})
+@app.route("/admin/<path:_path>")
+def admin_spa(_path: str):
+    if _spa_enabled():
+        return send_file(SPA_INDEX)
     if session.get("admin_logged_in"):
-        return redirect(url_for("admin_dashboard"))
-    return redirect(url_for("admin_login_page"))
+        return render_template("admin_dashboard.html",
+                               cfg=config.cfg,
+                               event_name=config.cfg.get("event_name", "Fotobox"),
+                               msg=None, error=None)
+    return render_template("admin_login.html", error=None)
 
 
-@app.route("/admin/login", methods=["GET", "POST"])
-def admin_login_page():
-    error = None
-    if request.method == "POST":
-        pin = request.form.get("pin", "").strip()
-        if pin == config.cfg.get("admin_pin", "1234"):
-            session["admin_logged_in"] = True
-            return redirect(url_for("admin_dashboard"))
-        error = "Falscher PIN"
-    return render_template("admin_login.html", error=error)
+# ── Admin JSON-API ─────────────────────────────────────────────────────────────
+
+def _api_admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("admin_logged_in"):
+            return jsonify(ok=False, error="Unauthorized"), 401
+        return f(*args, **kwargs)
+    return decorated
 
 
-@app.route("/admin/logout")
-def admin_logout():
+@app.route("/api/admin/me")
+def api_admin_me():
+    return jsonify(authenticated=bool(session.get("admin_logged_in")))
+
+
+@app.route("/api/admin/login", methods=["POST"])
+def api_admin_login():
+    pin = (request.form.get("pin") or
+           (request.get_json(silent=True) or {}).get("pin", "")).strip()
+    if pin and pin == config.cfg.get("admin_pin", "1234"):
+        session["admin_logged_in"] = True
+        return jsonify(ok=True)
+    return jsonify(ok=False, error="Falscher PIN"), 401
+
+
+@app.route("/api/admin/logout", methods=["POST"])
+def api_admin_logout():
     session.clear()
-    return redirect(url_for("admin_login_page"))
+    return jsonify(ok=True)
 
 
-@app.route("/admin/dashboard")
-@admin_required
-def admin_dashboard():
-    msg   = request.args.get("msg")
-    error = request.args.get("error")
-    return render_template("admin_dashboard.html",
-                           cfg=config.cfg,
-                           event_name=config.cfg.get("event_name", "Fotobox"),
-                           msg=msg, error=error)
-
-
-@app.route("/admin/config", methods=["POST"])
-@admin_required
-def admin_config():
-    form = request.form
+@app.route("/api/admin/status")
+@_api_admin_required
+def api_admin_status():
+    camera_ok = False
     try:
-        countdown = int(form.get("countdown_duration",
+        r = subprocess.run(["gphoto2", "--auto-detect"],
+                           capture_output=True, text=True, timeout=5)
+        camera_ok = "usb" in r.stdout.lower()
+    except Exception:
+        pass
+
+    try:
+        usage = shutil.disk_usage(config.BASE_DIR)
+        free_mb  = int(usage.free  / 1024 / 1024)
+        total_mb = int(usage.total / 1024 / 1024)
+    except Exception:
+        free_mb = 0
+        total_mb = 0
+
+    return jsonify({
+        "camera_ok":   camera_ok,
+        "free_mb":     free_mb,
+        "free_gb":     round(free_mb / 1024, 1),
+        "total_mb":    total_mb,
+        "total_gb":    round(total_mb / 1024, 1),
+        "photo_count": len(_photo_list()),
+        "event_name":  config.cfg.get("event_name", "Fotobox"),
+    })
+
+
+@app.route("/api/admin/config", methods=["GET", "POST"])
+@_api_admin_required
+def api_admin_config():
+    if request.method == "GET":
+        return jsonify({
+            "event_name":         config.cfg.get("event_name", "Fotobox"),
+            "wifi_ssid":          config.cfg.get("wifi_ssid", ""),
+            "wifi_password":      config.cfg.get("wifi_password", ""),
+            "countdown_duration": config.cfg.get("countdown_duration", 3),
+            "admin_pin":          config.cfg.get("admin_pin", "1234"),
+            "has_logo":           os.path.isfile(config.cfg.get("logo_path", "")),
+        })
+
+    data = request.get_json(silent=True) or request.form
+    try:
+        countdown = int(data.get("countdown_duration",
                                  config.cfg["countdown_duration"]))
         countdown = max(1, min(10, countdown))
-    except ValueError:
+    except (ValueError, TypeError):
         countdown = config.cfg["countdown_duration"]
 
     config.cfg.update({
-        "event_name":        form.get("event_name", config.cfg["event_name"]).strip(),
-        "wifi_ssid":         form.get("wifi_ssid",  config.cfg["wifi_ssid"]).strip(),
-        "wifi_password":     form.get("wifi_password", config.cfg["wifi_password"]),
+        "event_name":         (data.get("event_name") or config.cfg["event_name"]).strip(),
+        "wifi_ssid":          (data.get("wifi_ssid")  or config.cfg["wifi_ssid"]).strip(),
+        "wifi_password":      data.get("wifi_password", config.cfg["wifi_password"]) or "",
         "countdown_duration": countdown,
     })
 
-    new_pin = form.get("admin_pin", "").strip()
-    if len(new_pin) >= 4:
+    new_pin = (data.get("admin_pin") or "").strip()
+    if new_pin and len(new_pin) >= 4:
         config.cfg["admin_pin"] = new_pin
 
     config.save_config(config.cfg)
-    return redirect(url_for("admin_dashboard") + "?msg=Einstellungen+gespeichert")
+    return jsonify(ok=True)
 
 
-@app.route("/admin/logo", methods=["POST"])
-@admin_required
-def admin_logo():
+@app.route("/api/admin/logo", methods=["POST"])
+@_api_admin_required
+def api_admin_logo():
     logo_file = request.files.get("logo")
     if not logo_file or logo_file.filename == "":
-        return redirect(url_for("admin_dashboard") + "?error=Keine+Datei+ausgewählt")
+        return jsonify(ok=False, error="Keine Datei ausgewählt"), 400
     try:
         from PIL import Image
         img = Image.open(logo_file)
         img.verify()
     except Exception:
-        return redirect(url_for("admin_dashboard") + "?error=Ungültige+Bilddatei")
+        return jsonify(ok=False, error="Ungültige Bilddatei"), 400
 
     logo_path = os.path.join(config.BASE_DIR, "Layout", "logo.png")
     os.makedirs(os.path.dirname(logo_path), exist_ok=True)
     logo_file.seek(0)
-    from PIL import Image
     with Image.open(logo_file) as img:
         img.save(logo_path, "PNG")
 
     config.cfg["logo_path"] = logo_path
     config.save_config(config.cfg)
-    return redirect(url_for("admin_dashboard") + "?msg=Logo+hochgeladen")
+    return jsonify(ok=True)
 
 
-@app.route("/admin/reset", methods=["POST"])
-@admin_required
-def admin_reset():
-    confirm = request.form.get("confirm", "").strip()
+@app.route("/api/admin/logo/preview")
+def api_admin_logo_preview():
+    logo_path = config.cfg.get("logo_path", "")
+    if not logo_path or not os.path.isfile(logo_path):
+        abort(404)
+    return send_file(logo_path)
+
+
+@app.route("/api/admin/reset", methods=["POST"])
+@_api_admin_required
+def api_admin_reset():
+    data = request.get_json(silent=True) or request.form
+    confirm = (data.get("confirm") or "").strip()
     if confirm != "LOESCHEN":
-        return redirect(url_for("admin_dashboard") + "?error=Bestätigung+fehlgeschlagen")
+        return jsonify(ok=False, error="Bestätigung fehlgeschlagen"), 400
 
     pic_dir = _pic_dir()
     td = _thumb_dir()
@@ -323,32 +349,7 @@ def admin_reset():
             except Exception:
                 pass
     logger.info("Admin-Reset: %d Fotos gelöscht", removed)
-    return redirect(url_for("admin_dashboard") + f"?msg={removed}+Fotos+gelöscht")
-
-
-@app.route("/admin/status")
-@admin_required
-def admin_status():
-    camera_ok = False
-    try:
-        r = subprocess.run(["gphoto2", "--auto-detect"],
-                           capture_output=True, text=True, timeout=5)
-        camera_ok = "usb" in r.stdout.lower()
-    except Exception:
-        pass
-
-    try:
-        free_mb = int(shutil.disk_usage(config.BASE_DIR).free / 1024 / 1024)
-    except Exception:
-        free_mb = 0
-
-    return jsonify({
-        "camera_ok":   camera_ok,
-        "free_mb":     free_mb,
-        "free_gb":     round(free_mb / 1024, 1),
-        "photo_count": len(_photo_list()),
-        "event_name":  config.cfg.get("event_name", "Fotobox"),
-    })
+    return jsonify(ok=True, removed=removed)
 
 
 # ── Server starten ─────────────────────────────────────────────────────────────

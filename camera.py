@@ -10,15 +10,19 @@ logger = logging.getLogger(__name__)
 class Camera:
     """gphoto2-Wrapper mit Watchdog und manuellem Live-View-Wake.
 
-    HINWEIS zur EOS 700D:
-    - 'gphoto2 --capture-preview' triggert auf manchen Canon-Modellen
-      tatsächlich den Auslöser. Wir nutzen es deshalb NICHT für Keep-Alive.
-    - Live-View wird über '--set-config viewfinder=1' gestartet. Das
-      reicht meist nicht um die Kamera dauerhaft wach zu halten — daher
-      die Empfehlung: im Kameramenü unter 'Auto-Power-Off' auf "Aus"
-      stellen, dann bleibt der Live-View permanent.
-    - Zusätzlich wird vor jeder Aufnahme automatisch wake_liveview()
-      gerufen, falls die Kamera zwischendurch eingeschlafen ist.
+    Live-View bei der EOS 700D braucht drei Schritte (siehe wake_liveview):
+    1. output=3 (TFT+PC) — sonst sendet die Kamera auf keinem Kanal Bild
+    2. viewfinder=1 — Spiegel hoch, LV-Modus an
+    3. capture-preview — pullt einmal einen Frame, sonst fällt die 700D
+       sofort wieder aus dem LV-Modus heraus
+
+    Beobachtetes "Auslöse-Geräusch" beim capture-preview ist nur der
+    Spiegelhub, nicht der Verschluss — keine Shutter-Aktuationen verbraucht.
+
+    Wake-Strategie: Nutzer aktiviert manuell (Display-Knopf an Kamera
+    oder Q auf Fotobox), Watchdog mischt sich NICHT ein damit die manuelle
+    Aktivierung nicht gestört wird. Empfehlung: im Kameramenü unter
+    'Auto-Power-Off' auf "Aus" stellen.
     """
 
     DEFAULT_KEEPALIVE_S = 25

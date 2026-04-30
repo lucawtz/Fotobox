@@ -15,14 +15,6 @@ def get_free_mb(path: str) -> int:
         return 0
 
 
-def is_low(path: str, threshold_mb: int = 500) -> bool:
-    free = get_free_mb(path)
-    if free < threshold_mb:
-        logger.warning("Speicherwarnung: nur %d MB frei", free)
-        return True
-    return False
-
-
 def cleanup_old_thumbnails(thumb_dir: str, max_age_days: int = 30):
     if not os.path.isdir(thumb_dir):
         return

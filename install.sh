@@ -19,13 +19,16 @@ sudo apt-get update -qq
 sudo apt-get install -y \
     gphoto2 \
     hostapd \
+    network-manager \
     python3-pip \
     python3-venv \
     libatlas-base-dev \
     libjpeg-dev \
     libopencv-dev \
     cups \
-    cups-bsd
+    cups-bsd \
+    nodejs \
+    npm
 
 # 2. Verzeichnisstruktur
 echo "→ Verzeichnisstruktur anlegen..."
@@ -50,6 +53,17 @@ if [ ! -f "$INSTALL_DIR/config.json" ]; then
     echo "→ Beispiel-Konfiguration kopieren..."
     cp "$INSTALL_DIR/config.json.example" "$INSTALL_DIR/config.json"
     echo "   ⚠  Bitte config.json anpassen (Admin-PIN, Event-Name etc.)"
+fi
+
+# 4b. React-SPA bauen (Galerie + Admin-Interface)
+if [ -d "$INSTALL_DIR/frontend" ]; then
+    echo "→ Frontend (React-SPA) bauen..."
+    cd "$INSTALL_DIR/frontend"
+    if [ ! -d node_modules ]; then
+        npm install --silent
+    fi
+    npm run build --silent
+    cd "$INSTALL_DIR"
 fi
 
 # 5. systemd-Service mit aktuellen Pfaden installieren

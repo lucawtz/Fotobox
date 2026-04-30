@@ -13,7 +13,29 @@ export interface PhotosResponse {
 export interface DeleteResult {
   ok: boolean;
   error?: string;
+  removed?: number;
 }
+
+export interface AdminConfig {
+  event_name: string;
+  wifi_ssid: string;
+  wifi_password: string;
+  countdown_duration: number;
+  admin_pin: string;
+  has_logo: boolean;
+}
+
+export interface AdminStatus {
+  camera_ok: boolean;
+  free_mb: number;
+  free_gb: number;
+  total_mb: number;
+  total_gb: number;
+  photo_count: number;
+  event_name: string;
+}
+
+const FETCH_OPTS: RequestInit = { credentials: "include" };
 
 const json = async <T,>(res: Response): Promise<T> => {
   if (!res.ok) {
@@ -24,21 +46,50 @@ const json = async <T,>(res: Response): Promise<T> => {
   return res.json() as Promise<T>;
 };
 
-export const api = {
-  list: () => fetch("/api/photos").then(json<PhotosResponse>),
-  count: () => fetch("/api/count").then(json<{ count: number }>),
+const postJson = (url: string, body: unknown) => fetch(url, {
+  ...FETCH_OPTS,
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
 
-  thumbUrl: (filename: string) => `/thumb/${encodeURIComponent(filename)}`,
-  imgUrl:   (filename: string) => `/img/${encodeURIComponent(filename)}`,
+export const api = {
+  list:  () => fetch("/api/photos", FETCH_OPTS).then(json<PhotosResponse>),
+  count: () => fetch("/api/count",  FETCH_OPTS).then(json<{ count: number }>),
+
+  thumbUrl:    (filename: string) => `/thumb/${encodeURIComponent(filename)}`,
+  imgUrl:      (filename: string) => `/img/${encodeURIComponent(filename)}`,
   downloadUrl: (filename: string) => `/download/${encodeURIComponent(filename)}`,
+  logoUrl:     () => `/api/admin/logo/preview?t=${Date.now()}`,
 
   delete: async (filename: string, pin: string): Promise<DeleteResult> => {
     const fd = new FormData();
     fd.set("pin", pin);
     const res = await fetch(`/api/delete/${encodeURIComponent(filename)}`, {
+      ...FETCH_OPTS,
       method: "POST",
       body: fd,
     });
     return json<DeleteResult>(res);
+  },
+
+  admin: {
+    me:     () => fetch("/api/admin/me", FETCH_OPTS).then(json<{ authenticated: boolean }>),
+    login:  (pin: string) => postJson("/api/admin/login", { pin }).then(json<{ ok: boolean; error?: string }>),
+    logout: () => fetch("/api/admin/logout", { ...FETCH_OPTS, method: "POST" }).then(json<{ ok: boolean }>),
+    status: () => fetch("/api/admin/status", FETCH_OPTS).then(json<AdminStatus>),
+    config: {
+      get: () => fetch("/api/admin/config", FETCH_OPTS).then(json<AdminConfig>),
+      save: (data: Partial<AdminConfig>) =>
+        postJson("/api/admin/config", data).then(json<{ ok: boolean }>),
+    },
+    uploadLogo: async (file: File) => {
+      const fd = new FormData();
+      fd.set("logo", file);
+      const res = await fetch("/api/admin/logo", { ...FETCH_OPTS, method: "POST", body: fd });
+      return json<{ ok: boolean; error?: string }>(res);
+    },
+    reset: (confirm: string) =>
+      postJson("/api/admin/reset", { confirm }).then(json<DeleteResult>),
   },
 };
