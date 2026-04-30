@@ -64,7 +64,7 @@ export default function AdminEvent() {
     <>
       <Stack spacing={3}>
         <Box>
-          <Typography variant="h5" sx={{ fontFamily: '"Playfair Display", serif', fontWeight: 600 }}>
+          <Typography variant="h5" sx={{ fontWeight: 500 }}>
             Event
           </Typography>
           <Typography variant="body2" color="text.secondary">
@@ -104,15 +104,15 @@ export default function AdminEvent() {
                   min={1} max={10} step={1}
                   marks
                   valueLabelDisplay="auto"
-                  sx={{ color: "primary.light" }}
+                  sx={{ color: "primary.main" }}
                 />
                 <Box
                   sx={{
                     minWidth: 64, textAlign: "center",
                     px: 1.5, py: 0.75, borderRadius: 2,
-                    bgcolor: "rgba(212,168,106,0.12)",
-                    color: "primary.light",
-                    fontWeight: 700, fontSize: "1.25rem",
+                    bgcolor: "#e8f0fe",
+                    color: "primary.main",
+                    fontWeight: 600, fontSize: "1.25rem",
                   }}
                 >
                   {countdown}s

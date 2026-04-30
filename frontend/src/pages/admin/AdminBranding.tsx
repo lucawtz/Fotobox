@@ -63,7 +63,7 @@ export default function AdminBranding() {
     <>
       <Stack spacing={3}>
         <Box>
-          <Typography variant="h5" sx={{ fontFamily: '"Playfair Display", serif', fontWeight: 600 }}>
+          <Typography variant="h5" sx={{ fontWeight: 500 }}>
             Logo
           </Typography>
           <Typography variant="body2" color="text.secondary">
@@ -85,8 +85,8 @@ export default function AdminBranding() {
               cursor: "pointer",
               borderRadius: 3,
               border: "2px dashed",
-              borderColor: dragOver ? "primary.light" : "divider",
-              bgcolor: dragOver ? "rgba(212,168,106,0.06)" : "transparent",
+              borderColor: dragOver ? "primary.main" : "divider",
+              bgcolor: dragOver ? "#e8f0fe" : "grey.50",
               transition: "all .15s",
               p: { xs: 3, sm: 4 },
               display: "flex",
@@ -94,6 +94,7 @@ export default function AdminBranding() {
               alignItems: "center",
               gap: 2,
               textAlign: "center",
+              "&:hover": { bgcolor: dragOver ? "#e8f0fe" : "grey.100" },
             }}
           >
             <input
@@ -109,7 +110,7 @@ export default function AdminBranding() {
             />
 
             {busy ? (
-              <CircularProgress sx={{ color: "primary.light" }} />
+              <CircularProgress />
             ) : previewUrl ? (
               <Box
                 component="img"
@@ -119,16 +120,16 @@ export default function AdminBranding() {
                   maxWidth: { xs: 180, sm: 220 },
                   maxHeight: 140,
                   objectFit: "contain",
-                  filter: "drop-shadow(0 4px 16px rgba(0,0,0,0.4))",
+                  filter: "drop-shadow(0 2px 8px rgba(60,64,67,0.15))",
                 }}
               />
             ) : (
               <Box
                 sx={{
                   width: 64, height: 64, borderRadius: "50%",
-                  bgcolor: "rgba(212,168,106,0.10)",
+                  bgcolor: "#e8f0fe",
                   display: "grid", placeItems: "center",
-                  color: "primary.light",
+                  color: "primary.main",
                 }}
               >
                 <CloudUploadRoundedIcon fontSize="large" />
@@ -145,7 +146,7 @@ export default function AdminBranding() {
             </Box>
 
             {hasLogo && !busy && (
-              <Stack direction="row" alignItems="center" spacing={0.75} sx={{ color: "#7fd99a" }}>
+              <Stack direction="row" alignItems="center" spacing={0.75} sx={{ color: "success.main" }}>
                 <CheckCircleRoundedIcon fontSize="small" />
                 <Typography variant="caption">Aktuelles Logo aktiv</Typography>
               </Stack>

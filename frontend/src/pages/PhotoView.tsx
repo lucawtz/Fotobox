@@ -21,11 +21,11 @@ import type { Swiper as SwiperType } from "swiper";
 import "swiper/css";
 import "swiper/css/zoom";
 
-import { api, Photo } from "../api";
+import { api, Photo, photoKey } from "../api";
 import DeleteDialog from "../components/DeleteDialog";
 
 export default function PhotoView() {
-  const { filename } = useParams<{ filename: string }>();
+  const { event, filename } = useParams<{ event: string; filename: string }>();
   const navigate = useNavigate();
 
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -35,17 +35,17 @@ export default function PhotoView() {
   const swiperRef = useRef<SwiperType | null>(null);
 
   useEffect(() => {
-    api.list().then((r) => {
+    api.list(event ?? null).then((r) => {
       setPhotos(r.photos);
       setLoading(false);
     }).catch(() => setLoading(false));
-  }, []);
+  }, [event]);
 
   const startIndex = useMemo(() => {
-    if (!filename) return 0;
-    const i = photos.findIndex((p) => p.filename === filename);
+    if (!filename || !event) return 0;
+    const i = photos.findIndex((p) => p.event === event && p.filename === filename);
     return i < 0 ? 0 : i;
-  }, [filename, photos]);
+  }, [event, filename, photos]);
 
   const current = photos[startIndex];
 
@@ -57,13 +57,16 @@ export default function PhotoView() {
   const onSlideChange = (sw: SwiperType) => {
     const p = photos[sw.activeIndex];
     if (p) {
-      window.history.replaceState(null, "", `/photo/${encodeURIComponent(p.filename)}`);
+      window.history.replaceState(
+        null, "",
+        `/photo/${encodeURIComponent(p.event)}/${encodeURIComponent(p.filename)}`,
+      );
     }
   };
 
   const onDeleted = () => {
     if (!current) return;
-    const remaining = photos.filter((p) => p.filename !== current.filename);
+    const remaining = photos.filter((p) => photoKey(p) !== photoKey(current));
     setPhotos(remaining);
     setConfirmDel(false);
     setToast("Foto gelöscht");
@@ -71,14 +74,18 @@ export default function PhotoView() {
       navigate("/");
     } else {
       const next = Math.min(startIndex, remaining.length - 1);
-      navigate(`/photo/${encodeURIComponent(remaining[next].filename)}`, { replace: true });
+      const np = remaining[next];
+      navigate(
+        `/photo/${encodeURIComponent(np.event)}/${encodeURIComponent(np.filename)}`,
+        { replace: true },
+      );
     }
   };
 
   if (loading) {
     return (
       <Stack alignItems="center" justifyContent="center" sx={{ height: "100dvh" }}>
-        <CircularProgress sx={{ color: "primary.light" }} />
+        <CircularProgress />
       </Stack>
     );
   }
@@ -104,7 +111,6 @@ export default function PhotoView() {
         flexDirection: "column",
       }}
     >
-      {/* Top bar */}
       <Box
         sx={{
           position: "absolute",
@@ -119,7 +125,7 @@ export default function PhotoView() {
           paddingTop: "max(env(safe-area-inset-top), 12px)",
         }}
       >
-        <IconButton onClick={() => navigate("/")} sx={{ color: "#fff" }}>
+        <IconButton onClick={() => navigate(-1)} sx={{ color: "#fff" }}>
           <ArrowBackRoundedIcon />
         </IconButton>
         <Stack sx={{ flex: 1, minWidth: 0 }}>
@@ -127,7 +133,7 @@ export default function PhotoView() {
             variant="caption"
             sx={{ color: "rgba(255,255,255,0.55)", letterSpacing: ".05em" }}
           >
-            {startIndex + 1} / {photos.length}
+            {startIndex + 1} / {photos.length} · {current.event}
           </Typography>
           <Typography
             variant="body2"
@@ -140,7 +146,7 @@ export default function PhotoView() {
         <Tooltip title="Herunterladen">
           <IconButton
             component="a"
-            href={api.downloadUrl(current.filename)}
+            href={api.downloadUrl(current)}
             sx={{ color: "#fff" }}
           >
             <DownloadRoundedIcon />
@@ -153,7 +159,6 @@ export default function PhotoView() {
         </Tooltip>
       </Box>
 
-      {/* Swiper */}
       <Swiper
         modules={[Keyboard, Zoom]}
         keyboard={{ enabled: true }}
@@ -165,12 +170,12 @@ export default function PhotoView() {
       >
         {photos.map((p) => (
           <SwiperSlide
-            key={p.filename}
+            key={photoKey(p)}
             style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
           >
             <div className="swiper-zoom-container" style={{ width: "100%", height: "100%" }}>
               <img
-                src={api.imgUrl(p.filename)}
+                src={api.imgUrl(p)}
                 alt={p.filename}
                 style={{
                   maxWidth: "100%",
@@ -178,7 +183,6 @@ export default function PhotoView() {
                   objectFit: "contain",
                   userSelect: "none",
                   WebkitUserSelect: "none",
-                  pointerEvents: "auto",
                 }}
                 draggable={false}
               />
@@ -187,7 +191,6 @@ export default function PhotoView() {
         ))}
       </Swiper>
 
-      {/* Desktop arrows */}
       {photos.length > 1 && (
         <>
           <IconButton
@@ -223,7 +226,7 @@ export default function PhotoView() {
 
       <DeleteDialog
         open={confirmDel}
-        filename={current.filename}
+        photo={current}
         onClose={() => setConfirmDel(false)}
         onDeleted={onDeleted}
       />

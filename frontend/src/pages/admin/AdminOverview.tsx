@@ -29,16 +29,16 @@ interface StatCardProps {
 }
 
 function StatCard({ icon, label, value, hint, accent = "primary", loading }: StatCardProps) {
-  const accentColor =
-    accent === "success" ? "rgba(110,200,140,0.18)" :
-    accent === "warning" ? "rgba(232,180,80,0.18)" :
-    accent === "error"   ? "rgba(224,83,60,0.18)"  :
-                           "rgba(212,168,106,0.18)";
+  const accentBg =
+    accent === "success" ? "#e6f4ea" :
+    accent === "warning" ? "#fef7e0" :
+    accent === "error"   ? "#fce8e6" :
+                           "#e8f0fe";
   const iconColor =
-    accent === "success" ? "#7fd99a" :
-    accent === "warning" ? "#f0c267" :
-    accent === "error"   ? "#ff8870" :
-                           "#f0c98a";
+    accent === "success" ? "#1e8e3e" :
+    accent === "warning" ? "#b06000" :
+    accent === "error"   ? "#c5221f" :
+                           "#1a73e8";
 
   return (
     <Paper
@@ -49,6 +49,10 @@ function StatCard({ icon, label, value, hint, accent = "primary", loading }: Sta
         border: "1px solid",
         borderColor: "divider",
         height: "100%",
+        transition: "box-shadow .15s",
+        "&:hover": {
+          boxShadow: "0 1px 2px rgba(60,64,67,.10), 0 2px 6px rgba(60,64,67,.08)",
+        },
       }}
     >
       <Stack direction="row" spacing={2} alignItems="flex-start">
@@ -56,7 +60,7 @@ function StatCard({ icon, label, value, hint, accent = "primary", loading }: Sta
           sx={{
             width: 44, height: 44, borderRadius: 2.5,
             display: "grid", placeItems: "center",
-            bgcolor: accentColor, color: iconColor,
+            bgcolor: accentBg, color: iconColor,
             flexShrink: 0,
           }}
         >
@@ -112,7 +116,7 @@ export default function AdminOverview() {
     <Stack spacing={3}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>
         <Box>
-          <Typography variant="h5" sx={{ fontFamily: '"Playfair Display", serif', fontWeight: 600 }}>
+          <Typography variant="h5" sx={{ fontWeight: 500 }}>
             Übersicht
           </Typography>
           <Typography variant="body2" color="text.secondary">
@@ -191,12 +195,12 @@ export default function AdminOverview() {
                   value={usedPct}
                   sx={{
                     height: 6, borderRadius: 3, mt: 0.5,
-                    bgcolor: "rgba(255,255,255,0.05)",
+                    bgcolor: "grey.200",
                     "& .MuiLinearProgress-bar": {
-                      background:
-                        diskAccent === "error"   ? "linear-gradient(90deg,#e0533c,#ff8870)" :
-                        diskAccent === "warning" ? "linear-gradient(90deg,#e0a33c,#f0c267)" :
-                                                   "linear-gradient(90deg,#7fd99a,#a3e6b8)",
+                      backgroundColor:
+                        diskAccent === "error"   ? "#d93025" :
+                        diskAccent === "warning" ? "#f29900" :
+                                                   "#1e8e3e",
                     },
                   }}
                 />

@@ -17,7 +17,7 @@ export default function PhotoTile({ photo }: Props) {
       (entries) => {
         for (const e of entries) {
           if (e.isIntersecting) {
-            setSrc(api.thumbUrl(photo.filename));
+            setSrc(api.thumbUrl(photo));
             io.disconnect();
             break;
           }
@@ -27,29 +27,28 @@ export default function PhotoTile({ photo }: Props) {
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [photo.filename]);
+  }, [photo.event, photo.filename]);
 
   return (
     <Box
       ref={ref}
       component={RouterLink}
-      to={`/photo/${encodeURIComponent(photo.filename)}`}
+      to={`/photo/${encodeURIComponent(photo.event)}/${encodeURIComponent(photo.filename)}`}
       sx={{
         position: "relative",
         display: "block",
         aspectRatio: "1 / 1",
         overflow: "hidden",
         borderRadius: 2,
-        bgcolor: "background.paper",
+        bgcolor: "grey.100",
         textDecoration: "none",
         cursor: "pointer",
-        transition: "transform .25s cubic-bezier(.2,.7,.2,1), box-shadow .25s",
+        transition: "transform .2s cubic-bezier(.2,.7,.2,1), box-shadow .2s",
         WebkitTapHighlightColor: "transparent",
         "&:hover": {
-          transform: { sm: "translateY(-2px)" },
-          boxShadow: { sm: "0 12px 30px rgba(0,0,0,0.45)" },
+          boxShadow: { sm: "0 1px 3px rgba(60,64,67,.12), 0 4px 8px rgba(60,64,67,.10)" },
         },
-        "&:hover img": { transform: { sm: "scale(1.06)" } },
+        "&:hover img": { transform: { sm: "scale(1.04)" } },
         "&:active img": { transform: "scale(0.98)" },
       }}
     >
@@ -57,7 +56,7 @@ export default function PhotoTile({ photo }: Props) {
         <Skeleton
           variant="rectangular"
           animation="wave"
-          sx={{ position: "absolute", inset: 0, bgcolor: "rgba(212,168,106,0.06)" }}
+          sx={{ position: "absolute", inset: 0, bgcolor: "grey.200" }}
         />
       )}
       {src && (

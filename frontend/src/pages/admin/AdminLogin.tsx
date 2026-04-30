@@ -50,12 +50,13 @@ export default function AdminLogin() {
         elevation={0}
         sx={{
           width: "100%",
-          maxWidth: 400,
+          maxWidth: 420,
           p: { xs: 3, sm: 4.5 },
           borderRadius: 4,
           border: "1px solid",
           borderColor: "divider",
-          background: "linear-gradient(135deg, rgba(212,168,106,0.04), rgba(0,0,0,0))",
+          bgcolor: "background.paper",
+          boxShadow: "0 1px 2px rgba(60,64,67,.06), 0 8px 24px rgba(60,64,67,.10)",
         }}
       >
         <Stack spacing={2.5} alignItems="center" sx={{ textAlign: "center", mb: 3 }}>
@@ -63,14 +64,14 @@ export default function AdminLogin() {
             sx={{
               width: 64, height: 64, borderRadius: "50%",
               display: "grid", placeItems: "center",
-              background: "linear-gradient(135deg, rgba(212,168,106,0.18), rgba(212,168,106,0.06))",
-              border: "1px solid", borderColor: "divider",
+              bgcolor: "primary.main",
+              color: "primary.contrastText",
             }}
           >
-            <LockRoundedIcon sx={{ color: "primary.light" }} />
+            <LockRoundedIcon />
           </Box>
           <Box>
-            <Typography variant="h5" sx={{ fontFamily: '"Playfair Display", serif' }}>
+            <Typography variant="h5" sx={{ fontWeight: 500 }}>
               Admin-Bereich
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>

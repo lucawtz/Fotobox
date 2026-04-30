@@ -18,7 +18,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Gallery />} />
-      <Route path="/photo/:filename" element={<PhotoView />} />
+      <Route path="/photo/:event/:filename" element={<PhotoView />} />
 
       <Route
         path="/admin/login"

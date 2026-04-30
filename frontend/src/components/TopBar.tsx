@@ -1,6 +1,7 @@
 import { AppBar, Toolbar, Box, IconButton, Typography, Tooltip } from "@mui/material";
 import AdminPanelSettingsRoundedIcon from "@mui/icons-material/AdminPanelSettingsRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
+import PhotoLibraryRoundedIcon from "@mui/icons-material/PhotoLibraryRounded";
 
 interface Props {
   title: string;
@@ -13,16 +14,29 @@ export default function TopBar({ title, subtitle, onRefresh, showAdmin = true }:
   return (
     <AppBar position="sticky" elevation={0}>
       <Toolbar sx={{ minHeight: { xs: 64, sm: 72 }, gap: 1, px: { xs: 2, sm: 3 } }}>
+        <Box
+          sx={{
+            width: 36, height: 36, borderRadius: "50%",
+            display: "grid", placeItems: "center", flexShrink: 0,
+            bgcolor: "primary.main",
+            color: "primary.contrastText",
+            mr: 1.25,
+          }}
+        >
+          <PhotoLibraryRoundedIcon sx={{ fontSize: 20 }} />
+        </Box>
+
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
           <Typography
             component="h1"
-            variant="h5"
+            variant="h6"
             noWrap
             sx={{
-              fontFamily: '"Playfair Display", serif',
-              color: "primary.light",
+              color: "text.primary",
               letterSpacing: "-0.01em",
-              fontSize: { xs: "1.15rem", sm: "1.4rem" },
+              fontSize: { xs: "1.05rem", sm: "1.2rem" },
+              fontWeight: 500,
+              lineHeight: 1.2,
             }}
           >
             {title}
@@ -30,7 +44,7 @@ export default function TopBar({ title, subtitle, onRefresh, showAdmin = true }:
           {subtitle && (
             <Typography
               variant="caption"
-              sx={{ color: "text.secondary", display: "block", lineHeight: 1.2, fontSize: ".72rem" }}
+              sx={{ color: "text.secondary", display: "block", lineHeight: 1.2, fontSize: ".75rem" }}
             >
               {subtitle}
             </Typography>
@@ -50,7 +64,6 @@ export default function TopBar({ title, subtitle, onRefresh, showAdmin = true }:
             <IconButton
               onClick={() => { window.location.href = "/admin"; }}
               size="medium"
-              sx={{ color: "text.secondary" }}
             >
               <AdminPanelSettingsRoundedIcon />
             </IconButton>

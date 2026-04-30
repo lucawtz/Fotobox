@@ -11,16 +11,16 @@ import {
   Alert,
 } from "@mui/material";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
-import { api } from "../api";
+import { api, Photo } from "../api";
 
 interface Props {
   open: boolean;
-  filename: string | null;
+  photo: Pick<Photo, "event" | "filename"> | null;
   onClose: () => void;
   onDeleted: () => void;
 }
 
-export default function DeleteDialog({ open, filename, onClose, onDeleted }: Props) {
+export default function DeleteDialog({ open, photo, onClose, onDeleted }: Props) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -29,10 +29,10 @@ export default function DeleteDialog({ open, filename, onClose, onDeleted }: Pro
   const close = () => { reset(); onClose(); };
 
   const submit = async () => {
-    if (!filename || pin.length < 1) return;
+    if (!photo || pin.length < 1) return;
     setBusy(true); setError(null);
     try {
-      const r = await api.delete(filename, pin);
+      const r = await api.delete(photo, pin);
       if (!r.ok) {
         setError(r.error ?? "Löschen fehlgeschlagen");
         setBusy(false);

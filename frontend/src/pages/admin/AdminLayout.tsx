@@ -18,6 +18,7 @@ import {
   Menu,
   MenuItem,
   Avatar,
+  alpha,
 } from "@mui/material";
 import MenuRoundedIcon from "@mui/icons-material/MenuRounded";
 import DashboardRoundedIcon from "@mui/icons-material/DashboardRounded";
@@ -58,34 +59,32 @@ export default function AdminLayout() {
   };
 
   const drawerContent = (
-    <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      <Box sx={{ p: 2.5, pb: 1.5, display: "flex", alignItems: "center", gap: 1.25 }}>
+    <Box sx={{ height: "100%", display: "flex", flexDirection: "column", bgcolor: "grey.50" }}>
+      <Box sx={{ p: 2, pt: 2.5, pb: 1.5, display: "flex", alignItems: "center", gap: 1.25 }}>
         <Box
           sx={{
             width: 36, height: 36, borderRadius: "50%",
             display: "grid", placeItems: "center",
-            background: "linear-gradient(135deg, rgba(212,168,106,0.22), rgba(212,168,106,0.06))",
-            border: "1px solid", borderColor: "divider",
+            bgcolor: "primary.main",
+            color: "primary.contrastText",
           }}
         >
-          <PhotoLibraryRoundedIcon sx={{ color: "primary.light", fontSize: 20 }} />
+          <PhotoLibraryRoundedIcon sx={{ fontSize: 20 }} />
         </Box>
         <Box>
           <Typography
             variant="subtitle1"
-            sx={{ fontFamily: '"Playfair Display", serif', lineHeight: 1.1, color: "primary.light" }}
+            sx={{ lineHeight: 1.1, color: "text.primary", fontWeight: 500 }}
           >
             Fotobox
           </Typography>
-          <Typography variant="caption" sx={{ color: "text.secondary", letterSpacing: ".06em" }}>
-            ADMIN
+          <Typography variant="caption" sx={{ color: "text.secondary", fontSize: ".7rem" }}>
+            Admin-Konsole
           </Typography>
         </Box>
       </Box>
 
-      <Divider sx={{ mx: 2, my: 1 }} />
-
-      <List sx={{ flex: 1, px: 1.25, py: 0.5 }}>
+      <List sx={{ flex: 1, px: 1, py: 1 }}>
         {NAV_ITEMS.map((item) => (
           <ListItemButton
             key={item.to}
@@ -94,44 +93,56 @@ export default function AdminLayout() {
             end={item.to === "/admin"}
             onClick={() => setMobileOpen(false)}
             sx={{
-              borderRadius: 999,
-              px: 2, py: 1,
-              mb: 0.5,
+              borderRadius: "0 999px 999px 0",
+              pl: 2.5, pr: 2,
+              py: 1,
+              mb: 0.25,
+              ml: -1,
               color: "text.secondary",
-              "& .MuiListItemIcon-root": { color: "inherit", minWidth: 38 },
+              fontWeight: 500,
+              "& .MuiListItemIcon-root": { color: "inherit", minWidth: 36 },
               "&.active": {
-                background: "linear-gradient(90deg, rgba(212,168,106,0.18), rgba(212,168,106,0.04))",
-                color: "primary.light",
-                fontWeight: 600,
+                bgcolor: alpha(theme.palette.primary.main, 0.12),
+                color: "primary.main",
+                "& .MuiListItemText-primary": { fontWeight: 600 },
               },
-              "&:hover": { bgcolor: "rgba(212,168,106,0.06)" },
+              "&.active:hover": {
+                bgcolor: alpha(theme.palette.primary.main, 0.16),
+              },
+              "&:hover": {
+                bgcolor: alpha(theme.palette.text.primary, 0.06),
+              },
             }}
           >
             <ListItemIcon>{item.icon}</ListItemIcon>
             <ListItemText
-              primaryTypographyProps={{ fontSize: ".925rem", fontWeight: 500 }}
+              primaryTypographyProps={{ fontSize: ".9rem", fontWeight: "inherit" }}
               primary={item.label}
             />
           </ListItemButton>
         ))}
       </List>
 
-      <Divider sx={{ mx: 2 }} />
-      <Box sx={{ p: 1.25 }}>
+      <Divider />
+      <Box sx={{ p: 1 }}>
         <ListItemButton
           onClick={() => { setMobileOpen(false); navigate("/"); }}
-          sx={{ borderRadius: 999, color: "text.secondary", "&:hover": { bgcolor: "rgba(212,168,106,0.06)" } }}
+          sx={{ borderRadius: 999, color: "text.secondary" }}
         >
-          <ListItemIcon sx={{ minWidth: 38, color: "inherit" }}>
+          <ListItemIcon sx={{ minWidth: 36, color: "inherit" }}>
             <PhotoLibraryRoundedIcon />
           </ListItemIcon>
           <ListItemText primary="Zur Galerie" primaryTypographyProps={{ fontSize: ".9rem" }} />
         </ListItemButton>
         <ListItemButton
           onClick={logout}
-          sx={{ borderRadius: 999, color: "error.light", "&:hover": { bgcolor: "rgba(224,83,60,0.08)" } }}
+          sx={{
+            borderRadius: 999,
+            color: "error.main",
+            "&:hover": { bgcolor: alpha(theme.palette.error.main, 0.08) },
+          }}
         >
-          <ListItemIcon sx={{ minWidth: 38, color: "inherit" }}>
+          <ListItemIcon sx={{ minWidth: 36, color: "inherit" }}>
             <LogoutRoundedIcon />
           </ListItemIcon>
           <ListItemText primary="Abmelden" primaryTypographyProps={{ fontSize: ".9rem" }} />
@@ -141,8 +152,7 @@ export default function AdminLayout() {
   );
 
   return (
-    <Box sx={{ display: "flex", minHeight: "100dvh" }}>
-      {/* Sidebar */}
+    <Box sx={{ display: "flex", minHeight: "100dvh", bgcolor: "background.default" }}>
       {isDesktop ? (
         <Drawer
           variant="permanent"
@@ -152,8 +162,7 @@ export default function AdminLayout() {
               border: 0,
               borderRight: "1px solid",
               borderColor: "divider",
-              background: "rgba(22,16,10,0.6)",
-              backdropFilter: "blur(18px)",
+              bgcolor: "grey.50",
             },
           }}
           sx={{ width: NAV_WIDTH, flexShrink: 0 }}
@@ -166,16 +175,15 @@ export default function AdminLayout() {
           open={mobileOpen}
           onClose={() => setMobileOpen(false)}
           ModalProps={{ keepMounted: true }}
-          PaperProps={{ sx: { width: NAV_WIDTH, background: "#16100a" } }}
+          PaperProps={{ sx: { width: NAV_WIDTH } }}
         >
           {drawerContent}
         </Drawer>
       )}
 
-      {/* Main column */}
       <Box sx={{ flexGrow: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <AppBar position="sticky" elevation={0}>
-          <Toolbar sx={{ minHeight: { xs: 64, sm: 72 }, gap: 1.25, px: { xs: 1.5, sm: 3 } }}>
+          <Toolbar sx={{ minHeight: { xs: 64, sm: 64 }, gap: 1.25, px: { xs: 1.5, sm: 3 } }}>
             {!isDesktop && (
               <IconButton edge="start" onClick={() => setMobileOpen(true)}>
                 <MenuRoundedIcon />
@@ -185,10 +193,10 @@ export default function AdminLayout() {
               <Typography
                 variant="h6"
                 sx={{
-                  fontFamily: '"Playfair Display", serif',
-                  color: "primary.light",
-                  fontWeight: 600,
+                  color: "text.primary",
+                  fontWeight: 500,
                   lineHeight: 1.1,
+                  fontSize: "1.15rem",
                 }}
               >
                 {sectionTitle}
@@ -203,11 +211,10 @@ export default function AdminLayout() {
                 <Avatar
                   sx={{
                     width: 34, height: 34,
-                    fontSize: ".9rem",
-                    bgcolor: "rgba(212,168,106,0.18)",
-                    color: "primary.light",
-                    border: "1px solid",
-                    borderColor: "divider",
+                    fontSize: ".95rem",
+                    bgcolor: "primary.main",
+                    color: "primary.contrastText",
+                    fontWeight: 600,
                   }}
                 >
                   A
@@ -220,15 +227,15 @@ export default function AdminLayout() {
               onClose={() => setMenuEl(null)}
               anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
               transformOrigin={{ vertical: "top", horizontal: "right" }}
-              slotProps={{ paper: { sx: { mt: 1, minWidth: 180, border: "1px solid", borderColor: "divider" } } }}
+              slotProps={{ paper: { sx: { mt: 1, minWidth: 200, border: "1px solid", borderColor: "divider", boxShadow: "0 1px 2px rgba(60,64,67,.1), 0 2px 6px rgba(60,64,67,.15)" } } }}
             >
               <MenuItem onClick={() => { setMenuEl(null); navigate("/"); }}>
                 <ListItemIcon><PhotoLibraryRoundedIcon fontSize="small" /></ListItemIcon>
                 Zur Galerie
               </MenuItem>
               <Divider />
-              <MenuItem onClick={() => { setMenuEl(null); logout(); }} sx={{ color: "error.light" }}>
-                <ListItemIcon><LogoutRoundedIcon fontSize="small" sx={{ color: "error.light" }} /></ListItemIcon>
+              <MenuItem onClick={() => { setMenuEl(null); logout(); }} sx={{ color: "error.main" }}>
+                <ListItemIcon><LogoutRoundedIcon fontSize="small" sx={{ color: "error.main" }} /></ListItemIcon>
                 Abmelden
               </MenuItem>
             </Menu>

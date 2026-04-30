@@ -1,4 +1,5 @@
 export interface Photo {
+  event: string;
   filename: string;
   mtime: number;
   size: number;
@@ -6,9 +7,30 @@ export interface Photo {
 
 export interface PhotosResponse {
   event_name: string;
+  active_event: string;
+  filter: string | null;
   count: number;
   photos: Photo[];
 }
+
+export interface EventInfo {
+  folder:  string;
+  date:    string;
+  slug:    string;
+  display: string;
+  count:   number;
+  mtime:   number;
+  active:  boolean;
+}
+
+export interface EventsResponse {
+  active: string;
+  event_name: string;
+  events: EventInfo[];
+}
+
+export const photoKey = (p: Pick<Photo, "event" | "filename">) =>
+  `${p.event}/${p.filename}`;
 
 export interface DeleteResult {
   ok: boolean;
@@ -53,19 +75,27 @@ const postJson = (url: string, body: unknown) => fetch(url, {
   body: JSON.stringify(body),
 });
 
-export const api = {
-  list:  () => fetch("/api/photos", FETCH_OPTS).then(json<PhotosResponse>),
-  count: () => fetch("/api/count",  FETCH_OPTS).then(json<{ count: number }>),
+const evPath = (p: Pick<Photo, "event" | "filename">) =>
+  `${encodeURIComponent(p.event)}/${encodeURIComponent(p.filename)}`;
 
-  thumbUrl:    (filename: string) => `/thumb/${encodeURIComponent(filename)}`,
-  imgUrl:      (filename: string) => `/img/${encodeURIComponent(filename)}`,
-  downloadUrl: (filename: string) => `/download/${encodeURIComponent(filename)}`,
+export const api = {
+  list: (event?: string | null) =>
+    fetch("/api/photos" + (event ? `?event=${encodeURIComponent(event)}` : ""), FETCH_OPTS)
+      .then(json<PhotosResponse>),
+  count: (event?: string | null) =>
+    fetch("/api/count" + (event ? `?event=${encodeURIComponent(event)}` : ""), FETCH_OPTS)
+      .then(json<{ count: number }>),
+  events: () => fetch("/api/events", FETCH_OPTS).then(json<EventsResponse>),
+
+  thumbUrl:    (p: Pick<Photo, "event" | "filename">) => `/thumb/${evPath(p)}`,
+  imgUrl:      (p: Pick<Photo, "event" | "filename">) => `/img/${evPath(p)}`,
+  downloadUrl: (p: Pick<Photo, "event" | "filename">) => `/download/${evPath(p)}`,
   logoUrl:     () => `/api/admin/logo/preview?t=${Date.now()}`,
 
-  delete: async (filename: string, pin: string): Promise<DeleteResult> => {
+  delete: async (p: Pick<Photo, "event" | "filename">, pin: string): Promise<DeleteResult> => {
     const fd = new FormData();
     fd.set("pin", pin);
-    const res = await fetch(`/api/delete/${encodeURIComponent(filename)}`, {
+    const res = await fetch(`/api/delete/${evPath(p)}`, {
       ...FETCH_OPTS,
       method: "POST",
       body: fd,

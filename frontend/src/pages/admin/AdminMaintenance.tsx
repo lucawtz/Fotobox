@@ -43,7 +43,7 @@ export default function AdminMaintenance() {
     <>
       <Stack spacing={3}>
         <Box>
-          <Typography variant="h5" sx={{ fontFamily: '"Playfair Display", serif', fontWeight: 600 }}>
+          <Typography variant="h5" sx={{ fontWeight: 500 }}>
             Wartung
           </Typography>
           <Typography variant="body2" color="text.secondary">
@@ -60,19 +60,19 @@ export default function AdminMaintenance() {
             sx={{
               p: 2.5,
               borderRadius: 2.5,
-              bgcolor: "rgba(224,83,60,0.06)",
-              border: "1px solid rgba(224,83,60,0.25)",
+              bgcolor: "#fce8e6",
+              border: "1px solid #f6cfcb",
               display: "flex",
               alignItems: "flex-start",
               gap: 2,
             }}
           >
-            <WarningAmberRoundedIcon sx={{ color: "#ff8870", mt: 0.25 }} />
+            <WarningAmberRoundedIcon sx={{ color: "#c5221f", mt: 0.25 }} />
             <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography variant="body2" sx={{ color: "#ff8870", fontWeight: 600 }}>
+              <Typography variant="body2" sx={{ color: "#a50e0e", fontWeight: 600 }}>
                 Achtung: Vorgang ist nicht rückgängig zu machen
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              <Typography variant="body2" sx={{ mt: 0.5, color: "#5f1a17" }}>
                 Erstelle vorher unbedingt ein Backup, falls die Fotos noch
                 gebraucht werden.
               </Typography>

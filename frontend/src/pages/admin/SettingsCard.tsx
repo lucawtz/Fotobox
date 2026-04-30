@@ -27,8 +27,8 @@ export default function SettingsCard({ title, description, icon, children, foote
               sx={{
                 width: 40, height: 40, borderRadius: 2,
                 display: "grid", placeItems: "center",
-                bgcolor: "rgba(212,168,106,0.12)",
-                color: "primary.light",
+                bgcolor: "#e8f0fe",
+                color: "primary.main",
                 flexShrink: 0,
               }}
             >
@@ -53,7 +53,7 @@ export default function SettingsCard({ title, description, icon, children, foote
           sx={{
             px: { xs: 2.25, sm: 3 },
             py: 1.5,
-            bgcolor: "rgba(255,255,255,0.015)",
+            bgcolor: "grey.50",
             borderTop: "1px solid",
             borderColor: "divider",
             display: "flex",

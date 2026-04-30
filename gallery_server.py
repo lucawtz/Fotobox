@@ -10,6 +10,7 @@ from flask import (Flask, abort, jsonify, render_template,
                    request, send_file, session)
 
 import config
+import events
 
 logger = logging.getLogger(__name__)
 
@@ -37,31 +38,58 @@ def _pic_dir() -> str:
     return config.cfg["picture_dir"]
 
 
-def _safe_path(filename: str) -> Optional[str]:
-    if os.sep in filename or "/" in filename or ".." in filename:
+def _safe_filename(name: str) -> bool:
+    return bool(name) and "/" not in name and os.sep not in name and ".." not in name
+
+
+def _safe_path(event: str, filename: str) -> Optional[str]:
+    if not events.is_safe_event(event) or not _safe_filename(filename):
         return None
-    path = os.path.join(_pic_dir(), filename)
+    path = os.path.join(_pic_dir(), event, filename)
     return path if os.path.isfile(path) else None
 
 
-def _photo_list() -> list[str]:
-    try:
-        files = [f for f in os.listdir(_pic_dir())
-                 if os.path.splitext(f)[1].lower() in _EXTS]
-        files.sort(key=lambda f: os.path.getmtime(os.path.join(_pic_dir(), f)),
-                   reverse=True)
-        return files
-    except FileNotFoundError:
+def _photo_list(event_filter: Optional[str] = None) -> list[tuple[str, str]]:
+    """Liefert (event_folder, filename) Paare, neueste zuerst."""
+    base = _pic_dir()
+    if not os.path.isdir(base):
         return []
+    out: list[tuple[str, str, float]] = []
+    try:
+        entries = os.listdir(base)
+    except OSError:
+        return []
+    for entry in entries:
+        if event_filter and entry != event_filter:
+            continue
+        if not events.is_safe_event(entry):
+            continue
+        ev_path = os.path.join(base, entry)
+        if not os.path.isdir(ev_path):
+            continue
+        try:
+            files = os.listdir(ev_path)
+        except OSError:
+            continue
+        for f in files:
+            if os.path.splitext(f)[1].lower() not in _EXTS:
+                continue
+            try:
+                mt = os.path.getmtime(os.path.join(ev_path, f))
+            except OSError:
+                continue
+            out.append((entry, f, mt))
+    out.sort(key=lambda x: x[2], reverse=True)
+    return [(e, f) for e, f, _ in out]
 
 
-def _make_thumb(filename: str) -> Optional[str]:
-    td = _thumb_dir()
+def _make_thumb(event: str, filename: str) -> Optional[str]:
+    td = os.path.join(_thumb_dir(), event)
     thumb = os.path.join(td, filename)
     with _thumb_lock:
         if os.path.exists(thumb):
             return thumb
-        src = _safe_path(filename)
+        src = _safe_path(event, filename)
         if src is None:
             return None
         try:
@@ -72,7 +100,7 @@ def _make_thumb(filename: str) -> Optional[str]:
                 img.save(thumb)
             return thumb
         except Exception as exc:
-            logger.warning("Thumbnail '%s': %s", filename, exc)
+            logger.warning("Thumbnail '%s/%s': %s", event, filename, exc)
             return None
 
 
@@ -82,19 +110,15 @@ def _make_thumb(filename: str) -> Optional[str]:
 def gallery():
     if _spa_enabled():
         return send_file(SPA_INDEX)
-    photos = _photo_list()
-    return render_template("gallery.html", photos=photos,
+    return render_template("gallery.html", photos=[f for _, f in _photo_list()],
                            event_name=config.cfg.get("event_name", "Fotobox"))
 
 
-@app.route("/photo/<filename>")
-def photo(filename):
+@app.route("/photo/<path:_filename>")
+def photo(_filename):
     if _spa_enabled():
         return send_file(SPA_INDEX)
-    if _safe_path(filename) is None:
-        abort(404)
-    return render_template("photo.html", filename=filename,
-                           event_name=config.cfg.get("event_name", "Fotobox"))
+    abort(404)
 
 
 @app.route("/assets/<path:fname>")
@@ -110,9 +134,9 @@ def spa_assets(fname: str):
     return response
 
 
-@app.route("/img/<filename>")
-def img(filename):
-    path = _safe_path(filename)
+@app.route("/img/<event>/<filename>")
+def img(event, filename):
+    path = _safe_path(event, filename)
     if path is None:
         abort(404)
     response = send_file(path)
@@ -120,9 +144,9 @@ def img(filename):
     return response
 
 
-@app.route("/thumb/<filename>")
-def thumb(filename):
-    t = _make_thumb(filename)
+@app.route("/thumb/<event>/<filename>")
+def thumb(event, filename):
+    t = _make_thumb(event, filename)
     if t is None:
         abort(404)
     response = send_file(t)
@@ -130,9 +154,9 @@ def thumb(filename):
     return response
 
 
-@app.route("/download/<filename>")
-def download(filename):
-    path = _safe_path(filename)
+@app.route("/download/<event>/<filename>")
+def download(event, filename):
+    path = _safe_path(event, filename)
     if path is None:
         abort(404)
     return send_file(path, as_attachment=True)
@@ -140,35 +164,50 @@ def download(filename):
 
 @app.route("/api/count")
 def api_count():
-    return jsonify(count=len(_photo_list()))
+    event_filter = request.args.get("event") or None
+    return jsonify(count=len(_photo_list(event_filter)))
+
+
+@app.route("/api/events")
+def api_events():
+    return jsonify({
+        "active": events.current_event_folder(config.cfg),
+        "events": events.list_events(config.cfg),
+        "event_name": config.cfg.get("event_name", "Fotobox"),
+    })
 
 
 @app.route("/api/photos")
 def api_photos():
-    files = _photo_list()
-    out = []
+    event_filter = request.args.get("event") or None
     pic_dir = _pic_dir()
-    for f in files:
+    out = []
+    for ev, f in _photo_list(event_filter):
         try:
-            st = os.stat(os.path.join(pic_dir, f))
-            out.append({"filename": f, "mtime": st.st_mtime, "size": st.st_size})
+            st = os.stat(os.path.join(pic_dir, ev, f))
+            out.append({
+                "event":    ev,
+                "filename": f,
+                "mtime":    st.st_mtime,
+                "size":     st.st_size,
+            })
         except OSError:
             continue
-    # Thumbnails werden beim Server-Start vorab generiert (siehe _prewarm_thumbnails).
-    # Falls trotzdem mal eines fehlt: /thumb/<f> generiert es lazy beim ersten Hit.
     return jsonify({
-        "event_name": config.cfg.get("event_name", "Fotobox"),
-        "count": len(out),
-        "photos": out,
+        "event_name":   config.cfg.get("event_name", "Fotobox"),
+        "active_event": events.current_event_folder(config.cfg),
+        "filter":       event_filter,
+        "count":        len(out),
+        "photos":       out,
     })
 
 
-@app.route("/api/delete/<filename>", methods=["POST"])
-def api_delete(filename: str):
+@app.route("/api/delete/<event>/<filename>", methods=["POST"])
+def api_delete(event: str, filename: str):
     pin = request.form.get("pin", "").strip()
     if pin != config.cfg.get("admin_pin", "1234"):
         return jsonify(ok=False, error="Falscher PIN"), 403
-    path = _safe_path(filename)
+    path = _safe_path(event, filename)
     if path is None:
         return jsonify(ok=False, error="Datei nicht gefunden"), 404
     try:
@@ -176,13 +215,20 @@ def api_delete(filename: str):
     except Exception as exc:
         logger.error("Foto löschen: %s", exc)
         return jsonify(ok=False, error="Löschen fehlgeschlagen"), 500
-    thumb_path = os.path.join(_thumb_dir(), filename)
+    thumb_path = os.path.join(_thumb_dir(), event, filename)
     if os.path.exists(thumb_path):
         try:
             os.remove(thumb_path)
         except OSError:
             pass
-    logger.info("Foto gelöscht: %s", filename)
+    # Falls Event-Ordner jetzt leer ist, entfernen
+    ev_dir = os.path.join(_pic_dir(), event)
+    try:
+        if os.path.isdir(ev_dir) and not os.listdir(ev_dir):
+            os.rmdir(ev_dir)
+    except OSError:
+        pass
+    logger.info("Foto gelöscht: %s/%s", event, filename)
     return jsonify(ok=True)
 
 
@@ -342,18 +388,34 @@ def api_admin_reset():
     pic_dir = _pic_dir()
     td = _thumb_dir()
     removed = 0
-    for fname in list(_photo_list()):
+    for ev, fname in list(_photo_list()):
         try:
-            os.remove(os.path.join(pic_dir, fname))
+            os.remove(os.path.join(pic_dir, ev, fname))
             removed += 1
         except Exception:
             pass
-    if os.path.isdir(td):
-        for fname in os.listdir(td):
+    # Leere Event-Ordner entfernen
+    for entry in list(os.listdir(pic_dir)) if os.path.isdir(pic_dir) else []:
+        full = os.path.join(pic_dir, entry)
+        if os.path.isdir(full):
             try:
-                os.remove(os.path.join(td, fname))
-            except Exception:
+                if not os.listdir(full):
+                    os.rmdir(full)
+            except OSError:
                 pass
+    # Thumbnails komplett wegräumen (rekursiv)
+    if os.path.isdir(td):
+        for root, dirs, files in os.walk(td, topdown=False):
+            for fname in files:
+                try:
+                    os.remove(os.path.join(root, fname))
+                except OSError:
+                    pass
+            for d in dirs:
+                try:
+                    os.rmdir(os.path.join(root, d))
+                except OSError:
+                    pass
     logger.info("Admin-Reset: %d Fotos gelöscht", removed)
     return jsonify(ok=True, removed=removed)
 
@@ -368,11 +430,11 @@ def _prewarm_thumbnails():
     if not files:
         return
     logger.info("Thumbnail-Prewarm: %d Bilder werden vorab generiert", len(files))
-    for f in files:
+    for ev, f in files:
         if not _running:
             return
         try:
-            _make_thumb(f)
+            _make_thumb(ev, f)
         except Exception:
             pass
     logger.info("Thumbnail-Prewarm fertig")
@@ -412,6 +474,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
     os.makedirs(_pic_dir(), exist_ok=True)
+    events.migrate_flat_photos(config.cfg)
     run(host="127.0.0.1")
 
 

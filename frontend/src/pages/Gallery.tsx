@@ -9,25 +9,33 @@ import {
   Chip,
 } from "@mui/material";
 import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
-import { api, Photo } from "../api";
+import { api, EventInfo, Photo } from "../api";
 import TopBar from "../components/TopBar";
 import PhotoTile from "../components/PhotoTile";
 
 const POLL_MS = 8000;
+const ALL = "__all__";
 
 export default function Gallery() {
   const [photos, setPhotos] = useState<Photo[]>([]);
+  const [allEvents, setAllEvents] = useState<EventInfo[]>([]);
   const [eventName, setEventName] = useState("Fotobox");
+  const [activeEvent, setActiveEvent] = useState<string | null>(null);
+  const [filter, setFilter] = useState<string>(ALL);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const knownCount = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (filt: string) => {
     try {
-      const r = await api.list();
-      setPhotos(r.photos);
-      setEventName(r.event_name);
-      knownCount.current = r.count;
+      const evReq = api.events();
+      const photosReq = api.list(filt === ALL ? null : filt);
+      const [evs, ph] = await Promise.all([evReq, photosReq]);
+      setAllEvents(evs.events);
+      setActiveEvent(evs.active);
+      setEventName(evs.event_name);
+      setPhotos(ph.photos);
+      knownCount.current = ph.count;
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -37,37 +45,84 @@ export default function Gallery() {
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    setLoading(true);
+    load(filter);
+  }, [filter, load]);
 
   useEffect(() => {
     const id = setInterval(async () => {
       try {
-        const r = await api.count();
-        if (r.count !== knownCount.current) load();
-      } catch {
-        /* ignore */
-      }
+        const r = await api.count(filter === ALL ? null : filter);
+        if (r.count !== knownCount.current) load(filter);
+      } catch { /* ignore */ }
     }, POLL_MS);
     return () => clearInterval(id);
-  }, [load]);
+  }, [filter, load]);
+
+  const subtitle = loading
+    ? "Lade…"
+    : `${photos.length} Foto${photos.length === 1 ? "" : "s"}`;
+
+  const showChips = allEvents.length > 1;
 
   return (
     <>
       <TopBar
         title={eventName}
-        subtitle={
-          loading
-            ? "Lade…"
-            : `${photos.length} Foto${photos.length === 1 ? "" : "s"}`
-        }
-        onRefresh={load}
+        subtitle={subtitle}
+        onRefresh={() => load(filter)}
       />
+
+      {showChips && (
+        <Box
+          sx={{
+            position: "sticky",
+            top: { xs: 64, sm: 72 },
+            zIndex: 5,
+            bgcolor: "background.paper",
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            px: { xs: 1.5, sm: 2 },
+            py: 1.25,
+            display: "flex",
+            gap: 0.75,
+            overflowX: "auto",
+            scrollbarWidth: "thin",
+            "&::-webkit-scrollbar": { height: 4 },
+            "&::-webkit-scrollbar-thumb": { background: "#dadce0", borderRadius: 2 },
+          }}
+        >
+          <Chip
+            label={`Alle · ${allEvents.reduce((s, e) => s + e.count, 0)}`}
+            onClick={() => setFilter(ALL)}
+            color={filter === ALL ? "primary" : "default"}
+            variant={filter === ALL ? "filled" : "outlined"}
+            sx={{ fontWeight: 500, flexShrink: 0 }}
+          />
+          {allEvents.map((ev) => (
+            <Chip
+              key={ev.folder}
+              label={`${ev.display}${ev.active ? " · live" : ""} · ${ev.count}`}
+              onClick={() => setFilter(ev.folder)}
+              color={filter === ev.folder ? "primary" : "default"}
+              variant={filter === ev.folder ? "filled" : "outlined"}
+              sx={{
+                fontWeight: 500,
+                flexShrink: 0,
+                ...(ev.active && filter !== ev.folder && {
+                  borderColor: "primary.main",
+                  color: "primary.main",
+                }),
+              }}
+            />
+          ))}
+        </Box>
+      )}
 
       <Container maxWidth="xl" disableGutters sx={{ pb: 6 }}>
         {loading && photos.length === 0 && (
           <Stack alignItems="center" sx={{ pt: 12 }}>
-            <CircularProgress size={28} sx={{ color: "primary.light" }} />
+            <CircularProgress size={28} />
           </Stack>
         )}
 
@@ -86,20 +141,25 @@ export default function Gallery() {
                   borderRadius: "50%",
                   display: "grid",
                   placeItems: "center",
-                  bgcolor: "rgba(212,168,106,0.07)",
-                  border: "1px solid",
-                  borderColor: "divider",
+                  bgcolor: "grey.100",
                 }}
               >
-                <PhotoCameraRoundedIcon sx={{ fontSize: 44, color: "primary.light" }} />
+                <PhotoCameraRoundedIcon sx={{ fontSize: 44, color: "primary.main" }} />
               </Box>
-              <Typography variant="h5" sx={{ color: "text.primary" }}>
-                Noch keine Fotos
+              <Typography variant="h5" sx={{ color: "text.primary", fontWeight: 500 }}>
+                {filter === ALL ? "Noch keine Fotos" : "Keine Fotos in diesem Event"}
               </Typography>
               <Typography variant="body2" sx={{ maxWidth: 320 }}>
-                Drück auf den Auslöser an der Fotobox — dein erstes Foto erscheint
-                hier automatisch.
+                {filter === ALL
+                  ? "Drück auf den Auslöser an der Fotobox — dein erstes Foto erscheint hier automatisch."
+                  : "Wechsle zu einem anderen Event über die Chips oben."}
               </Typography>
+              {/* activeEvent Hinweis */}
+              {filter === ALL && activeEvent && (
+                <Typography variant="caption" sx={{ color: "text.disabled" }}>
+                  aktiver Ordner: {activeEvent}
+                </Typography>
+              )}
             </Stack>
           </Fade>
         )}
@@ -126,7 +186,7 @@ export default function Gallery() {
             }}
           >
             {photos.map((p) => (
-              <PhotoTile key={p.filename} photo={p} />
+              <PhotoTile key={`${p.event}/${p.filename}`} photo={p} />
             ))}
           </Box>
         )}

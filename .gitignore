@@ -2,6 +2,13 @@ __pycache__/
 *.pyc
 *.pyo
 Picture_Box/
+thumbnails/
+logs/
 *.log
+
+# Frontend Build-Artefakte
 frontend/node_modules/
 frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.d.ts
+frontend/vite.config.js

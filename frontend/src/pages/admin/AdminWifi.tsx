@@ -50,7 +50,7 @@ export default function AdminWifi() {
     <>
       <Stack spacing={3}>
         <Box>
-          <Typography variant="h5" sx={{ fontFamily: '"Playfair Display", serif', fontWeight: 600 }}>
+          <Typography variant="h5" sx={{ fontWeight: 500 }}>
             WLAN
           </Typography>
           <Typography variant="body2" color="text.secondary">
