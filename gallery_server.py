@@ -2,7 +2,6 @@ import logging
 import os
 import secrets
 import shutil
-import subprocess
 import threading
 import time
 from collections import deque
@@ -11,9 +10,10 @@ from functools import wraps
 from typing import Optional
 from zipfile import ZIP_STORED, ZipFile, ZipInfo
 
-from flask import (Flask, Response, abort, jsonify, render_template,
-                   request, send_file, session)
+from flask import (Flask, Response, abort, jsonify, request,
+                   send_file, session)
 
+import camera as camera_mod
 import config
 import events
 
@@ -201,36 +201,62 @@ _PORTAL_PATHS = {
 }
 
 
+def _looks_like_ip(host: str) -> bool:
+    """Reine IPv4-Adresse? — IP-Aufrufe sind nie Captive-Portal-Probes."""
+    parts = host.split(".")
+    if len(parts) != 4:
+        return False
+    return all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+
+
 @app.before_request
 def _captive_portal_redirect():
-    """Wenn ein Request mit fremdem Host hereinkommt (typisch:
-    captive.apple.com etc.), Phone zur Galerie umleiten."""
+    """Captive-Portal: nur ein Request mit DNS-Hostnamen (nicht IP) wird
+    umgeleitet. Damit funktionieren BEIDE Wege:
+    - Phone tippt apple.com (DNS-Hijack zum Pi) → Redirect zur Galerie
+    - Browser tippt 192.168.4.1 oder 192.168.2.140 → kein Redirect
+    """
     host = (request.host or "").split(":")[0]
     cfg_ip = config.cfg.get("hotspot_ip", "192.168.4.1")
-    # Lokale Hosts NICHT umleiten
-    if host in (cfg_ip, "localhost", "127.0.0.1") or host.endswith(".local"):
+    if not host or _looks_like_ip(host) or host == "localhost" or host.endswith(".local"):
         return None
-    # Bekannte Probe-Pfade ODER fremder Host = Captive-Portal-Probe
-    if request.path in _PORTAL_PATHS or host not in (cfg_ip, ""):
-        from flask import redirect
-        return redirect(f"http://{cfg_ip}/", code=302)
+    # Hierher kommen wir nur via DNS-Hijack (Hostname statt IP).
+    from flask import redirect
+    return redirect(f"http://{cfg_ip}/", code=302)
 
 
 # ── Galerie-Routen ─────────────────────────────────────────────────────────────
+
+_NO_SPA_HTML = (
+    "<!doctype html><meta charset=utf-8>"
+    "<title>Fotobox</title>"
+    "<style>body{font:16px system-ui;max-width:36rem;margin:4rem auto;padding:0 1rem;"
+    "color:#333}h1{color:#1a73e8}code{background:#f1f3f4;padding:.15rem .35rem;"
+    "border-radius:4px}</style>"
+    "<h1>Fotobox – Frontend nicht gebaut</h1>"
+    "<p>Die SPA unter <code>frontend/dist/</code> fehlt. "
+    "Bitte ausführen:</p>"
+    "<pre><code>cd frontend && npm install && npm run build</code></pre>"
+    "<p>Oder die Fotobox via <code>install.sh</code> neu installieren.</p>"
+)
+
+
+def _no_spa_response(code: int = 503):
+    return Response(_NO_SPA_HTML, status=code, mimetype="text/html; charset=utf-8")
+
 
 @app.route("/")
 def gallery():
     if _spa_enabled():
         return send_file(SPA_INDEX)
-    return render_template("gallery.html", photos=[f for _, f in _photo_list()],
-                           event_name=config.cfg.get("event_name", "Fotobox"))
+    return _no_spa_response()
 
 
 @app.route("/photo/<path:_filename>")
 def photo(_filename):
     if _spa_enabled():
         return send_file(SPA_INDEX)
-    abort(404)
+    return _no_spa_response()
 
 
 @app.route("/assets/<path:fname>")
@@ -422,9 +448,21 @@ def api_photos():
 
 @app.route("/api/delete/<event>/<filename>", methods=["POST"])
 def api_delete(event: str, filename: str):
-    pin = request.form.get("pin", "").strip()
-    if pin != config.cfg.get("admin_pin", "1234"):
-        return jsonify(ok=False, error="Falscher PIN"), 403
+    # Eingeloggte Admins dürfen ohne PIN-Abfrage löschen, normale Gäste
+    # müssen den PIN mitschicken — beides geschützt durch das Login-Lockout
+    # (selber Bucket wie /api/admin/login).
+    ip = _client_ip()
+    if not session.get("admin_logged_in"):
+        locked = _login_check_locked(ip)
+        if locked is not None:
+            return jsonify(ok=False,
+                           error=f"Zu viele Fehlversuche – bitte {locked}s warten"), 429
+        pin = request.form.get("pin", "").strip()
+        expected = config.cfg.get("admin_pin", "1234")
+        if not pin or not secrets.compare_digest(pin, expected):
+            _login_record_failure(ip)
+            return jsonify(ok=False, error="Falscher PIN"), 403
+        _login_record_success(ip)
     path = _safe_path(event, filename)
     if path is None:
         return jsonify(ok=False, error="Datei nicht gefunden"), 404
@@ -457,12 +495,7 @@ def api_delete(event: str, filename: str):
 def admin_spa(_path: str):
     if _spa_enabled():
         return send_file(SPA_INDEX)
-    if session.get("admin_logged_in"):
-        return render_template("admin_dashboard.html",
-                               cfg=config.cfg,
-                               event_name=config.cfg.get("event_name", "Fotobox"),
-                               msg=None, error=None)
-    return render_template("admin_login.html", error=None)
+    return _no_spa_response()
 
 
 # ── Admin JSON-API ─────────────────────────────────────────────────────────────
@@ -544,13 +577,11 @@ def api_admin_logout():
 @app.route("/api/admin/status")
 @_api_admin_required
 def api_admin_status():
-    camera_ok = False
-    try:
-        r = subprocess.run(["gphoto2", "--auto-detect"],
-                           capture_output=True, text=True, timeout=5)
-        camera_ok = "usb" in r.stdout.lower()
-    except Exception:
-        pass
+    # Niemals selbst gphoto2 starten — die Camera-Watchdog hat bereits eine
+    # USB-Session offen, ein paralleler --auto-detect kollidiert. Stattdessen
+    # den shared Status der Camera-Instanz lesen.
+    cam_state = camera_mod.latest_status()
+    camera_ok = bool(cam_state.get("available"))
 
     try:
         usage = shutil.disk_usage(config.BASE_DIR)
