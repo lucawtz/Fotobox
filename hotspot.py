@@ -259,10 +259,26 @@ def start() -> bool:
             logger.info("Captive-DNS angepasst — Hotspot wird kurz neu "
                         "gestartet damit dnsmasq die neue IP einliest")
             _nmcli(["connection", "down", CONN_NAME], timeout=10)
-            r = _nmcli(["connection", "up", CONN_NAME], timeout=20)
-            if r is None or r.returncode != 0:
+            # Up-Retry: NetworkManager kann nach einem schnellen down/up
+            # kurz busy sein und den ersten Versuch ablehnen. Wir geben
+            # bis zu 3 Versuche, sonst bleibt der Hotspot tot.
+            up_ok = False
+            import time
+            for attempt in range(3):
+                r = _nmcli(["connection", "up", CONN_NAME], timeout=20)
+                if r is not None and r.returncode == 0:
+                    up_ok = True
+                    break
                 logger.warning(
-                    "Hotspot-Reload nach Captive-DNS-Update fehlgeschlagen")
+                    "Hotspot-Reload Versuch %d/3 fehlgeschlagen: %s",
+                    attempt + 1, (r.stderr if r else "no result").strip()[:200])
+                if attempt < 2:
+                    time.sleep(1)
+            if not up_ok:
+                logger.error(
+                    "Hotspot konnte nach Captive-DNS-Update NICHT neu "
+                    "gestartet werden — manueller Eingriff: "
+                    "'sudo nmcli connection up %s'", CONN_NAME)
         config.cfg["hotspot_ip"] = actual_ip
         config.cfg["gallery_url"] = config.build_gallery_url(
             actual_ip, config.cfg.get("gallery_port", 80))

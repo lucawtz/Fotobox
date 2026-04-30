@@ -217,12 +217,15 @@ def _captive_portal_redirect():
     - Browser tippt 192.168.4.1 oder 192.168.2.140 → kein Redirect
     """
     host = (request.host or "").split(":")[0]
-    cfg_ip = config.cfg.get("hotspot_ip", "192.168.4.1")
     if not host or _looks_like_ip(host) or host == "localhost" or host.endswith(".local"):
         return None
     # Hierher kommen wir nur via DNS-Hijack (Hostname statt IP).
+    # gallery_url enthält Port (oder lässt 80 weg) — entscheidend wenn
+    # der Server beim preflight() auf 5000 zurückgefallen ist.
+    target = config.cfg.get("gallery_url") or (
+        f"http://{config.cfg.get('hotspot_ip', '192.168.4.1')}")
     from flask import redirect
-    return redirect(f"http://{cfg_ip}/", code=302)
+    return redirect(f"{target.rstrip('/')}/", code=302)
 
 
 # ── Galerie-Routen ─────────────────────────────────────────────────────────────
@@ -896,27 +899,35 @@ def preflight() -> int:
     zurückgefallen werden muss.
 
     Auf <1024 braucht's setcap auf der venv-Python (install.sh richtet
-    das ein). Fehlt der setcap, fallen wir auf 5000 zurück und passen
-    config.cfg["gallery_port"]+["gallery_url"] entsprechend an, sonst
-    crasht waitress später stumm im Thread und der Service ist tot ohne
-    Hinweis im Log.
+    das ein). Fehlt der setcap, fallen wir der Reihe nach auf 5000 → 8080
+    zurück und passen config.cfg an, sonst crasht waitress später stumm
+    im Thread und der Service ist tot ohne Hinweis im Log.
 
     Rückgabe: der tatsächlich nutzbare Port.
     """
     host = "0.0.0.0" if config.cfg.get("hotspot_enabled") else "127.0.0.1"
-    port = config.cfg["gallery_port"]
+    port = config.cfg.get("gallery_port", 80)
     if _can_bind(host, port):
         return port
-    fallback = 5000
+    # Reihenfolge: User-Konfig zuerst (oben), dann harte Fallbacks.
+    # Doppelte werden gefiltert damit wir den User-Port nicht erneut probieren.
+    for fallback in (p for p in (5000, 8080) if p != port):
+        if _can_bind(host, fallback):
+            logger.error(
+                "Galerie: Port %d kann nicht gebunden werden (setcap auf "
+                "venv-Python fehlt? './install.sh' erneut laufen lassen). "
+                "Fallback auf Port %d — Captive-Portal funktioniert in "
+                "diesem Modus NICHT.", port, fallback)
+            config.cfg["gallery_port"] = fallback
+            config.cfg["gallery_url"] = config.build_gallery_url(
+                config.cfg.get("hotspot_ip", "192.168.4.1"), fallback)
+            return fallback
+    # Alle Fallbacks belegt → Server wird gleich stumm crashen, aber
+    # wenigstens steht's klar im Log.
     logger.error(
-        "Galerie: Port %d kann nicht gebunden werden (setcap auf "
-        "venv-Python fehlt? './install.sh' erneut laufen lassen). "
-        "Fallback auf Port %d — Captive-Portal funktioniert in diesem "
-        "Modus NICHT.", port, fallback)
-    config.cfg["gallery_port"] = fallback
-    config.cfg["gallery_url"] = config.build_gallery_url(
-        config.cfg.get("hotspot_ip", "192.168.4.1"), fallback)
-    return fallback
+        "Galerie: weder Port %d noch 5000/8080 verfügbar — "
+        "Galerie startet wahrscheinlich nicht.", port)
+    return port
 
 
 def run(host: Optional[str] = None, port: Optional[int] = None):

@@ -168,10 +168,15 @@ def main():
         logger.info("Hotspot per --no-hotspot übersprungen — Heim-WLAN bleibt aktiv")
 
     # Galerie-Server: Preflight synchron (Port-Bind-Check + ggf. Fallback)
-    # damit der QR-Code in der UI die korrekte Port-Info bekommt.
-    gallery_server.preflight()
+    # damit der QR-Code in der UI die korrekte Port-Info bekommt. Falls
+    # preflight unerwartet wirft, soll der Fotobox-Service trotzdem
+    # weiterlaufen — Galerie ist nice-to-have, Auslöser+UI sind kritisch.
+    try:
+        gallery_server.preflight()
+    except Exception as exc:
+        logger.error("Galerie-Preflight fehlgeschlagen: %s", exc, exc_info=True)
     threading.Thread(target=gallery_server.run, daemon=True).start()
-    logger.info("Galerie: %s", cfg["gallery_url"])
+    logger.info("Galerie: %s", cfg.get("gallery_url", "?"))
 
     # Kamera (Watchdog im Hintergrund)
     camera = Camera(
