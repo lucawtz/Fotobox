@@ -13,7 +13,7 @@
   "admin_pin": "1234",
   "idle_timeout": 60,
   "slide_duration_ms": 5000,
-  "gallery_port": 5000,
+  "gallery_port": 80,
   "hotspot_enabled": false,
   "hotspot_ip": "192.168.4.1",
   "hotspot_interface": "wlan0",

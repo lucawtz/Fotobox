@@ -98,12 +98,33 @@ sudo setcap 'cap_net_bind_service=+ep' "$PYTHON_BIN" || true
 # auflösen lassen. Damit kommen iOS/Android-Probe-URLs (apple.com,
 # gstatic.com etc.) bei uns an, der Server schickt 302-Redirect zur
 # Galerie — Phone öffnet automatisch das "Anmelden"-Popup.
+#
+# IP wird aus config.json gelesen, und die Datei wird dem Service-User
+# übergeben — hotspot.py passt sie zur Laufzeit auf die echte Interface-
+# IP an, falls NetworkManager im 'shared mode' von ipv4.addresses abweicht.
 echo "→ Captive-Portal-DNS einrichten..."
+HOTSPOT_IP=$(python3 -c "import json,sys; print(json.load(open('$INSTALL_DIR/config.json')).get('hotspot_ip','192.168.4.1'))" 2>/dev/null || echo "192.168.4.1")
 sudo mkdir -p /etc/NetworkManager/dnsmasq-shared.d
-sudo tee /etc/NetworkManager/dnsmasq-shared.d/captive.conf > /dev/null <<'EOF'
+sudo tee /etc/NetworkManager/dnsmasq-shared.d/captive.conf > /dev/null <<EOF
 # Fotobox Captive-Portal: alle DNS-Anfragen auf Hotspot-IP umleiten
-address=/#/192.168.4.1
+# Wird zur Laufzeit von hotspot.py auf die echte Interface-IP angepasst.
+address=/#/$HOTSPOT_IP
 EOF
+sudo chown "$INSTALL_USER":"$INSTALL_USER" /etc/NetworkManager/dnsmasq-shared.d/captive.conf
+
+# 7c. Sudoers-Fallback: falls der chown später mal verloren geht (Reinstall
+# als anderer User, manuelle Edits etc.), darf hotspot.py die captive.conf
+# trotzdem ohne Passwort via 'sudo tee' schreiben. Eng begrenzt auf genau
+# diesen Pfad — kein generelles NOPASSWD.
+echo "→ Sudoers-Eintrag für captive.conf-Update einrichten..."
+sudo tee /etc/sudoers.d/fotobox-captive > /dev/null <<EOF
+$INSTALL_USER ALL=(root) NOPASSWD: /usr/bin/tee /etc/NetworkManager/dnsmasq-shared.d/captive.conf
+EOF
+sudo chmod 440 /etc/sudoers.d/fotobox-captive
+sudo visudo -cf /etc/sudoers.d/fotobox-captive >/dev/null || {
+    echo "  ⚠  Sudoers-Eintrag fehlerhaft, wird entfernt"
+    sudo rm -f /etc/sudoers.d/fotobox-captive
+}
 
 # 8. Drucker-Gruppe
 sudo usermod -aG lpadmin "$INSTALL_USER" 2>/dev/null || true
@@ -115,9 +136,6 @@ echo "Nächste Schritte:"
 echo "  1. config.json anpassen: nano $INSTALL_DIR/config.json"
 echo "  2. Fotobox starten:      sudo systemctl start fotobox"
 echo "  3. Logs:                 tail -f $INSTALL_DIR/logs/fotobox.log"
-echo "  4. Galerie:              http://192.168.4.1   (oder :5000 falls gallery_port=5000)"
+echo "  4. Galerie:              http://192.168.4.1   (Port 80 ist Default)"
 echo "  5. Admin-Interface:      http://192.168.4.1/admin"
-echo ""
-echo "Tipp: in config.json 'gallery_port: 80' setzen damit Gäste"
-echo "die URL ohne Port-Angabe nutzen können."
 echo ""

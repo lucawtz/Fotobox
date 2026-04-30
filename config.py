@@ -17,9 +17,10 @@ _DEFAULTS: dict = {
     "gpio_pins": {"left": 17, "trigger": 27, "right": 22},
     "logo_path": "Layout/logo.png",
     "admin_pin": "1234",
+    "host_pin": "0000",
     "idle_timeout": 300,
     "slide_duration_ms": 5000,
-    "gallery_port": 5000,
+    "gallery_port": 80,
     "hotspot_enabled": False,
     "hotspot_ip": "192.168.4.1",
     "hotspot_interface": "wlan0",
@@ -59,10 +60,16 @@ def load_config() -> dict:
         data["picture_dir"] = os.path.join(BASE_DIR, data["picture_dir"])
 
     # Laufzeit-Werte
-    data["gallery_url"] = f"http://{data['hotspot_ip']}:{data['gallery_port']}"
+    data["gallery_url"] = build_gallery_url(data["hotspot_ip"], data["gallery_port"])
     data["thumbnail_dir"] = os.path.join(BASE_DIR, "thumbnails")
 
     return data
+
+
+def build_gallery_url(host: str, port: int) -> str:
+    """Baut die Gallery-URL — Port 80 wird weggelassen, damit der QR-Code
+    ein cleanes 'http://192.168.4.1' zeigt statt 'http://192.168.4.1:80'."""
+    return f"http://{host}" if int(port) == 80 else f"http://{host}:{port}"
 
 
 _save_lock = threading.Lock()

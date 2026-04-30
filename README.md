@@ -71,7 +71,7 @@ tail -f logs/fotobox.log         # Logs live anzeigen
 | `wifi_password` | Hotspot-Passwort | `"fotobox123"` |
 | `hotspot_ip` | IP-Adresse des Pi im Hotspot | `"192.168.4.1"` |
 | `hotspot_interface` | WLAN-Interface für den Hotspot (eingebauter Chip = `wlan0`) | `"wlan0"` |
-| `gallery_port` | Port des Galerie-Webservers | `5000` |
+| `gallery_port` | Port des Galerie-Webservers | `80` |
 | `gpio_pins.left` | GPIO-Pin für Links-Button | `17` |
 | `gpio_pins.trigger` | GPIO-Pin für Auslöser-Button | `27` |
 | `gpio_pins.right` | GPIO-Pin für Rechts-Button | `22` |
@@ -101,8 +101,8 @@ Homescreen
 Erreichbar per Browser (Handy/Laptop im gleichen Netzwerk):
 
 ```
-http://192.168.4.1:5000/admin    (bei aktivem Hotspot)
-http://<pi-ip>:5000/admin        (bei LAN/WLAN-Verbindung)
+http://192.168.4.1/admin         (bei aktivem Hotspot)
+http://<pi-ip>/admin             (bei LAN/WLAN-Verbindung)
 ```
 
 **Funktionen:**
@@ -144,7 +144,7 @@ Nach Änderung des WLAN-Namens oder Passworts: `sudo systemctl restart fotobox`.
 
 ### Galerie nicht erreichbar
 - Pi-IP mit `ip a` prüfen
-- Firewall: `sudo ufw allow 5000`
+- Firewall: `sudo ufw allow 80`
 - Log: `tail -f logs/gallery.log`
 
 ### Live-Vorschau fehlt (Countdown schwarz)

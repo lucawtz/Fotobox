@@ -14,6 +14,65 @@ import config
 logger = logging.getLogger(__name__)
 
 CONN_NAME = "fotobox-hotspot"
+CAPTIVE_CONF_PATH = "/etc/NetworkManager/dnsmasq-shared.d/captive.conf"
+
+
+def _write_captive_conf(ip: str) -> str:
+    """Schreibt captive.conf so dass dnsmasq alle DNS-Anfragen auf die
+    übergebene IP umleitet (Captive-Portal-DNS-Hijack).
+
+    Bevorzugt direktes Schreiben (install.sh chownt die Datei dem
+    Service-User). Fällt das wegen fehlender Rechte fehl, wird via
+    'sudo -n tee' nachversucht (NOPASSWD-Regel aus install.sh).
+
+    Rückgabe:
+      "changed"   — Datei neu geschrieben, dnsmasq muss neu gestartet werden
+      "unchanged" — Datei hatte bereits den gewünschten Inhalt
+      "failed"    — Write fehlgeschlagen (kein Schreibrecht trotz Fallback)
+    """
+    content = (
+        "# Fotobox Captive-Portal: alle DNS-Anfragen auf Hotspot-IP umleiten\n"
+        "# Wird zur Laufzeit von hotspot.py geschrieben.\n"
+        f"address=/#/{ip}\n"
+    )
+    try:
+        with open(CAPTIVE_CONF_PATH, "r", encoding="utf-8") as f:
+            if f.read() == content:
+                return "unchanged"
+    except OSError:
+        pass  # existiert nicht / nicht lesbar → einfach schreiben
+
+    # Direktschreiben (chown-Variante)
+    try:
+        with open(CAPTIVE_CONF_PATH, "w", encoding="utf-8") as f:
+            f.write(content)
+        logger.info("Captive-DNS auf %s gesetzt", ip)
+        return "changed"
+    except PermissionError:
+        pass  # → sudo-Fallback
+    except OSError as exc:
+        logger.warning("Captive-DNS-Config (%s) Schreibfehler: %s",
+                       CAPTIVE_CONF_PATH, exc)
+        return "failed"
+
+    # sudo-Fallback (NOPASSWD-tee aus install.sh)
+    try:
+        proc = subprocess.run(
+            ["sudo", "-n", "tee", CAPTIVE_CONF_PATH],
+            input=content, text=True, capture_output=True, timeout=5,
+        )
+        if proc.returncode == 0:
+            logger.info("Captive-DNS auf %s gesetzt (via sudo-Fallback)", ip)
+            return "changed"
+        logger.warning(
+            "Captive-DNS sudo-tee fehlgeschlagen (rc=%d): %s "
+            "— install.sh ggf. neu laufen lassen",
+            proc.returncode, proc.stderr.strip()[:200])
+        return "failed"
+    except (FileNotFoundError, subprocess.TimeoutExpired,
+            subprocess.SubprocessError) as exc:
+        logger.warning("Captive-DNS sudo-Fallback nicht verfügbar: %s", exc)
+        return "failed"
 
 
 def _nmcli(args: list, timeout: int = 10, check: bool = False):
@@ -114,13 +173,14 @@ def stop() -> None:
     logger.info("Hotspot beendet")
 
 
-def _read_interface_ip(ifname: str, retries: int = 6,
+def _read_interface_ip(ifname: str, retries: int = 20,
                        delay_s: float = 0.5) -> Optional[str]:
     """Liest die tatsächlich zugewiesene IPv4-Adresse aus dem Interface.
 
     NetworkManager weist die IP nach 'connection up' asynchron zu — ggf.
-    erst 1-2 Sekunden später. Wir retryen deshalb mehrmals (Default: bis
-    zu 3 Sekunden warten) bevor wir aufgeben.
+    erst 1-2 Sekunden später, auf langsamen Pis bis ~10 s. Wir retryen
+    deshalb großzügig (Default: bis zu 10 Sekunden warten) bevor wir
+    aufgeben.
     """
     import time
     for _ in range(max(1, retries)):
@@ -170,6 +230,11 @@ def start() -> bool:
         return False
 
     # Schritt 3: Connection starten
+    # captive.conf NICHT vor dem Up neu schreiben — sonst kollidiert das
+    # mit dem Post-Up-Write (siehe unten) und jeder Service-Restart
+    # triggert einen down/up-Cycle. dnsmasq nutzt für diese Up-Phase die
+    # captive.conf aus dem letzten Lauf (oder install.sh beim 1. Boot),
+    # was praktisch immer schon die richtige IP enthält.
     r = _nmcli(["connection", "up", CONN_NAME], timeout=20)
     if r is None or r.returncode != 0:
         err = (r.stderr if r else "no result").strip()[:200]
@@ -183,11 +248,24 @@ def start() -> bool:
     if actual_ip:
         if actual_ip != hotspot_ip:
             logger.info(
-                "Hotspot: NetworkManager nutzt %s (config wollte %s) — cfg-update",
+                "Hotspot: NetworkManager nutzt %s (config wollte %s)",
                 actual_ip, hotspot_ip)
+        # captive.conf nur dann (re)schreiben + neustarten, wenn der
+        # Inhalt tatsächlich abweicht — das passiert i.d.R. nur beim
+        # 1. Boot nach Install oder bei IP-Wechsel. Subsequent Service-
+        # Restarts treffen "unchanged" und triggern keinen Reload.
+        write_state = _write_captive_conf(actual_ip)
+        if write_state == "changed":
+            logger.info("Captive-DNS angepasst — Hotspot wird kurz neu "
+                        "gestartet damit dnsmasq die neue IP einliest")
+            _nmcli(["connection", "down", CONN_NAME], timeout=10)
+            r = _nmcli(["connection", "up", CONN_NAME], timeout=20)
+            if r is None or r.returncode != 0:
+                logger.warning(
+                    "Hotspot-Reload nach Captive-DNS-Update fehlgeschlagen")
         config.cfg["hotspot_ip"] = actual_ip
-        config.cfg["gallery_url"] = (
-            f"http://{actual_ip}:{config.cfg.get('gallery_port', 5000)}")
+        config.cfg["gallery_url"] = config.build_gallery_url(
+            actual_ip, config.cfg.get("gallery_port", 80))
     else:
         logger.warning(
             "Hotspot: Interface-IP konnte nach Start nicht ausgelesen werden "
