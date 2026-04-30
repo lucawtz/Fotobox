@@ -34,26 +34,36 @@ def cleanup_old_thumbnails(thumb_dir: str, max_age_days: int = 30):
         logger.info("Thumbnail-Cleanup: %d Dateien entfernt", removed)
 
 
-def _all_photos(picture_dir: str) -> list[tuple[str, float]]:
-    """Liefert (absoluter_pfad, mtime) für alle Fotos in allen Event-Ordnern."""
+def _event_photos(event_dir: str) -> list[tuple[str, float]]:
+    """Liefert (absoluter_pfad, mtime) für alle Fotos in EINEM Event-Ordner."""
     out: list[tuple[str, float]] = []
-    if not os.path.isdir(picture_dir):
+    if not os.path.isdir(event_dir):
         return out
-    for root, _dirs, files in os.walk(picture_dir):
-        for fname in files:
-            if os.path.splitext(fname)[1].lower() not in _EXTS:
-                continue
-            full = os.path.join(root, fname)
-            try:
-                out.append((full, os.path.getmtime(full)))
-            except OSError:
-                continue
+    try:
+        entries = os.listdir(event_dir)
+    except OSError:
+        return out
+    for fname in entries:
+        if os.path.splitext(fname)[1].lower() not in _EXTS:
+            continue
+        full = os.path.join(event_dir, fname)
+        try:
+            out.append((full, os.path.getmtime(full)))
+        except OSError:
+            continue
     return out
 
 
-def enforce_max_photos(picture_dir: str, max_count: int):
-    """Löscht älteste Fotos über alle Event-Ordner hinweg, bis max_count erreicht."""
-    photos = _all_photos(picture_dir)
+def enforce_max_photos(picture_dir: str, max_count: int, event_dir: str = None):
+    """Löscht älteste Fotos in EINEM Event-Ordner bis max_count erreicht ist.
+
+    Vorher hat das global über alle Events gelöscht — Datenschutz-Issue, weil
+    Fotos vorheriger Mieter-Events durch neue verdrängt wurden. Jetzt:
+    Limit gilt pro Event. Wenn event_dir nicht angegeben ist, no-op.
+    """
+    if not event_dir or not os.path.isdir(event_dir):
+        return
+    photos = _event_photos(event_dir)
     if len(photos) <= max_count:
         return
     photos.sort(key=lambda x: x[1])
@@ -65,13 +75,3 @@ def enforce_max_photos(picture_dir: str, max_count: int):
                         os.path.relpath(path, picture_dir))
         except Exception as exc:
             logger.warning("Max-Fotos Fehler: %s", exc)
-
-    # Leere Event-Ordner aufräumen
-    for entry in os.listdir(picture_dir):
-        full = os.path.join(picture_dir, entry)
-        if os.path.isdir(full):
-            try:
-                if not os.listdir(full):
-                    os.rmdir(full)
-            except OSError:
-                pass

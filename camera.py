@@ -7,6 +7,24 @@ import time
 logger = logging.getLogger(__name__)
 
 
+# Modul-globaler Status, den der gallery_server (anderer Thread) gefahrlos
+# auslesen kann — ohne selbst gphoto2 zu starten und damit eine USB-Kollision
+# mit der Camera-Watchdog zu riskieren. Camera setzt das bei jedem Detect.
+_status_lock = threading.Lock()
+_latest_status = {"available": False, "error": "Kamera noch nicht initialisiert"}
+
+
+def latest_status() -> dict:
+    with _status_lock:
+        return dict(_latest_status)
+
+
+def _set_status(available: bool, error: str = ""):
+    with _status_lock:
+        _latest_status["available"] = available
+        _latest_status["error"] = error
+
+
 class Camera:
     """gphoto2-Wrapper mit Watchdog und manuellem Live-View-Wake.
 
@@ -62,6 +80,7 @@ class Camera:
         if not self._detect():
             self.available = False
             self.error_message = "Keine Kamera gefunden – USB prüfen"
+            _set_status(False, self.error_message)
             logger.warning(self.error_message)
             return
 
@@ -84,6 +103,7 @@ class Camera:
 
         self.available = True
         self.error_message = ""
+        _set_status(True, "")
         logger.info("Kamera bereit (manuelle LV-Aktivierung)")
 
     # ── Live-View Wake (ohne capture-preview!) ─────────────────────────────────
@@ -168,6 +188,7 @@ class Camera:
             elif not detected and self.available:
                 self.available = False
                 self.error_message = "Kamera getrennt – USB prüfen"
+                _set_status(False, self.error_message)
                 logger.warning("Watchdog: Kamera verloren")
             # Sonst: nichts tun. Live-View aktiviert der Nutzer manuell
             # über den Display-Knopf an der Kamera oder Q auf der Fotobox.
@@ -179,7 +200,10 @@ class Camera:
         if not self.available:
             raise RuntimeError("Kamera nicht verfügbar")
         os.makedirs(directory, exist_ok=True)
-        filename = f"foto_{int(time.time())}.jpg"
+        # Microsekunden im Filename — int(time.time()) hat Sekunden-Auflösung
+        # und würde bei zwei Captures innerhalb derselben Sekunde (Collage!)
+        # die vorherige Datei überschreiben.
+        filename = f"foto_{int(time.time() * 1000)}.jpg"
         before = set(os.listdir(directory))
 
         self._capturing = True

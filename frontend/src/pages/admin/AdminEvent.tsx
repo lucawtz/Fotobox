@@ -135,7 +135,7 @@ export default function AdminEvent() {
               value={pin}
               onChange={(e) => setPin(e.target.value)}
               fullWidth
-              inputProps={{ maxLength: 24, inputMode: "numeric" }}
+              inputProps={{ maxLength: 12, inputMode: "numeric" }}
               InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">
@@ -168,7 +168,7 @@ export default function AdminEvent() {
             Verwerfen
           </Button>
           <Button
-            disabled={!dirty || busy || pin.length < 4}
+            disabled={!dirty || busy || pin.length < 4 || pin.length > 12}
             onClick={save}
             variant="contained"
           >

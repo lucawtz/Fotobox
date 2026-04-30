@@ -138,18 +138,40 @@ def main() -> int:
         write_state("copying", 0, total, "Kopiere …")
 
         copied = 0
+        disk_full = False
         for src, rel in photos:
             dst = dest_root / rel
             try:
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
                 copied += 1
+            except OSError as exc:
+                # ENOSPC = Stick voll → Abbruch, weitere Versuche sind sinnlos
+                # und produzieren nur halb-geschriebene Dateien.
+                if getattr(exc, "errno", None) == 28:  # ENOSPC
+                    disk_full = True
+                    # Halb-geschriebene Datei wegwerfen
+                    try:
+                        if dst.exists():
+                            dst.unlink()
+                    except OSError:
+                        pass
+                    write_state("error", copied, total,
+                                "USB-Stick voll – kopieren abgebrochen")
+                    break
+                write_state("copying", copied, total,
+                            f"Übersprungen: {rel} ({exc})")
+                continue
             except Exception as exc:
-                # Einzelne Fehler überspringen — Stick könnte voll sein
                 write_state("copying", copied, total,
                             f"Übersprungen: {rel} ({exc})")
                 continue
             write_state("copying", copied, total, str(rel))
+
+        if disk_full:
+            subprocess.run(["sync"], check=False, timeout=60)
+            time.sleep(LINGER_AFTER_DONE_S)
+            return 1
 
         # Buffer flush vor Unmount
         subprocess.run(["sync"], check=False, timeout=60)

@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import Gallery from "./pages/Gallery";
+import EventGallery from "./pages/EventGallery";
 import PhotoView from "./pages/PhotoView";
 
 // Admin-Pages lazy laden — Gäste brauchen den Code nie, also nicht in den
@@ -18,6 +19,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Gallery />} />
+      <Route path="/event/:folder" element={<EventGallery />} />
       <Route path="/photo/:event/:filename" element={<PhotoView />} />
 
       <Route

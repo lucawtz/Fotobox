@@ -64,6 +64,8 @@ export default function PhotoView() {
     }
   };
 
+  const backTo = event ? `/event/${encodeURIComponent(event)}` : "/";
+
   const onDeleted = () => {
     if (!current) return;
     const remaining = photos.filter((p) => photoKey(p) !== photoKey(current));
@@ -71,7 +73,7 @@ export default function PhotoView() {
     setConfirmDel(false);
     setToast("Foto gelöscht");
     if (remaining.length === 0) {
-      navigate("/");
+      navigate(backTo);
     } else {
       const next = Math.min(startIndex, remaining.length - 1);
       const np = remaining[next];
@@ -94,7 +96,7 @@ export default function PhotoView() {
     return (
       <Stack alignItems="center" justifyContent="center" sx={{ height: "100dvh", color: "text.secondary" }}>
         <Typography>Foto nicht gefunden</Typography>
-        <IconButton onClick={() => navigate("/")} sx={{ mt: 2 }}>
+        <IconButton onClick={() => navigate(backTo)} sx={{ mt: 2 }}>
           <ArrowBackRoundedIcon />
         </IconButton>
       </Stack>
@@ -125,7 +127,7 @@ export default function PhotoView() {
           paddingTop: "max(env(safe-area-inset-top), 12px)",
         }}
       >
-        <IconButton onClick={() => navigate(-1)} sx={{ color: "#fff" }}>
+        <IconButton onClick={() => navigate(backTo)} sx={{ color: "#fff" }}>
           <ArrowBackRoundedIcon />
         </IconButton>
         <Stack sx={{ flex: 1, minWidth: 0 }}>

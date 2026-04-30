@@ -54,7 +54,11 @@ def event_path(cfg: dict, event: str) -> Optional[str]:
 
 
 def list_events(cfg: dict) -> list[dict]:
-    """Returns events sorted newest first, only those that contain photos."""
+    """Returns events sorted newest first, only those that contain photos.
+
+    Jeder Eintrag enthält ein `cover` (Filename des neuesten Fotos im Ordner)
+    für die Vorschau in der Ordner-Ansicht.
+    """
     base = cfg["picture_dir"]
     if not os.path.isdir(base):
         return []
@@ -72,9 +76,12 @@ def list_events(cfg: dict) -> list[dict]:
         if not files:
             continue
         try:
-            mtime = max(os.path.getmtime(os.path.join(full, f)) for f in files)
-        except (OSError, ValueError):
+            stamped = [(f, os.path.getmtime(os.path.join(full, f))) for f in files]
+        except OSError:
             continue
+        stamped.sort(key=lambda x: x[1], reverse=True)
+        cover = stamped[0][0]
+        mtime = stamped[0][1]
         date_part, _, slug_part = entry.partition("_")
         out.append({
             "folder":  entry,
@@ -83,6 +90,7 @@ def list_events(cfg: dict) -> list[dict]:
             "display": _display_name(entry),
             "count":   len(files),
             "mtime":   mtime,
+            "cover":   cover,
             "active":  entry == active_folder,
         })
     out.sort(key=lambda e: e["mtime"], reverse=True)

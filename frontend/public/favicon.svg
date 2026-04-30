@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Drive-blauer Hintergrund mit weichem Verlauf -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4285f4"/>
+      <stop offset="1" stop-color="#1a73e8"/>
+    </linearGradient>
+    <radialGradient id="lens" cx="32" cy="32" r="9" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4285f4"/>
+      <stop offset="0.7" stop-color="#1a73e8"/>
+      <stop offset="1" stop-color="#0d47a1"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+
+  <!-- Kamera-Body (weiß, leicht abgerundet) -->
+  <path d="M 14 24
+           L 22 24
+           L 24 19
+           Q 25 18 26 18
+           L 38 18
+           Q 39 18 40 19
+           L 42 24
+           L 50 24
+           Q 53 24 53 27
+           L 53 47
+           Q 53 50 50 50
+           L 14 50
+           Q 11 50 11 47
+           L 11 27
+           Q 11 24 14 24 Z"
+        fill="#ffffff"/>
+
+  <!-- Kleines Sucher-Detail oben rechts -->
+  <rect x="44" y="26.5" width="3" height="3" rx="0.7" fill="#fbbc04"/>
+
+  <!-- Objektiv: außen -->
+  <circle cx="32" cy="36" r="9" fill="url(#lens)"/>
+
+  <!-- Objektiv: innen -->
+  <circle cx="32" cy="36" r="6" fill="#0d47a1"/>
+
+  <!-- Glanzpunkt -->
+  <circle cx="29.2" cy="33.2" r="1.7" fill="#ffffff" opacity="0.55"/>
+</svg>

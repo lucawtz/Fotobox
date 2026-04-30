@@ -5,6 +5,8 @@ Picture_Box/
 thumbnails/
 logs/
 *.log
+.flask_secret
+config.json
 
 # Frontend Build-Artefakte
 frontend/node_modules/

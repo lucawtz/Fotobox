@@ -27,11 +27,19 @@ C_BTN_HL = (180, 130, 60)
 
 
 class _LiveReader:
-    """Liest Capture-Card-Frames in einem Hintergrund-Thread."""
+    """Liest Capture-Card-Frames in einem Hintergrund-Thread mit Auto-Reconnect.
+
+    Wenn das HDMI-Kabel kurz gezogen wird oder das Capture-Device
+    Read-Errors liefert, versucht der Reader das Device alle paar Sekunden
+    neu zu öffnen — ohne dass die UI durchgängig 'kein Signal' anzeigt.
+    """
 
     _TARGET_FPS = 30
+    _RECONNECT_INTERVAL_S = 3.0
+    _MAX_CONSEC_READ_FAILS = 30
 
     def __init__(self, device: int):
+        self._device = device
         self._cap = cv2.VideoCapture(device)
         self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not self._cap.isOpened():
@@ -39,17 +47,47 @@ class _LiveReader:
         self._frame = None
         self._lock = threading.Lock()
         self._running = True
+        self._fail_count = 0
+        self._last_reconnect = 0.0
         threading.Thread(target=self._loop, daemon=True).start()
         logger.info("LiveReader gestartet (device=%d)", device)
+
+    def _try_reconnect(self):
+        now = time.monotonic()
+        if now - self._last_reconnect < self._RECONNECT_INTERVAL_S:
+            return
+        self._last_reconnect = now
+        try:
+            self._cap.release()
+        except Exception:
+            pass
+        self._cap = cv2.VideoCapture(self._device)
+        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if self._cap.isOpened():
+            logger.info("LiveReader: Capture-Device wieder geöffnet")
+            self._fail_count = 0
+        else:
+            logger.debug("LiveReader: Reconnect-Versuch fehlgeschlagen")
 
     def _loop(self):
         interval = 1.0 / self._TARGET_FPS
         while self._running:
             t0 = time.monotonic()
-            ok, frame = self._cap.read()
-            if ok:
+            try:
+                ok, frame = self._cap.read()
+            except Exception as exc:
+                logger.debug("LiveReader read-Exception: %s", exc)
+                ok, frame = False, None
+
+            if ok and frame is not None:
                 with self._lock:
                     self._frame = frame
+                self._fail_count = 0
+            else:
+                self._fail_count += 1
+                if self._fail_count >= self._MAX_CONSEC_READ_FAILS:
+                    self._try_reconnect()
+
             elapsed = time.monotonic() - t0
             rest = interval - elapsed
             if rest > 0:
@@ -61,7 +99,10 @@ class _LiveReader:
 
     def close(self):
         self._running = False
-        self._cap.release()
+        try:
+            self._cap.release()
+        except Exception:
+            pass
 
 
 class UI:
@@ -117,8 +158,9 @@ class UI:
         self._slide_surf: Optional[pygame.Surface] = None
         self._SLIDE_FADE_MS = 800
 
-        # Result-Screen Cache
+        # Result-Screen Cache — gecappt, sonst Memory-Leak nach hunderten Fotos
         self._result_cache: dict = {}
+        self._RESULT_CACHE_MAX = 8
 
         # Live-Reader (Capture-Card)
         self._live: Optional[_LiveReader] = None
@@ -377,6 +419,10 @@ class UI:
                 nw = int(img.get_width() * scale)
                 nh = int(img.get_height() * scale)
                 self._result_cache[path] = pygame.transform.smoothscale(img, (nw, nh))
+                # Cap: älteste Einträge wegwerfen damit der Cache nicht endlos wächst
+                while len(self._result_cache) > self._RESULT_CACHE_MAX:
+                    oldest = next(iter(self._result_cache))
+                    self._result_cache.pop(oldest, None)
             except Exception as exc:
                 logger.warning("Result-Foto: %s", exc)
                 return
@@ -556,6 +602,15 @@ class UI:
                 self._rot_cache[(path, angle)] = pygame.transform.rotate(surf, angle)
         except Exception as exc:
             logger.warning("Polaroid-Ladefehler: %s", exc)
+
+        # Cache-Hygiene: alles wegwerfen was nicht mehr in der Polaroid-deque ist.
+        # Sonst wachsen _photo_cache/_rot_cache linear mit der Anzahl Fotos.
+        active = set(self._gallery)
+        for p in [p for p in self._photo_cache if p not in active]:
+            self._photo_cache.pop(p, None)
+            self._fade_start.pop(p, None)
+        for key in [k for k in self._rot_cache if k[0] not in active]:
+            self._rot_cache.pop(key, None)
 
     def _draw_polaroids(self):
         photos = list(self._gallery)

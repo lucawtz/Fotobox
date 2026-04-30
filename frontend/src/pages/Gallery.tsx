@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Link as RouterLink } from "react-router-dom";
 import {
   Box,
   Container,
@@ -7,38 +8,36 @@ import {
   Typography,
   CircularProgress,
   Chip,
-  Button,
-  Tooltip,
+  Paper,
 } from "@mui/material";
 import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
-import DownloadForOfflineRoundedIcon from "@mui/icons-material/DownloadForOfflineRounded";
-import { api, EventInfo, Photo } from "../api";
+import FolderRoundedIcon from "@mui/icons-material/FolderRounded";
+import FiberManualRecordRoundedIcon from "@mui/icons-material/FiberManualRecordRounded";
+import { api, EventInfo } from "../api";
 import TopBar from "../components/TopBar";
-import PhotoTile from "../components/PhotoTile";
 
 const POLL_MS = 8000;
-const ALL = "__all__";
+
+const formatDate = (iso: string): string => {
+  // "2026-04-30" → "30. April 2026"
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("de-DE", {
+    day: "numeric", month: "long", year: "numeric",
+  });
+};
 
 export default function Gallery() {
-  const [photos, setPhotos] = useState<Photo[]>([]);
-  const [allEvents, setAllEvents] = useState<EventInfo[]>([]);
+  const [items, setItems] = useState<EventInfo[]>([]);
   const [eventName, setEventName] = useState("Fotobox");
-  const [activeEvent, setActiveEvent] = useState<string | null>(null);
-  const [filter, setFilter] = useState<string>(ALL);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const knownCount = useRef(0);
 
-  const load = useCallback(async (filt: string) => {
+  const load = useCallback(async () => {
     try {
-      const evReq = api.events();
-      const photosReq = api.list(filt === ALL ? null : filt);
-      const [evs, ph] = await Promise.all([evReq, photosReq]);
-      setAllEvents(evs.events);
-      setActiveEvent(evs.active);
-      setEventName(evs.event_name);
-      setPhotos(ph.photos);
-      knownCount.current = ph.count;
+      const r = await api.events();
+      setItems(r.events);
+      setEventName(r.event_name);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -47,133 +46,30 @@ export default function Gallery() {
     }
   }, []);
 
-  useEffect(() => {
-    setLoading(true);
-    load(filter);
-  }, [filter, load]);
+  useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    const id = setInterval(async () => {
-      try {
-        const r = await api.count(filter === ALL ? null : filter);
-        if (r.count !== knownCount.current) load(filter);
-      } catch { /* ignore */ }
-    }, POLL_MS);
+    const id = setInterval(load, POLL_MS);
     return () => clearInterval(id);
-  }, [filter, load]);
+  }, [load]);
 
+  const totalPhotos = items.reduce((s, e) => s + e.count, 0);
   const subtitle = loading
     ? "Lade…"
-    : `${photos.length} Foto${photos.length === 1 ? "" : "s"}`;
-
-  const showChips = allEvents.length > 1;
-
-  const downloadLabel = filter === ALL ? "Alle herunterladen" : "Event herunterladen";
-  const handleDownload = () => {
-    window.location.href = api.zipUrl(filter === ALL ? null : filter);
-  };
-
-  const desktopAction = photos.length > 0 && (
-    <Button
-      onClick={handleDownload}
-      startIcon={<DownloadForOfflineRoundedIcon />}
-      variant="contained"
-      size="small"
-      sx={{
-        display: { xs: "none", sm: "inline-flex" },
-        px: 2.25,
-      }}
-    >
-      ZIP
-    </Button>
-  );
-  const mobileAction = photos.length > 0 && (
-    <Tooltip title={downloadLabel}>
-      <span style={{ display: "inline-flex" }}>
-        <Box
-          component="button"
-          onClick={handleDownload}
-          sx={{
-            display: { xs: "inline-flex", sm: "none" },
-            background: "transparent",
-            border: 0,
-            cursor: "pointer",
-            color: "primary.main",
-            p: 1,
-            borderRadius: "50%",
-            "&:hover": { bgcolor: "rgba(26,115,232,0.08)" },
-          }}
-          aria-label={downloadLabel}
-        >
-          <DownloadForOfflineRoundedIcon />
-        </Box>
-      </span>
-    </Tooltip>
-  );
+    : `${items.length} Event${items.length === 1 ? "" : "s"} · ${totalPhotos} Foto${totalPhotos === 1 ? "" : "s"}`;
 
   return (
     <>
-      <TopBar
-        title={eventName}
-        subtitle={subtitle}
-        onRefresh={() => load(filter)}
-        actions={<>{desktopAction}{mobileAction}</>}
-      />
+      <TopBar title={eventName} subtitle={subtitle} onRefresh={load} />
 
-      {showChips && (
-        <Box
-          sx={{
-            position: "sticky",
-            top: { xs: 64, sm: 72 },
-            zIndex: 5,
-            bgcolor: "background.paper",
-            borderBottom: "1px solid",
-            borderColor: "divider",
-            px: { xs: 1.5, sm: 2 },
-            py: 1.25,
-            display: "flex",
-            gap: 0.75,
-            overflowX: "auto",
-            scrollbarWidth: "thin",
-            "&::-webkit-scrollbar": { height: 4 },
-            "&::-webkit-scrollbar-thumb": { background: "#dadce0", borderRadius: 2 },
-          }}
-        >
-          <Chip
-            label={`Alle · ${allEvents.reduce((s, e) => s + e.count, 0)}`}
-            onClick={() => setFilter(ALL)}
-            color={filter === ALL ? "primary" : "default"}
-            variant={filter === ALL ? "filled" : "outlined"}
-            sx={{ fontWeight: 500, flexShrink: 0 }}
-          />
-          {allEvents.map((ev) => (
-            <Chip
-              key={ev.folder}
-              label={`${ev.display}${ev.active ? " · live" : ""} · ${ev.count}`}
-              onClick={() => setFilter(ev.folder)}
-              color={filter === ev.folder ? "primary" : "default"}
-              variant={filter === ev.folder ? "filled" : "outlined"}
-              sx={{
-                fontWeight: 500,
-                flexShrink: 0,
-                ...(ev.active && filter !== ev.folder && {
-                  borderColor: "primary.main",
-                  color: "primary.main",
-                }),
-              }}
-            />
-          ))}
-        </Box>
-      )}
-
-      <Container maxWidth="xl" disableGutters sx={{ pb: 6 }}>
-        {loading && photos.length === 0 && (
+      <Container maxWidth="xl" sx={{ py: { xs: 2, sm: 3 } }}>
+        {loading && items.length === 0 && (
           <Stack alignItems="center" sx={{ pt: 12 }}>
             <CircularProgress size={28} />
           </Stack>
         )}
 
-        {!loading && photos.length === 0 && !error && (
+        {!loading && items.length === 0 && !error && (
           <Fade in>
             <Stack
               alignItems="center"
@@ -183,30 +79,20 @@ export default function Gallery() {
             >
               <Box
                 sx={{
-                  width: 96,
-                  height: 96,
-                  borderRadius: "50%",
-                  display: "grid",
-                  placeItems: "center",
+                  width: 96, height: 96, borderRadius: "50%",
+                  display: "grid", placeItems: "center",
                   bgcolor: "grey.100",
                 }}
               >
                 <PhotoCameraRoundedIcon sx={{ fontSize: 44, color: "primary.main" }} />
               </Box>
               <Typography variant="h5" sx={{ color: "text.primary", fontWeight: 500 }}>
-                {filter === ALL ? "Noch keine Fotos" : "Keine Fotos in diesem Event"}
+                Noch keine Fotos
               </Typography>
               <Typography variant="body2" sx={{ maxWidth: 320 }}>
-                {filter === ALL
-                  ? "Drück auf den Auslöser an der Fotobox — dein erstes Foto erscheint hier automatisch."
-                  : "Wechsle zu einem anderen Event über die Chips oben."}
+                Drück auf den Auslöser an der Fotobox — dein erstes Foto erscheint
+                hier automatisch.
               </Typography>
-              {/* activeEvent Hinweis */}
-              {filter === ALL && activeEvent && (
-                <Typography variant="caption" sx={{ color: "text.disabled" }}>
-                  aktiver Ordner: {activeEvent}
-                </Typography>
-              )}
             </Stack>
           </Fade>
         )}
@@ -217,27 +103,124 @@ export default function Gallery() {
           </Stack>
         )}
 
-        {photos.length > 0 && (
+        {items.length > 0 && (
           <Box
             sx={{
               display: "grid",
-              gap: { xs: 0.5, sm: 1, md: 1.25 },
-              p: { xs: 0.5, sm: 1, md: 1.5 },
+              gap: { xs: 1.5, sm: 2 },
               gridTemplateColumns: {
-                xs: "repeat(3, 1fr)",
-                sm: "repeat(4, 1fr)",
-                md: "repeat(5, 1fr)",
-                lg: "repeat(6, 1fr)",
-                xl: "repeat(8, 1fr)",
+                xs: "repeat(2, 1fr)",
+                sm: "repeat(3, 1fr)",
+                md: "repeat(4, 1fr)",
+                lg: "repeat(5, 1fr)",
               },
             }}
           >
-            {photos.map((p) => (
-              <PhotoTile key={`${p.event}/${p.filename}`} photo={p} />
+            {items.map((ev) => (
+              <EventCard key={ev.folder} ev={ev} />
             ))}
           </Box>
         )}
       </Container>
     </>
+  );
+}
+
+function EventCard({ ev }: { ev: EventInfo }) {
+  return (
+    <Paper
+      elevation={0}
+      component={RouterLink}
+      to={`/event/${encodeURIComponent(ev.folder)}`}
+      sx={{
+        position: "relative",
+        display: "block",
+        textDecoration: "none",
+        color: "inherit",
+        borderRadius: 3,
+        overflow: "hidden",
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.paper",
+        transition: "box-shadow .15s, transform .15s",
+        WebkitTapHighlightColor: "transparent",
+        "&:hover": {
+          boxShadow: "0 1px 3px rgba(60,64,67,.12), 0 4px 12px rgba(60,64,67,.10)",
+          transform: { sm: "translateY(-2px)" },
+        },
+      }}
+    >
+      <Box sx={{ position: "relative", aspectRatio: "4 / 3", bgcolor: "grey.100" }}>
+        <Box
+          component="img"
+          src={api.thumbUrl({ event: ev.folder, filename: ev.cover })}
+          alt={ev.display}
+          loading="lazy"
+          decoding="async"
+          sx={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+          }}
+        />
+        {ev.active && (
+          <Chip
+            icon={<FiberManualRecordRoundedIcon sx={{ fontSize: "0.6rem !important", color: "#ea4335 !important" }} />}
+            label="Aktiv"
+            size="small"
+            sx={{
+              position: "absolute",
+              top: 8, left: 8,
+              bgcolor: "rgba(255,255,255,0.95)",
+              backdropFilter: "blur(6px)",
+              color: "text.primary",
+              fontWeight: 500,
+              fontSize: ".7rem",
+              height: 24,
+            }}
+          />
+        )}
+        <Box
+          sx={{
+            position: "absolute",
+            right: 8, bottom: 8,
+            bgcolor: "rgba(0,0,0,0.55)",
+            color: "#fff",
+            borderRadius: 1.5,
+            px: 1, py: 0.25,
+            fontSize: ".72rem",
+            fontWeight: 500,
+            backdropFilter: "blur(4px)",
+          }}
+        >
+          {ev.count}
+        </Box>
+      </Box>
+
+      <Stack
+        direction="row"
+        spacing={1.25}
+        alignItems="flex-start"
+        sx={{ p: { xs: 1.25, sm: 1.5 } }}
+      >
+        <FolderRoundedIcon sx={{ color: "primary.main", fontSize: 22, mt: "1px" }} />
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Typography
+            noWrap
+            sx={{ fontWeight: 500, fontSize: ".95rem", color: "text.primary" }}
+          >
+            {ev.display}
+          </Typography>
+          <Typography
+            variant="caption"
+            sx={{ color: "text.secondary", display: "block", lineHeight: 1.3 }}
+          >
+            {formatDate(ev.date)}
+          </Typography>
+        </Box>
+      </Stack>
+    </Paper>
   );
 }

@@ -96,6 +96,37 @@ def _count_photos(picture_dir: str) -> int:
     return total
 
 
+class _StatusCache:
+    """Cacht Disk-Reads die in der UI-Hauptschleife (~30 Hz) abgefragt werden.
+    `_count_photos` und `disk_usage` brauchen wir nur für die Status-Bar —
+    1× pro Sekunde reicht.  Spart auf einem Pi mit 500+ Fotos spürbar I/O.
+    """
+    REFRESH_S = 1.0
+
+    def __init__(self, picture_dir: str):
+        self._picture_dir = picture_dir
+        self._last = 0.0
+        self.free_mb = 0
+        self.photo_count = 0
+
+    def maybe_refresh(self, now_monotonic: float):
+        if now_monotonic - self._last < self.REFRESH_S:
+            return
+        self._last = now_monotonic
+        self.free_mb = disk_monitor.get_free_mb(config.BASE_DIR)
+        self.photo_count = _count_photos(self._picture_dir)
+
+
+def _cleanup_orphans(paths):
+    """Löscht angelegte Photos einer abgebrochenen Collage."""
+    for p in paths:
+        try:
+            if p and os.path.isfile(p):
+                os.remove(p)
+        except OSError as exc:
+            logger.warning("Orphan-Cleanup %s: %s", p, exc)
+
+
 # ── Haupt-Funktion ─────────────────────────────────────────────────────────────
 
 def _parse_args():
@@ -173,15 +204,17 @@ def main():
     result_since    = 0.0
     idle_since      = time.monotonic()
     clock           = pygame.time.Clock()
+    status_cache    = _StatusCache(cfg["picture_dir"])
 
     try:
         while running:
             if ui.check_quit():
                 break
 
-            now       = time.monotonic()
-            free_mb   = disk_monitor.get_free_mb(config.BASE_DIR)
-            photo_cnt = _count_photos(cfg["picture_dir"])
+            now = time.monotonic()
+            status_cache.maybe_refresh(now)
+            free_mb   = status_cache.free_mb
+            photo_cnt = status_cache.photo_count
 
             # ── USB-Export hat absolute Priorität ─────────────────────────────
             # Wird vom udev-getriggerten scripts/usb_export.py geschrieben.
@@ -220,13 +253,16 @@ def main():
                     idle_since = now
                     mode       = "single" if trigger else "collage"
 
-                    # Disk-Wartung vor Aufnahme
+                    # Disk-Wartung vor Aufnahme — max_photos gilt PRO Event
+                    # (sonst würden bei einer neuen Vermietung die Fotos der
+                    # vorigen Mieter durch neue verdrängt).
                     disk_monitor.cleanup_old_thumbnails(
                         cfg["thumbnail_dir"],
                         cfg.get("thumbnail_max_age_days", 30))
                     disk_monitor.enforce_max_photos(
                         cfg["picture_dir"],
-                        cfg.get("max_photos", 500))
+                        cfg.get("max_photos", 500),
+                        event_dir=events.current_event_dir(cfg))
 
                     if not camera.available:
                         logger.warning("Auslöser ignoriert: %s", camera.error_message)
@@ -254,6 +290,10 @@ def main():
                                 shots, events.current_event_dir(cfg))
                             result_since = time.monotonic()
                             state = "RESULT"
+                        else:
+                            # Abgebrochene Collage: angefangene Einzelfotos
+                            # nicht in der Galerie liegen lassen
+                            _cleanup_orphans(shots)
                         btns.wait_for_release()
                 else:
                     ui.render_homescreen(
@@ -300,6 +340,7 @@ def main():
                                 shots, events.current_event_dir(cfg))
                             result_since = time.monotonic()
                         else:
+                            _cleanup_orphans(shots)
                             state = "HOMESCREEN"
                             idle_since = now
                     btns.wait_for_release()

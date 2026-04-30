@@ -272,6 +272,38 @@ def spa_assets(fname: str):
     return response
 
 
+# Statisches Top-Level: Favicons, manifest, robots.txt etc.
+# Vite legt die `public/` Dateien beim Build flach in `dist/` ab.
+_TOP_LEVEL_STATIC = {
+    "favicon.svg":            "image/svg+xml",
+    "favicon-32.png":         "image/png",
+    "favicon-192.png":        "image/png",
+    "favicon-512.png":        "image/png",
+    "apple-touch-icon.png":   "image/png",
+    "manifest.webmanifest":   "application/manifest+json",
+}
+
+
+def _serve_top_level(fname: str):
+    if not _spa_enabled() or fname not in _TOP_LEVEL_STATIC:
+        abort(404)
+    full = os.path.normpath(os.path.join(SPA_DIST, fname))
+    if not full.startswith(os.path.abspath(SPA_DIST)) or not os.path.isfile(full):
+        abort(404)
+    response = send_file(full, mimetype=_TOP_LEVEL_STATIC[fname])
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    return response
+
+
+# Eine Route pro Dateiname — `any`-Converter würgt an Bindestrichen.
+for _name in _TOP_LEVEL_STATIC:
+    app.add_url_rule(
+        f"/{_name}",
+        endpoint=f"static_{_name.replace('.', '_').replace('-', '_')}",
+        view_func=lambda _n=_name: _serve_top_level(_n),
+    )
+
+
 @app.route("/img/<event>/<filename>")
 def img(event, filename):
     path = _safe_path(event, filename)

@@ -33,7 +33,7 @@ def make_collage(paths: list[str], output_dir: str) -> str:
         canvas.paste(img, pos)
 
     os.makedirs(output_dir, exist_ok=True)
-    out_path = os.path.join(output_dir, f"collage_{int(time.time())}.jpg")
+    out_path = os.path.join(output_dir, f"collage_{int(time.time() * 1000)}.jpg")
     canvas.save(out_path, "JPEG", quality=92)
     logger.info("Collage gespeichert: %s", out_path)
     return out_path

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,13 @@ def load_config() -> dict:
     return data
 
 
+_save_lock = threading.Lock()
+
+
 def save_config(data: dict):
+    """Atomic save: tmp-Datei schreiben + os.replace, damit ein Stromausfall
+    während des Schreibens keine korrupte config.json hinterlässt.
+    """
     saveable = {k: v for k, v in data.items()
                 if k not in ("gallery_url", "thumbnail_dir")}
     for key in ("logo_path", "overlay_path", "picture_dir"):
@@ -73,8 +80,17 @@ def save_config(data: dict):
                 saveable[key] = os.path.relpath(saveable[key], BASE_DIR)
             except ValueError:
                 pass
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(saveable, f, indent=2, ensure_ascii=False)
+
+    tmp_path = CONFIG_PATH + ".tmp"
+    with _save_lock:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(saveable, f, indent=2, ensure_ascii=False)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        os.replace(tmp_path, CONFIG_PATH)
     logger.info("config.json gespeichert")
 
 

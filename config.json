@@ -9,7 +9,7 @@
     "trigger": 27,
     "right": 22
   },
-  "logo_path": "Layout/logo.png",
+  "logo_path": "Layout\\logo.png",
   "admin_pin": "1234",
   "idle_timeout": 0,
   "slide_duration_ms": 5000,
@@ -19,12 +19,46 @@
   "hotspot_interface": "wlan1",
   "picture_dir": "Picture_Box",
   "capture_device": 0,
-  "overlay_path": "Layout/Overlay_Allgemein.png",
-  "polaroid_frames": [[567, 255, -5], [1098, 256, 5], [1633, 257, 12]],
-  "polaroid_photo_size": [310, 295],
-  "live_view_rect": [440, 600, 1040, 450],
-  "overlay_button_foto": [1475, 700, 385, 100],
-  "overlay_button_collage": [1475, 840, 385, 110],
+  "overlay_path": "Layout\\Overlay_Allgemein.png",
+  "polaroid_frames": [
+    [
+      567,
+      255,
+      -5
+    ],
+    [
+      1098,
+      256,
+      5
+    ],
+    [
+      1633,
+      257,
+      12
+    ]
+  ],
+  "polaroid_photo_size": [
+    310,
+    295
+  ],
+  "live_view_rect": [
+    440,
+    600,
+    1040,
+    450
+  ],
+  "overlay_button_foto": [
+    1475,
+    700,
+    385,
+    100
+  ],
+  "overlay_button_collage": [
+    1475,
+    840,
+    385,
+    110
+  ],
   "disk_warn_mb": 500,
   "thumbnail_max_age_days": 30,
   "camera_keepalive_s": 25,
