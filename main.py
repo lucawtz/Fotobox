@@ -13,6 +13,7 @@ import pygame
 import collage as collage_mod
 import config
 import disk_monitor
+import events
 import gallery_server
 import hotspot
 from camera import Camera
@@ -22,14 +23,19 @@ from ui import UI
 # ── Logging ────────────────────────────────────────────────────────────────────
 
 def _setup_logging():
+    """Logs gehen via stdout — systemd-Service leitet das via
+    StandardOutput=append:.../logs/fotobox.log direkt in die Datei
+    um. Daher KEIN zusätzlicher FileHandler aus Python — sonst stünde
+    jede Zeile doppelt im Log.
+    """
     log_dir = os.path.join(config.BASE_DIR, "logs")
     os.makedirs(log_dir, exist_ok=True)
     fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    handlers = [
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler(os.path.join(log_dir, "fotobox.log")),
-    ]
-    logging.basicConfig(level=logging.INFO, format=fmt, handlers=handlers)
+    logging.basicConfig(
+        level=logging.INFO,
+        format=fmt,
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -44,7 +50,7 @@ def _do_countdown(ui: UI, camera: Camera, cfg: dict,
 
     def _capture():
         try:
-            result["path"] = camera.capture(cfg["picture_dir"])
+            result["path"] = camera.capture(events.current_event_dir(cfg))
         except Exception as exc:
             logger.error("Capture fehlgeschlagen: %s", exc)
         finally:
@@ -71,12 +77,22 @@ def _do_print(path: str):
 
 
 def _count_photos(picture_dir: str) -> int:
+    """Zählt Fotos rekursiv über alle Event-Subordner."""
     exts = {".jpg", ".jpeg", ".png"}
-    try:
-        return sum(1 for f in os.listdir(picture_dir)
-                   if os.path.splitext(f)[1].lower() in exts)
-    except FileNotFoundError:
+    if not os.path.isdir(picture_dir):
         return 0
+    total = 0
+    for entry in os.listdir(picture_dir):
+        full = os.path.join(picture_dir, entry)
+        if os.path.isdir(full):
+            try:
+                total += sum(1 for f in os.listdir(full)
+                             if os.path.splitext(f)[1].lower() in exts)
+            except OSError:
+                continue
+        elif os.path.splitext(entry)[1].lower() in exts:
+            total += 1
+    return total
 
 
 # ── Haupt-Funktion ─────────────────────────────────────────────────────────────
@@ -104,9 +120,10 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT,  shutdown)
 
-    # Ordner anlegen
+    # Ordner anlegen + alte flache Fotos in Datums-Archiv migrieren
     os.makedirs(cfg["picture_dir"],   exist_ok=True)
     os.makedirs(cfg["thumbnail_dir"], exist_ok=True)
+    events.migrate_flat_photos(cfg)
 
     # Hotspot — defensiv: darf die App-Initialisierung niemals blockieren.
     # CLI-Flag --no-hotspot überschreibt config (für VNC-Setup-Betrieb).
@@ -169,7 +186,7 @@ def main():
             if state == "HOMESCREEN":
                 idle_timeout = cfg.get("idle_timeout", 0)
                 if idle_timeout > 0 and now - idle_since >= idle_timeout:
-                    ui.refresh_slideshow(cfg["picture_dir"])
+                    ui.refresh_slideshow(events.current_event_dir(cfg))
                     state = "SLIDESHOW"
                     continue
 
@@ -223,7 +240,7 @@ def main():
                                 break
                         if len(shots) == 4:
                             result_photo = collage_mod.make_collage(
-                                shots, cfg["picture_dir"])
+                                shots, events.current_event_dir(cfg))
                             result_since = time.monotonic()
                             state = "RESULT"
                         btns.wait_for_release()
@@ -269,7 +286,7 @@ def main():
                                 break
                         if len(shots) == 4:
                             result_photo = collage_mod.make_collage(
-                                shots, cfg["picture_dir"])
+                                shots, events.current_event_dir(cfg))
                             result_since = time.monotonic()
                         else:
                             state = "HOMESCREEN"
