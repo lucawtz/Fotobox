@@ -2,10 +2,16 @@
 # Fotobox Installations-Skript – Raspberry Pi OS Bookworm
 set -e
 
-INSTALL_DIR="/home/pi/fotobox"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_DIR="$SCRIPT_DIR"
+INSTALL_USER="$(id -un)"
+INSTALL_HOME="$HOME"
 SERVICE_FILE="/etc/systemd/system/fotobox.service"
 
 echo "=== Fotobox Installation ==="
+echo "User:        $INSTALL_USER"
+echo "Install-Dir: $INSTALL_DIR"
+echo ""
 
 # 1. System-Pakete
 echo "→ System-Pakete installieren..."
@@ -21,47 +27,43 @@ sudo apt-get install -y \
     cups \
     cups-bsd
 
-# 2. Fotobox-Verzeichnis anlegen (falls noch nicht vorhanden)
+# 2. Verzeichnisstruktur
 echo "→ Verzeichnisstruktur anlegen..."
 mkdir -p "$INSTALL_DIR/Picture_Box"
 mkdir -p "$INSTALL_DIR/thumbnails"
 mkdir -p "$INSTALL_DIR/logs"
 mkdir -p "$INSTALL_DIR/Layout"
 
-# 3. Dateien kopieren (wenn Skript aus dem Quellverzeichnis ausgeführt wird)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
-    echo "→ Dateien nach $INSTALL_DIR kopieren..."
-    cp -r "$SCRIPT_DIR"/. "$INSTALL_DIR/"
-fi
-
-# 4. Python-Umgebung (venv)
+# 3. Python-Umgebung
 echo "→ Python-Umgebung einrichten..."
 cd "$INSTALL_DIR"
-python3 -m venv venv --system-site-packages
+if [ ! -d venv ]; then
+    python3 -m venv venv --system-site-packages
+fi
 source venv/bin/activate
 pip install --upgrade pip -q
 pip install -r requirements.txt -q
+PYTHON_BIN="$INSTALL_DIR/venv/bin/python3"
 
-# 5. config.json anlegen (falls noch nicht vorhanden)
+# 4. config.json anlegen
 if [ ! -f "$INSTALL_DIR/config.json" ]; then
     echo "→ Beispiel-Konfiguration kopieren..."
     cp "$INSTALL_DIR/config.json.example" "$INSTALL_DIR/config.json"
     echo "   ⚠  Bitte config.json anpassen (Admin-PIN, Event-Name etc.)"
 fi
 
-# 6. Berechtigungen
-chown -R pi:pi "$INSTALL_DIR"
-
-# 7. systemd-Service in fotobox.service Python-Pfad anpassen
+# 5. systemd-Service mit aktuellen Pfaden installieren
 echo "→ systemd-Service einrichten..."
-sed "s|/usr/bin/python3|$INSTALL_DIR/venv/bin/python3|g" \
+sed -e "s|__PYTHON__|$PYTHON_BIN|g" \
+    -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
+    -e "s|__USER__|$INSTALL_USER|g" \
+    -e "s|__HOME__|$INSTALL_HOME|g" \
     "$INSTALL_DIR/fotobox.service" | sudo tee "$SERVICE_FILE" > /dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable fotobox.service
 
-# 8. Drucker-Gruppe (für lp-Befehl)
-sudo usermod -aG lpadmin pi 2>/dev/null || true
+# 6. Drucker-Gruppe
+sudo usermod -aG lpadmin "$INSTALL_USER" 2>/dev/null || true
 
 echo ""
 echo "=== Installation abgeschlossen ==="
@@ -72,4 +74,3 @@ echo "  2. Fotobox starten:      sudo systemctl start fotobox"
 echo "  3. Logs:                 tail -f $INSTALL_DIR/logs/fotobox.log"
 echo "  4. Admin-Interface:      http://192.168.4.1:5000/admin  (wenn Hotspot aktiv)"
 echo ""
-echo "Für Hotspot-Konfiguration → siehe README.md"

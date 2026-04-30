@@ -4,16 +4,16 @@ After=graphical.target network.target
 Wants=graphical.target
 
 [Service]
-ExecStart=/usr/bin/python3 /home/pi/fotobox/main.py
+ExecStart=__PYTHON__ __INSTALL_DIR__/main.py
 Restart=always
 RestartSec=5
-User=pi
-Group=pi
+User=__USER__
+Group=__USER__
 Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/pi/.Xauthority
-WorkingDirectory=/home/pi/fotobox
-StandardOutput=append:/home/pi/fotobox/logs/fotobox.log
-StandardError=append:/home/pi/fotobox/logs/fotobox.log
+Environment=XAUTHORITY=__HOME__/.Xauthority
+WorkingDirectory=__INSTALL_DIR__
+StandardOutput=append:__INSTALL_DIR__/logs/fotobox.log
+StandardError=append:__INSTALL_DIR__/logs/fotobox.log
 KillSignal=SIGTERM
 TimeoutStopSec=10
 

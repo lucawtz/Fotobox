@@ -27,18 +27,18 @@ Buttons werden an GND und den jeweiligen GPIO-Pin angeschlossen (Pull-up intern 
 ## Installation
 
 ```bash
-git clone <repo-url> /home/pi/fotobox
-cd /home/pi/fotobox
+git clone <repo-url> ~/Fotobox
+cd ~/Fotobox
 chmod +x install.sh
 ./install.sh
 ```
 
-Das Skript installiert alle Abhängigkeiten, legt die Verzeichnisstruktur an und richtet den systemd-Service ein.
+Das Skript erkennt automatisch User und Pfad, installiert alle Abhängigkeiten, legt die Verzeichnisstruktur an und richtet den systemd-Service ein.
 
 ### Manuell starten (ohne Autostart)
 
 ```bash
-cd /home/pi/fotobox
+cd ~/Fotobox
 source venv/bin/activate
 python3 main.py
 ```
