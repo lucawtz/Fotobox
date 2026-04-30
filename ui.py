@@ -145,6 +145,7 @@ class UI:
     def render_homescreen(self, camera_ok: bool, camera_msg: str,
                           free_mb: int, photo_count: int):
         self._screen.blit(self._bg, (0, 0))
+        self._draw_live()
         self._draw_polaroids()
         self._draw_overlay_button_highlights()
         self._draw_qr_bottom_left()
@@ -152,6 +153,26 @@ class UI:
         if not camera_ok:
             self._draw_error_banner(camera_msg or "Kamera nicht erkannt – USB prüfen")
         pygame.display.flip()
+
+    def _draw_live(self):
+        """Live-Vorschau aus der Capture-Card im konfigurierten live_view_rect."""
+        x, y, w, h = self._cfg.get("live_view_rect", [440, 600, 1040, 450])
+        if self._live is None:
+            lbl = self._f_normal.render("Warte auf Kamera…", True, C_DIM)
+            self._screen.blit(lbl, lbl.get_rect(center=(x + w // 2, y + h // 2)))
+            return
+        frame = self._live.latest()
+        if frame is None:
+            lbl = self._f_normal.render("Warte auf Kamera…", True, C_DIM)
+            self._screen.blit(lbl, lbl.get_rect(center=(x + w // 2, y + h // 2)))
+            return
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        fh, fw = frame.shape[:2]
+        scale  = min(w / fw, h / fh)
+        nw, nh = int(fw * scale), int(fh * scale)
+        frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        surf  = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+        self._screen.blit(surf, (x + (w - nw) // 2, y + (h - nh) // 2))
 
     def _draw_overlay_button_highlights(self):
         """Zeichnet einen Glow um die im Overlay enthaltenen Foto- und Collage-Buttons,
@@ -463,11 +484,11 @@ class UI:
         self._screen.blit(self._qr_surf, (x, y))
 
     def _draw_qr_bottom_left(self):
-        """QR im Holzfeld unter den Polaroids, links — weicht den Overlay-Buttons aus."""
+        """QR im Holzfeld links neben der Live-Vorschau."""
         if self._qr_surf is None:
             return
         QR, PAD = self._qr_surf.get_width(), 12
-        x, y = 260, 470
+        x, y = 220, 700
         bg = pygame.Surface((QR + PAD * 2, QR + PAD * 2))
         bg.fill(C_WHITE)
         bg.set_alpha(220)
