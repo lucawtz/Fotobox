@@ -155,17 +155,26 @@ class UI:
         pygame.display.flip()
 
     def _draw_live(self):
-        """Live-Vorschau aus der Capture-Card im konfigurierten live_view_rect."""
+        """Live-Vorschau aus der Capture-Card im konfigurierten live_view_rect.
+
+        Schneidet automatisch schwarze Letterbox-Ränder aus dem HDMI-Signal
+        weg und zeigt eine Meldung wenn kein Signal anliegt.
+        """
         x, y, w, h = self._cfg.get("live_view_rect", [440, 600, 1040, 450])
+
         if self._live is None:
-            lbl = self._f_normal.render("Warte auf Kamera…", True, C_DIM)
-            self._screen.blit(lbl, lbl.get_rect(center=(x + w // 2, y + h // 2)))
+            self._draw_no_signal(x, y, w, h)
             return
         frame = self._live.latest()
-        if frame is None:
-            lbl = self._f_normal.render("Warte auf Kamera…", True, C_DIM)
-            self._screen.blit(lbl, lbl.get_rect(center=(x + w // 2, y + h // 2)))
+        if frame is None or frame.max() < 20:
+            self._draw_no_signal(x, y, w, h, "Bitte Display an der Kamera einschalten")
             return
+
+        frame = self._crop_black_borders(frame)
+        if frame is None:
+            self._draw_no_signal(x, y, w, h, "Bitte Display an der Kamera einschalten")
+            return
+
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         fh, fw = frame.shape[:2]
         scale  = min(w / fw, h / fh)
@@ -173,6 +182,36 @@ class UI:
         frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
         surf  = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
         self._screen.blit(surf, (x + (w - nw) // 2, y + (h - nh) // 2))
+
+    def _draw_no_signal(self, x: int, y: int, w: int, h: int,
+                        msg: str = "Warte auf Kamera…"):
+        lbl = self._f_normal.render(msg, True, C_WHITE)
+        self._screen.blit(lbl, lbl.get_rect(center=(x + w // 2, y + h // 2)))
+
+    @staticmethod
+    def _crop_black_borders(frame):
+        """Schneidet schwarze Ränder aus einem Frame heraus (HDMI-Letterbox)."""
+        import numpy as np
+        h, w = frame.shape[:2]
+        # Auf 1/8 herunterskaliert für Speed (~1ms statt ~30ms auf Pi)
+        small = cv2.resize(frame, (max(1, w // 8), max(1, h // 8)),
+                           interpolation=cv2.INTER_AREA)
+        gray = small.mean(axis=2)
+        mask = gray > 18
+        if not mask.any():
+            return None
+        rows = mask.any(axis=1)
+        cols = mask.any(axis=0)
+        y_idx = np.where(rows)[0]
+        x_idx = np.where(cols)[0]
+        # Skalierung × 8 zurück + Sicherheits-Padding raus
+        y0 = max(0, y_idx[0] * 8)
+        y1 = min(h, (y_idx[-1] + 1) * 8)
+        x0 = max(0, x_idx[0] * 8)
+        x1 = min(w, (x_idx[-1] + 1) * 8)
+        if (x1 - x0) < 100 or (y1 - y0) < 100:
+            return None  # zu wenig Inhalt
+        return frame[y0:y1, x0:x1]
 
     def _draw_overlay_button_highlights(self):
         """Zeichnet einen Glow um die im Overlay enthaltenen Foto- und Collage-Buttons,
@@ -453,21 +492,22 @@ class UI:
     # ── Live-View ──────────────────────────────────────────────────────────────
 
     def _draw_live_fullscreen(self):
+        self._screen.fill(C_BLACK)
         if self._live is None:
-            self._screen.fill(C_BLACK)
             return
         frame = self._live.latest()
-        if frame is not None:
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            fh, fw = frame.shape[:2]
-            scale = min(W / fw, H / fh)
-            nw, nh = int(fw * scale), int(fh * scale)
-            frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
-            surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
-            self._screen.fill(C_BLACK)
-            self._screen.blit(surf, ((W - nw) // 2, (H - nh) // 2))
-        else:
-            self._screen.fill(C_BLACK)
+        if frame is None or frame.max() < 20:
+            return
+        frame = self._crop_black_borders(frame)
+        if frame is None:
+            return
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        fh, fw = frame.shape[:2]
+        scale = min(W / fw, H / fh)
+        nw, nh = int(fw * scale), int(fh * scale)
+        frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+        self._screen.blit(surf, ((W - nw) // 2, (H - nh) // 2))
 
     # ── QR-Code ────────────────────────────────────────────────────────────────
 
