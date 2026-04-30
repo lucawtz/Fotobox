@@ -113,6 +113,7 @@ export default function PhotoView() {
         flexDirection: "column",
       }}
     >
+      {/* Top-Bar: Back + Counter — Aktionen wandern auf Mobile in die Bottom-Bar */}
       <Box
         sx={{
           position: "absolute",
@@ -121,44 +122,92 @@ export default function PhotoView() {
           display: "flex",
           alignItems: "center",
           gap: 1,
-          px: { xs: 1.5, sm: 2 },
-          py: { xs: 1.25, sm: 1.5 },
+          px: { xs: 1, sm: 2 },
+          pt: "max(var(--sa-top), 8px)",
+          pb: { xs: 1, sm: 1.5 },
+          pl: "max(var(--sa-left), 12px)",
+          pr: "max(var(--sa-right), 12px)",
           background: "linear-gradient(to bottom, rgba(0,0,0,0.85), transparent)",
-          paddingTop: "max(env(safe-area-inset-top), 12px)",
         }}
       >
-        <IconButton onClick={() => navigate(backTo)} sx={{ color: "#fff" }}>
+        <IconButton onClick={() => navigate(backTo)} sx={{ color: "#fff" }} aria-label="Zurück">
           <ArrowBackRoundedIcon />
         </IconButton>
         <Stack sx={{ flex: 1, minWidth: 0 }}>
           <Typography
             variant="caption"
-            sx={{ color: "rgba(255,255,255,0.55)", letterSpacing: ".05em" }}
+            sx={{
+              color: "rgba(255,255,255,0.55)",
+              letterSpacing: ".05em",
+              fontSize: { xs: ".7rem", sm: ".75rem" },
+            }}
           >
             {startIndex + 1} / {photos.length} · {current.event}
           </Typography>
           <Typography
             variant="body2"
             noWrap
-            sx={{ color: "rgba(255,255,255,0.85)", fontWeight: 500 }}
+            sx={{
+              color: "rgba(255,255,255,0.85)",
+              fontWeight: 500,
+              fontSize: { xs: ".85rem", sm: ".9rem" },
+            }}
           >
             {current.filename}
           </Typography>
         </Stack>
+        {/* Auf Desktop: Aktionen oben rechts. Auf Mobile: in der Bottom-Bar. */}
         <Tooltip title="Herunterladen">
           <IconButton
             component="a"
             href={api.downloadUrl(current)}
-            sx={{ color: "#fff" }}
+            sx={{ color: "#fff", display: { xs: "none", sm: "inline-flex" } }}
+            aria-label="Herunterladen"
           >
             <DownloadRoundedIcon />
           </IconButton>
         </Tooltip>
         <Tooltip title="Löschen">
-          <IconButton onClick={() => setConfirmDel(true)} sx={{ color: "#fff" }}>
+          <IconButton
+            onClick={() => setConfirmDel(true)}
+            sx={{ color: "#fff", display: { xs: "none", sm: "inline-flex" } }}
+            aria-label="Löschen"
+          >
             <DeleteOutlineRoundedIcon />
           </IconButton>
         </Tooltip>
+      </Box>
+
+      {/* Bottom-Action-Bar nur auf Mobile — wie Google Photos */}
+      <Box
+        sx={{
+          display: { xs: "flex", sm: "none" },
+          position: "absolute",
+          bottom: 0, left: 0, right: 0,
+          zIndex: 10,
+          alignItems: "center",
+          justifyContent: "space-around",
+          gap: 1,
+          px: 1,
+          pt: 1.5,
+          pb: "max(var(--sa-bottom), 12px)",
+          pl: "max(var(--sa-left), 8px)",
+          pr: "max(var(--sa-right), 8px)",
+          background: "linear-gradient(to top, rgba(0,0,0,0.85), transparent)",
+        }}
+      >
+        <BottomAction
+          icon={<DownloadRoundedIcon />}
+          label="Speichern"
+          component="a"
+          href={api.downloadUrl(current)}
+        />
+        <BottomAction
+          icon={<DeleteOutlineRoundedIcon />}
+          label="Löschen"
+          onClick={() => setConfirmDel(true)}
+          danger
+        />
       </Box>
 
       <Swiper
@@ -243,6 +292,50 @@ export default function PhotoView() {
           {toast}
         </Alert>
       </Snackbar>
+    </Box>
+  );
+}
+
+interface BottomActionProps {
+  icon: React.ReactNode;
+  label: string;
+  onClick?: () => void;
+  href?: string;
+  component?: "button" | "a";
+  danger?: boolean;
+}
+
+function BottomAction({ icon, label, onClick, href, component = "button", danger }: BottomActionProps) {
+  const color = danger ? "#ff8a80" : "#fff";
+  return (
+    <Box
+      component={component}
+      href={href}
+      onClick={onClick}
+      sx={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 0.4,
+        py: 1.25,
+        px: 1,
+        background: "transparent",
+        border: 0,
+        cursor: "pointer",
+        textDecoration: "none",
+        color,
+        borderRadius: 2,
+        minHeight: 56,
+        "&:active": { bgcolor: "rgba(255,255,255,0.08)" },
+      }}
+    >
+      <Box sx={{ display: "grid", placeItems: "center", "& > svg": { fontSize: 24 } }}>
+        {icon}
+      </Box>
+      <Typography sx={{ fontSize: ".72rem", fontWeight: 500, color }}>
+        {label}
+      </Typography>
     </Box>
   );
 }

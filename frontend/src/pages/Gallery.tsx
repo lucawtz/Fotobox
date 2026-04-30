@@ -62,7 +62,14 @@ export default function Gallery() {
     <>
       <TopBar title={eventName} subtitle={subtitle} onRefresh={load} />
 
-      <Container maxWidth="xl" sx={{ py: { xs: 2, sm: 3 } }}>
+      <Container
+        maxWidth="xl"
+        sx={{
+          py: { xs: 1.5, sm: 3 },
+          px: { xs: 1.25, sm: 3 },
+          pb: "calc(var(--sa-bottom) + 24px)",
+        }}
+      >
         {loading && items.length === 0 && (
           <Stack alignItems="center" sx={{ pt: 12 }}>
             <CircularProgress size={28} />
@@ -107,7 +114,7 @@ export default function Gallery() {
           <Box
             sx={{
               display: "grid",
-              gap: { xs: 1.5, sm: 2 },
+              gap: { xs: 1.25, sm: 2 },
               gridTemplateColumns: {
                 xs: "repeat(2, 1fr)",
                 sm: "repeat(3, 1fr)",
@@ -201,21 +208,34 @@ function EventCard({ ev }: { ev: EventInfo }) {
 
       <Stack
         direction="row"
-        spacing={1.25}
+        spacing={{ xs: 1, sm: 1.25 }}
         alignItems="flex-start"
-        sx={{ p: { xs: 1.25, sm: 1.5 } }}
+        sx={{ p: { xs: 1, sm: 1.5 } }}
       >
-        <FolderRoundedIcon sx={{ color: "primary.main", fontSize: 22, mt: "1px" }} />
+        <FolderRoundedIcon
+          sx={{ color: "primary.main", fontSize: { xs: 18, sm: 22 }, mt: "2px", flexShrink: 0 }}
+        />
         <Box sx={{ minWidth: 0, flex: 1 }}>
           <Typography
             noWrap
-            sx={{ fontWeight: 500, fontSize: ".95rem", color: "text.primary" }}
+            sx={{
+              fontWeight: 500,
+              fontSize: { xs: ".85rem", sm: ".95rem" },
+              color: "text.primary",
+              lineHeight: 1.3,
+            }}
           >
             {ev.display}
           </Typography>
           <Typography
             variant="caption"
-            sx={{ color: "text.secondary", display: "block", lineHeight: 1.3 }}
+            noWrap
+            sx={{
+              color: "text.secondary",
+              display: "block",
+              lineHeight: 1.3,
+              fontSize: { xs: ".7rem", sm: ".75rem" },
+            }}
           >
             {formatDate(ev.date)}
           </Typography>

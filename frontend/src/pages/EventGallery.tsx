@@ -96,83 +96,111 @@ export default function EventGallery() {
       <Box
         component="header"
         sx={{
-          position: "sticky", top: 0, zIndex: 10,
+          position: "sticky",
+          top: 0,
+          zIndex: 10,
           bgcolor: "background.paper",
           borderBottom: "1px solid",
           borderColor: "divider",
-          px: { xs: 1.5, sm: 2.5 },
-          py: { xs: 1, sm: 1.25 },
-          display: "flex",
-          alignItems: "center",
-          gap: 1,
-          minHeight: { xs: 64, sm: 72 },
+          pt: "var(--sa-top)",
+          pl: "var(--sa-left)",
+          pr: "var(--sa-right)",
         }}
       >
-        <IconButton onClick={() => navigate("/")}>
-          <ArrowBackRoundedIcon />
-        </IconButton>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: { xs: 0.5, sm: 1 },
+            px: { xs: 1, sm: 2.5 },
+            py: { xs: 0.75, sm: 1.25 },
+            minHeight: { xs: 56, sm: 72 },
+          }}
+        >
+          <IconButton onClick={() => navigate("/")} aria-label="Zurück" edge="start">
+            <ArrowBackRoundedIcon />
+          </IconButton>
 
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
+              <Typography
+                noWrap
+                variant="h6"
+                sx={{
+                  fontSize: { xs: ".95rem", sm: "1.2rem" },
+                  fontWeight: 500,
+                  color: "text.primary",
+                  lineHeight: 1.15,
+                  minWidth: 0,
+                }}
+              >
+                {eventDisplay || "Event"}
+              </Typography>
+              {active && (
+                <Chip
+                  label="Aktiv"
+                  size="small"
+                  color="primary"
+                  variant="outlined"
+                  sx={{
+                    height: { xs: 18, sm: 22 },
+                    fontSize: { xs: ".65rem", sm: ".7rem" },
+                    fontWeight: 500,
+                    flexShrink: 0,
+                  }}
+                />
+              )}
+            </Stack>
             <Typography
+              variant="caption"
               noWrap
-              variant="h6"
               sx={{
-                fontSize: { xs: "1.05rem", sm: "1.2rem" },
-                fontWeight: 500,
-                color: "text.primary",
-                lineHeight: 1.15,
-                minWidth: 0,
+                color: "text.secondary",
+                display: "block",
+                lineHeight: 1.2,
+                fontSize: { xs: ".7rem", sm: ".75rem" },
               }}
             >
-              {eventDisplay || "Event"}
+              {subtitle}
             </Typography>
-            {active && (
-              <Chip
-                label="Aktiv"
-                size="small"
-                color="primary"
-                variant="outlined"
-                sx={{ height: 22, fontSize: ".7rem", fontWeight: 500 }}
-              />
-            )}
-          </Stack>
-          <Typography variant="caption" sx={{ color: "text.secondary", display: "block", lineHeight: 1.2 }}>
-            {subtitle}
-          </Typography>
-        </Box>
+          </Box>
 
-        {photos.length > 0 && (
-          <>
+          {photos.length > 0 && (
             <Tooltip title="Als ZIP herunterladen">
               <Button
                 onClick={handleDownload}
                 startIcon={<DownloadForOfflineRoundedIcon />}
                 variant="contained"
                 size="small"
-                sx={{ display: { xs: "none", sm: "inline-flex" }, px: 2.25 }}
+                sx={{
+                  px: { xs: 1.5, sm: 2.25 },
+                  py: { xs: 0.5, sm: 0.75 },
+                  fontSize: { xs: ".8rem", sm: ".85rem" },
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
+                  "& .MuiButton-startIcon": {
+                    mr: { xs: 0.5, sm: 1 },
+                  },
+                }}
               >
                 ZIP
               </Button>
             </Tooltip>
-            <IconButton
-              onClick={handleDownload}
-              sx={{ display: { xs: "inline-flex", sm: "none" }, color: "primary.main" }}
-              aria-label="ZIP herunterladen"
-            >
-              <DownloadForOfflineRoundedIcon />
-            </IconButton>
-          </>
-        )}
+          )}
 
-        <Tooltip title="Aktualisieren">
-          <IconButton onClick={load}>
-            <RefreshRoundedIcon />
-          </IconButton>
-        </Tooltip>
+          <Tooltip title="Aktualisieren">
+            <IconButton
+              onClick={load}
+              aria-label="Aktualisieren"
+              sx={{ display: { xs: "none", sm: "inline-flex" } }}
+            >
+              <RefreshRoundedIcon />
+            </IconButton>
+          </Tooltip>
+        </Box>
       </Box>
 
-      <Container maxWidth="xl" disableGutters sx={{ pb: 6 }}>
+      <Container maxWidth="xl" disableGutters sx={{ pb: "calc(var(--sa-bottom) + 24px)" }}>
         {loading && photos.length === 0 && (
           <Stack alignItems="center" sx={{ pt: 12 }}>
             <CircularProgress size={28} />

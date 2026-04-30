@@ -64,14 +64,33 @@ const theme = createTheme({
   components: {
     MuiCssBaseline: {
       styleOverrides: {
-        html: { WebkitTapHighlightColor: "transparent" },
+        html: {
+          WebkitTapHighlightColor: "transparent",
+          // touch-action: manipulation killt die iOS 300ms-Verzögerung beim
+          // Tap und verbietet Double-Tap-Zoom (zoomen geht nur in der
+          // PhotoView ueber Pinch).
+          touchAction: "manipulation",
+          // Safe-Area-Variablen damit Komponenten env() referenzieren können
+          // ohne das Plumbing pro File zu wiederholen.
+          "--sa-top":    "env(safe-area-inset-top, 0px)",
+          "--sa-bottom": "env(safe-area-inset-bottom, 0px)",
+          "--sa-left":   "env(safe-area-inset-left, 0px)",
+          "--sa-right":  "env(safe-area-inset-right, 0px)",
+        },
         body: {
           backgroundColor: surface1,
           minHeight: "100dvh",
           overscrollBehavior: "none",
           color: onSurface,
+          overflowX: "hidden",
         },
+        // Bessere Scroll-Performance auf langen Listen (iOS)
+        "*": { WebkitOverflowScrolling: "touch" },
         "::selection": { background: alpha(driveBlue, 0.22) },
+        // Auf XS sollen die Standard-IconButtons komfortabel zu treffen sein.
+        "@media (hover: none) and (pointer: coarse)": {
+          ".MuiIconButton-root": { padding: "10px" },
+        },
       },
     },
     MuiAppBar: {

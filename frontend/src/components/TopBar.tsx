@@ -14,18 +14,36 @@ interface Props {
 
 export default function TopBar({ title, subtitle, onRefresh, showAdmin = true, actions }: Props) {
   return (
-    <AppBar position="sticky" elevation={0}>
-      <Toolbar sx={{ minHeight: { xs: 64, sm: 72 }, gap: 1, px: { xs: 2, sm: 3 } }}>
+    <AppBar
+      position="sticky"
+      elevation={0}
+      sx={{
+        // Notch / Status-Bar nicht überdecken (iOS, Android-Edge)
+        pt: "var(--sa-top)",
+        // Auf Mobile etwas weniger Padding-X — Logo und Buttons sollen
+        // nicht den ganzen Header verschlucken.
+        px: "var(--sa-left)",
+      }}
+    >
+      <Toolbar
+        sx={{
+          minHeight: { xs: 56, sm: 72 },
+          gap: { xs: 0.5, sm: 1 },
+          px: { xs: 1.5, sm: 3 },
+        }}
+      >
         <Box
           sx={{
-            width: 36, height: 36, borderRadius: "50%",
+            width: { xs: 32, sm: 36 },
+            height: { xs: 32, sm: 36 },
+            borderRadius: "50%",
             display: "grid", placeItems: "center", flexShrink: 0,
             bgcolor: "primary.main",
             color: "primary.contrastText",
-            mr: 1.25,
+            mr: { xs: 1, sm: 1.25 },
           }}
         >
-          <PhotoLibraryRoundedIcon sx={{ fontSize: 20 }} />
+          <PhotoLibraryRoundedIcon sx={{ fontSize: { xs: 18, sm: 20 } }} />
         </Box>
 
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
@@ -36,7 +54,7 @@ export default function TopBar({ title, subtitle, onRefresh, showAdmin = true, a
             sx={{
               color: "text.primary",
               letterSpacing: "-0.01em",
-              fontSize: { xs: "1.05rem", sm: "1.2rem" },
+              fontSize: { xs: "1rem", sm: "1.2rem" },
               fontWeight: 500,
               lineHeight: 1.2,
             }}
@@ -46,7 +64,13 @@ export default function TopBar({ title, subtitle, onRefresh, showAdmin = true, a
           {subtitle && (
             <Typography
               variant="caption"
-              sx={{ color: "text.secondary", display: "block", lineHeight: 1.2, fontSize: ".75rem" }}
+              noWrap
+              sx={{
+                color: "text.secondary",
+                display: "block",
+                lineHeight: 1.2,
+                fontSize: { xs: ".7rem", sm: ".75rem" },
+              }}
             >
               {subtitle}
             </Typography>
@@ -57,7 +81,7 @@ export default function TopBar({ title, subtitle, onRefresh, showAdmin = true, a
 
         {onRefresh && (
           <Tooltip title="Aktualisieren">
-            <IconButton onClick={onRefresh} size="medium">
+            <IconButton onClick={onRefresh} size="medium" aria-label="Aktualisieren">
               <RefreshRoundedIcon />
             </IconButton>
           </Tooltip>
@@ -68,6 +92,7 @@ export default function TopBar({ title, subtitle, onRefresh, showAdmin = true, a
             <IconButton
               onClick={() => { window.location.href = "/admin"; }}
               size="medium"
+              aria-label="Admin"
             >
               <AdminPanelSettingsRoundedIcon />
             </IconButton>
