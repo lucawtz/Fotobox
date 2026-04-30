@@ -127,6 +127,12 @@ class UI:
         except Exception as exc:
             logger.warning("Kein Live-Feed: %s", exc)
 
+        # Crop-Cache: Letterbox-Ränder ändern sich praktisch nie, deshalb
+        # nur alle CROP_REFRESH_S neu vermessen statt auf jedem Frame.
+        self._crop_box: Optional[tuple] = None  # (y0, y1, x0, x1, h, w)
+        self._crop_last_ms: int = 0
+        self._CROP_REFRESH_MS = 2000
+
     # ── Öffentliche API ────────────────────────────────────────────────────────
 
     def check_quit(self) -> bool:
@@ -188,12 +194,36 @@ class UI:
         lbl = self._f_normal.render(msg, True, C_WHITE)
         self._screen.blit(lbl, lbl.get_rect(center=(x + w // 2, y + h // 2)))
 
+    def _crop_black_borders(self, frame):
+        """Schneidet schwarze Ränder aus einem Frame heraus (HDMI-Letterbox).
+
+        Das Crop-Rechteck wird gecached und nur alle _CROP_REFRESH_MS neu
+        vermessen — die Letterbox bewegt sich praktisch nie, dafür sparen
+        wir auf jedem Frame eine cv2.resize + numpy-Pass (~1 ms auf Pi 4B).
+        """
+        h, w = frame.shape[:2]
+        now_ms = pygame.time.get_ticks()
+
+        cached = self._crop_box
+        if (cached is not None
+                and cached[4] == h and cached[5] == w
+                and now_ms - self._crop_last_ms < self._CROP_REFRESH_MS):
+            y0, y1, x0, x1, _, _ = cached
+            return frame[y0:y1, x0:x1]
+
+        box = self._measure_crop_box(frame)
+        if box is None:
+            return None
+        y0, y1, x0, x1 = box
+        self._crop_box = (y0, y1, x0, x1, h, w)
+        self._crop_last_ms = now_ms
+        return frame[y0:y1, x0:x1]
+
     @staticmethod
-    def _crop_black_borders(frame):
-        """Schneidet schwarze Ränder aus einem Frame heraus (HDMI-Letterbox)."""
+    def _measure_crop_box(frame):
+        """Misst das Crop-Rechteck auf einem 1/8-Downsample (~1 ms auf Pi)."""
         import numpy as np
         h, w = frame.shape[:2]
-        # Auf 1/8 herunterskaliert für Speed (~1ms statt ~30ms auf Pi)
         small = cv2.resize(frame, (max(1, w // 8), max(1, h // 8)),
                            interpolation=cv2.INTER_AREA)
         gray = small.mean(axis=2)
@@ -204,14 +234,13 @@ class UI:
         cols = mask.any(axis=0)
         y_idx = np.where(rows)[0]
         x_idx = np.where(cols)[0]
-        # Skalierung × 8 zurück + Sicherheits-Padding raus
         y0 = max(0, y_idx[0] * 8)
         y1 = min(h, (y_idx[-1] + 1) * 8)
         x0 = max(0, x_idx[0] * 8)
         x1 = min(w, (x_idx[-1] + 1) * 8)
         if (x1 - x0) < 100 or (y1 - y0) < 100:
-            return None  # zu wenig Inhalt
-        return frame[y0:y1, x0:x1]
+            return None
+        return (y0, y1, x0, x1)
 
     def _draw_overlay_button_highlights(self):
         """Zeichnet einen Glow um die im Overlay enthaltenen Foto- und Collage-Buttons,
