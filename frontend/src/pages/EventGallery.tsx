@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link as RouterLink, useNavigate, useParams } from "react-router-dom";
 import {
   Box,
   Button,
@@ -8,6 +8,7 @@ import {
   Container,
   Fade,
   IconButton,
+  Paper,
   Stack,
   Tooltip,
   Typography,
@@ -18,6 +19,7 @@ import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import { api, Photo } from "../api";
 import PhotoTile from "../components/PhotoTile";
+import ViewToggle, { useGalleryView } from "../components/ViewToggle";
 
 const POLL_MS = 8000;
 
@@ -89,6 +91,8 @@ export default function EventGallery() {
 
   const subtitle = loading ? "Lade…"
                  : `${photos.length} Foto${photos.length === 1 ? "" : "s"}${eventDate ? ` · ${formatDate(eventDate)}` : ""}`;
+
+  const [view, setView] = useGalleryView("photos", "grid");
 
   return (
     <>
@@ -166,6 +170,12 @@ export default function EventGallery() {
           </Box>
 
           {photos.length > 0 && (
+            <Box sx={{ display: { xs: "none", sm: "inline-flex" }, flexShrink: 0 }}>
+              <ViewToggle value={view} onChange={setView} />
+            </Box>
+          )}
+
+          {photos.length > 0 && (
             <Tooltip title="Als ZIP herunterladen">
               <Button
                 onClick={handleDownload}
@@ -186,6 +196,12 @@ export default function EventGallery() {
                 ZIP
               </Button>
             </Tooltip>
+          )}
+
+          {photos.length > 0 && (
+            <Box sx={{ display: { xs: "inline-flex", sm: "none" }, flexShrink: 0 }}>
+              <ViewToggle value={view} onChange={setView} />
+            </Box>
           )}
 
           <Tooltip title="Aktualisieren">
@@ -237,7 +253,7 @@ export default function EventGallery() {
           </Stack>
         )}
 
-        {photos.length > 0 && (
+        {photos.length > 0 && view === "grid" && (
           <Box
             sx={{
               display: "grid",
@@ -257,7 +273,134 @@ export default function EventGallery() {
             ))}
           </Box>
         )}
+
+        {photos.length > 0 && view === "list" && (
+          <Paper
+            elevation={0}
+            sx={{
+              m: { xs: 0.5, sm: 1, md: 1.5 },
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 1.5,
+              overflow: "hidden",
+              bgcolor: "background.paper",
+            }}
+          >
+            {photos.map((p, i) => (
+              <PhotoListRow
+                key={`${p.event}/${p.filename}`}
+                photo={p}
+                divider={i < photos.length - 1}
+              />
+            ))}
+          </Paper>
+        )}
       </Container>
     </>
+  );
+}
+
+const formatTime = (mtime: number): string => {
+  const d = new Date(mtime * 1000);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString("de-DE", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+};
+
+const formatSize = (bytes: number): string => {
+  if (!bytes) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+};
+
+function PhotoListRow({ photo, divider }: { photo: Photo; divider: boolean }) {
+  return (
+    <Box
+      component={RouterLink}
+      to={`/photo/${encodeURIComponent(photo.event)}/${encodeURIComponent(photo.filename)}`}
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: { xs: 1.25, sm: 2 },
+        px: { xs: 1.25, sm: 2 },
+        py: { xs: 0.75, sm: 1 },
+        textDecoration: "none",
+        color: "inherit",
+        borderBottom: divider ? "1px solid" : 0,
+        borderColor: "divider",
+        WebkitTapHighlightColor: "transparent",
+        transition: "background-color .12s",
+        "&:hover": { bgcolor: "grey.50" },
+      }}
+    >
+      <Box
+        sx={{
+          width: { xs: 44, sm: 52 },
+          height: { xs: 44, sm: 52 },
+          borderRadius: 1,
+          overflow: "hidden",
+          bgcolor: "grey.100",
+          flexShrink: 0,
+          position: "relative",
+        }}
+      >
+        <Box
+          component="img"
+          src={api.thumbUrl(photo)}
+          alt={photo.filename}
+          loading="lazy"
+          decoding="async"
+          sx={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+          }}
+        />
+      </Box>
+
+      <Box sx={{ minWidth: 0, flex: 1 }}>
+        <Typography
+          noWrap
+          sx={{
+            fontWeight: 500,
+            fontSize: { xs: ".85rem", sm: ".9rem" },
+            color: "text.primary",
+            lineHeight: 1.3,
+          }}
+        >
+          {photo.filename}
+        </Typography>
+        <Typography
+          variant="caption"
+          noWrap
+          sx={{
+            color: "text.secondary",
+            display: "block",
+            lineHeight: 1.3,
+            fontSize: { xs: ".7rem", sm: ".72rem" },
+          }}
+        >
+          {formatTime(photo.mtime)}
+        </Typography>
+      </Box>
+
+      <Typography
+        variant="body2"
+        sx={{
+          color: "text.secondary",
+          fontVariantNumeric: "tabular-nums",
+          fontSize: { xs: ".75rem", sm: ".8rem" },
+          flexShrink: 0,
+          display: { xs: "none", sm: "block" },
+        }}
+      >
+        {formatSize(photo.size)}
+      </Typography>
+    </Box>
   );
 }

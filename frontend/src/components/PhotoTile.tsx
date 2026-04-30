@@ -39,7 +39,7 @@ export default function PhotoTile({ photo }: Props) {
         display: "block",
         aspectRatio: "1 / 1",
         overflow: "hidden",
-        borderRadius: 2,
+        borderRadius: 1,
         bgcolor: "grey.100",
         textDecoration: "none",
         cursor: "pointer",

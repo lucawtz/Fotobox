@@ -43,7 +43,10 @@ export default function AdminLogin() {
         minHeight: "100dvh",
         display: "grid",
         placeItems: "center",
-        p: 3,
+        px: { xs: 2, sm: 3 },
+        py: 3,
+        pt: "calc(var(--sa-top) + 24px)",
+        pb: "calc(var(--sa-bottom) + 24px)",
       }}
     >
       <Paper
@@ -72,10 +75,10 @@ export default function AdminLogin() {
           </Box>
           <Box>
             <Typography variant="h5" sx={{ fontWeight: 500 }}>
-              Admin-Bereich
+              Konfiguration
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              Bitte gib den Admin-PIN ein
+              Gib deinen PIN ein – Admin oder Gastgeber
             </Typography>
           </Box>
         </Stack>

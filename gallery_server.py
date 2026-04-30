@@ -490,8 +490,15 @@ def api_delete(event: str, filename: str):
             return jsonify(ok=False,
                            error=f"Zu viele Fehlversuche – bitte {locked}s warten"), 429
         pin = request.form.get("pin", "").strip()
-        expected = config.cfg.get("admin_pin", "1234")
-        if not pin or not secrets.compare_digest(pin, expected):
+        admin_pin = config.cfg.get("admin_pin", "1234")
+        host_pin  = config.cfg.get("host_pin", "")
+        # Foto-Einzellöschung: Admin- ODER Host-PIN reicht. Bulk-Reset bleibt
+        # in /api/admin/reset und ist weiterhin admin-only.
+        ok = bool(pin) and (
+            secrets.compare_digest(pin, admin_pin) or
+            (bool(host_pin) and secrets.compare_digest(pin, host_pin))
+        )
+        if not ok:
             _login_record_failure(ip)
             return jsonify(ok=False, error="Falscher PIN"), 403
         _login_record_success(ip)
@@ -532,18 +539,40 @@ def admin_spa(_path: str):
 
 # ── Admin JSON-API ─────────────────────────────────────────────────────────────
 
-def _api_admin_required(f):
+def _session_role() -> Optional[str]:
+    """Aktive Rolle: 'admin', 'host' oder None."""
+    if not session.get("admin_logged_in"):
+        return None
+    return session.get("role") or "admin"  # Legacy-Sessions ohne Rolle = admin
+
+
+def _api_login_required(f):
+    """Eingeloggt — egal ob Admin oder Gastgeber."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not session.get("admin_logged_in"):
+        if not _session_role():
             return jsonify(ok=False, error="Unauthorized"), 401
+        return f(*args, **kwargs)
+    return decorated
+
+
+def _api_admin_required(f):
+    """Nur Admin-Rolle — Gastgeber bekommt 403."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        role = _session_role()
+        if role is None:
+            return jsonify(ok=False, error="Unauthorized"), 401
+        if role != "admin":
+            return jsonify(ok=False, error="Forbidden"), 403
         return f(*args, **kwargs)
     return decorated
 
 
 @app.route("/api/admin/me")
 def api_admin_me():
-    return jsonify(authenticated=bool(session.get("admin_logged_in")))
+    role = _session_role()
+    return jsonify(authenticated=bool(role), role=role)
 
 
 def _client_ip() -> str:
@@ -589,12 +618,22 @@ def api_admin_login():
 
     pin = (request.form.get("pin") or
            (request.get_json(silent=True) or {}).get("pin", "")).strip()
-    expected = config.cfg.get("admin_pin", "1234")
-    # secrets.compare_digest gegen Timing-Attacks
-    if pin and secrets.compare_digest(pin, expected):
+    admin_pin = config.cfg.get("admin_pin", "1234")
+    host_pin  = config.cfg.get("host_pin", "")
+
+    # Admin zuerst — falls beide PINs identisch konfiguriert sind, gewinnt
+    # Admin (sonst wäre der Gastgeber-Modus eine Sicherheitslücke).
+    role: Optional[str] = None
+    if pin and secrets.compare_digest(pin, admin_pin):
+        role = "admin"
+    elif pin and host_pin and secrets.compare_digest(pin, host_pin):
+        role = "host"
+
+    if role:
         session["admin_logged_in"] = True
+        session["role"] = role
         _login_record_success(ip)
-        return jsonify(ok=True)
+        return jsonify(ok=True, role=role)
 
     _login_record_failure(ip)
     return jsonify(ok=False, error="Falscher PIN"), 401
@@ -607,7 +646,7 @@ def api_admin_logout():
 
 
 @app.route("/api/admin/status")
-@_api_admin_required
+@_api_login_required
 def api_admin_status():
     # Niemals selbst gphoto2 starten — die Camera-Watchdog hat bereits eine
     # USB-Session offen, ein paralleler --auto-detect kollidiert. Stattdessen
@@ -635,19 +674,34 @@ def api_admin_status():
 
 
 @app.route("/api/admin/config", methods=["GET", "POST"])
-@_api_admin_required
+@_api_login_required
 def api_admin_config():
+    role = _session_role()
+    is_admin = role == "admin"
+
     if request.method == "GET":
-        return jsonify({
+        # WLAN-Daten dürfen Host und Admin sehen — der Gastgeber soll für
+        # seine Veranstaltung auch SSID/Passwort anpassen können. PINs bleiben
+        # admin-only, sonst könnte der Host den Admin-PIN auslesen und sich
+        # selbst hochstufen.
+        out = {
             "event_name":         config.cfg.get("event_name", "Fotobox"),
+            "countdown_duration": config.cfg.get("countdown_duration", 3),
+            "has_logo":           os.path.isfile(config.cfg.get("logo_path", "")),
             "wifi_ssid":          config.cfg.get("wifi_ssid", ""),
             "wifi_password":      config.cfg.get("wifi_password", ""),
-            "countdown_duration": config.cfg.get("countdown_duration", 3),
-            "admin_pin":          config.cfg.get("admin_pin", "1234"),
-            "has_logo":           os.path.isfile(config.cfg.get("logo_path", "")),
-        })
+            "role":               role,
+        }
+        if is_admin:
+            out.update({
+                "admin_pin": config.cfg.get("admin_pin", "1234"),
+                "host_pin":  config.cfg.get("host_pin", ""),
+            })
+        return jsonify(out)
 
     data = request.get_json(silent=True) or request.form
+
+    # Beide Rollen: event_name, countdown, WLAN
     try:
         countdown = int(data.get("countdown_duration",
                                  config.cfg["countdown_duration"]))
@@ -657,17 +711,27 @@ def api_admin_config():
 
     config.cfg.update({
         "event_name":         (data.get("event_name") or config.cfg["event_name"]).strip(),
+        "countdown_duration": countdown,
         "wifi_ssid":          (data.get("wifi_ssid")  or config.cfg["wifi_ssid"]).strip(),
         "wifi_password":      data.get("wifi_password", config.cfg["wifi_password"]) or "",
-        "countdown_duration": countdown,
     })
 
-    new_pin = (data.get("admin_pin") or "").strip()
-    if new_pin:
-        if len(new_pin) < 4 or len(new_pin) > 12:
-            return jsonify(ok=False,
-                           error="PIN muss 4–12 Zeichen lang sein"), 400
-        config.cfg["admin_pin"] = new_pin
+    # PIN-Verwaltung bleibt admin-only — vom Host-Request still ignoriert.
+    if is_admin:
+        for pin_key in ("admin_pin", "host_pin"):
+            new_pin = data.get(pin_key)
+            if new_pin is None:
+                continue
+            new_pin = new_pin.strip()
+            # Leerer host_pin = Gastgeber-Login deaktivieren. admin_pin darf
+            # nie leer sein, sonst sperrt sich der Admin selbst aus.
+            if pin_key == "host_pin" and new_pin == "":
+                config.cfg["host_pin"] = ""
+                continue
+            if len(new_pin) < 4 or len(new_pin) > 12:
+                return jsonify(ok=False,
+                               error="PIN muss 4–12 Zeichen lang sein"), 400
+            config.cfg[pin_key] = new_pin
 
     config.save_config(config.cfg)
     return jsonify(ok=True)
@@ -679,7 +743,7 @@ _MAX_LOGO_PIXELS = 50_000_000
 
 
 @app.route("/api/admin/logo", methods=["POST"])
-@_api_admin_required
+@_api_login_required
 def api_admin_logo():
     logo_file = request.files.get("logo")
     if not logo_file or not logo_file.filename:

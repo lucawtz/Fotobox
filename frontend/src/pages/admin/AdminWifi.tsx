@@ -29,8 +29,8 @@ export default function AdminWifi() {
   useEffect(() => {
     api.admin.config.get().then((c) => {
       setCfg(c);
-      setSsid(c.wifi_ssid);
-      setPwd(c.wifi_password);
+      setSsid(c.wifi_ssid ?? "");
+      setPwd(c.wifi_password ?? "");
     });
   }, []);
 
@@ -44,7 +44,7 @@ export default function AdminWifi() {
     } finally { setBusy(false); }
   };
 
-  const dirty = !!cfg && (ssid !== cfg.wifi_ssid || pwd !== cfg.wifi_password);
+  const dirty = !!cfg && (ssid !== (cfg.wifi_ssid ?? "") || pwd !== (cfg.wifi_password ?? ""));
 
   return (
     <>
@@ -101,13 +101,21 @@ export default function AdminWifi() {
           ) : <Skeleton variant="rounded" height={56} />}
         </SettingsCard>
 
-        <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1.5, pt: 1 }}>
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: { xs: "stretch", sm: "flex-end" },
+            gap: 1.5,
+            pt: 1,
+          }}
+        >
           <Button
             disabled={!dirty || busy}
             color="inherit"
             onClick={() => {
-              if (cfg) { setSsid(cfg.wifi_ssid); setPwd(cfg.wifi_password); }
+              if (cfg) { setSsid(cfg.wifi_ssid ?? ""); setPwd(cfg.wifi_password ?? ""); }
             }}
+            sx={{ flex: { xs: 1, sm: "0 0 auto" } }}
           >
             Verwerfen
           </Button>
@@ -115,6 +123,7 @@ export default function AdminWifi() {
             disabled={!dirty || busy || (pwd.length > 0 && pwd.length < 8)}
             onClick={save}
             variant="contained"
+            sx={{ flex: { xs: 1, sm: "0 0 auto" } }}
           >
             {busy ? "Speichere…" : "Speichern"}
           </Button>

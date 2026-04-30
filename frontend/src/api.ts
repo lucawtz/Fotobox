@@ -39,13 +39,18 @@ export interface DeleteResult {
   removed?: number;
 }
 
+export type AdminRole = "admin" | "host";
+
 export interface AdminConfig {
   event_name: string;
-  wifi_ssid: string;
-  wifi_password: string;
   countdown_duration: number;
-  admin_pin: string;
   has_logo: boolean;
+  role: AdminRole;
+  // Nur Admin sieht diese Felder — Gastgeber bekommt sie nicht vom Server.
+  wifi_ssid?: string;
+  wifi_password?: string;
+  admin_pin?: string;
+  host_pin?: string;
 }
 
 export interface AdminStatus {
@@ -110,8 +115,8 @@ export const api = {
   },
 
   admin: {
-    me:     () => fetch("/api/admin/me", FETCH_OPTS).then(json<{ authenticated: boolean }>),
-    login:  (pin: string) => postJson("/api/admin/login", { pin }).then(json<{ ok: boolean; error?: string }>),
+    me:     () => fetch("/api/admin/me", FETCH_OPTS).then(json<{ authenticated: boolean; role: AdminRole | null }>),
+    login:  (pin: string) => postJson("/api/admin/login", { pin }).then(json<{ ok: boolean; error?: string; role?: AdminRole }>),
     logout: () => fetch("/api/admin/logout", { ...FETCH_OPTS, method: "POST" }).then(json<{ ok: boolean }>),
     status: () => fetch("/api/admin/status", FETCH_OPTS).then(json<AdminStatus>),
     config: {

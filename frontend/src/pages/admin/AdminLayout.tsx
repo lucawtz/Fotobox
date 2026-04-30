@@ -29,15 +29,23 @@ import BuildRoundedIcon from "@mui/icons-material/BuildRounded";
 import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
 import PhotoLibraryRoundedIcon from "@mui/icons-material/PhotoLibraryRounded";
 import { api } from "../../api";
+import { useAuth } from "./authContext";
 
 const NAV_WIDTH = 256;
 
-const NAV_ITEMS = [
+interface NavItem {
+  to: string;
+  label: string;
+  icon: JSX.Element;
+  adminOnly?: boolean;
+}
+
+const NAV_ITEMS: NavItem[] = [
   { to: "/admin",             label: "Übersicht", icon: <DashboardRoundedIcon /> },
   { to: "/admin/event",       label: "Event",     icon: <EventRoundedIcon />     },
-  { to: "/admin/wifi",        label: "WLAN",      icon: <WifiRoundedIcon />      },
   { to: "/admin/branding",    label: "Logo",      icon: <ImageRoundedIcon />     },
-  { to: "/admin/maintenance", label: "Wartung",   icon: <BuildRoundedIcon />     },
+  { to: "/admin/wifi",        label: "WLAN",      icon: <WifiRoundedIcon />     },
+  { to: "/admin/maintenance", label: "Wartung",   icon: <BuildRoundedIcon />,    adminOnly: true },
 ];
 
 export default function AdminLayout() {
@@ -47,9 +55,13 @@ export default function AdminLayout() {
   const [menuEl, setMenuEl] = useState<null | HTMLElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
+  const { role } = useAuth();
+  const isAdmin = role === "admin";
+
+  const navItems = NAV_ITEMS.filter((i) => isAdmin || !i.adminOnly);
 
   const sectionTitle =
-    NAV_ITEMS.find((i) =>
+    navItems.find((i) =>
       i.to === "/admin" ? location.pathname === "/admin" : location.pathname.startsWith(i.to),
     )?.label ?? "Admin";
 
@@ -79,13 +91,13 @@ export default function AdminLayout() {
             Fotobox
           </Typography>
           <Typography variant="caption" sx={{ color: "text.secondary", fontSize: ".7rem" }}>
-            Admin-Konsole
+            {isAdmin ? "Admin-Konsole" : "Gastgeber-Bereich"}
           </Typography>
         </Box>
       </Box>
 
       <List sx={{ flex: 1, px: 1, py: 1 }}>
-        {NAV_ITEMS.map((item) => (
+        {navItems.map((item) => (
           <ListItemButton
             key={item.to}
             component={NavLink}
@@ -182,27 +194,44 @@ export default function AdminLayout() {
       )}
 
       <Box sx={{ flexGrow: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <AppBar position="sticky" elevation={0}>
-          <Toolbar sx={{ minHeight: { xs: 64, sm: 64 }, gap: 1.25, px: { xs: 1.5, sm: 3 } }}>
+        <AppBar
+          position="sticky"
+          elevation={0}
+          sx={{
+            pt: "var(--sa-top)",
+            pl: "var(--sa-left)",
+            pr: "var(--sa-right)",
+          }}
+        >
+          <Toolbar sx={{ minHeight: { xs: 56, sm: 64 }, gap: { xs: 0.75, sm: 1.25 }, px: { xs: 1, sm: 3 } }}>
             {!isDesktop && (
-              <IconButton edge="start" onClick={() => setMobileOpen(true)}>
+              <IconButton edge="start" onClick={() => setMobileOpen(true)} aria-label="Menü">
                 <MenuRoundedIcon />
               </IconButton>
             )}
             <Box sx={{ flexGrow: 1, minWidth: 0 }}>
               <Typography
                 variant="h6"
+                noWrap
                 sx={{
                   color: "text.primary",
                   fontWeight: 500,
-                  lineHeight: 1.1,
-                  fontSize: "1.15rem",
+                  lineHeight: 1.15,
+                  fontSize: { xs: "1rem", sm: "1.15rem" },
                 }}
               >
                 {sectionTitle}
               </Typography>
-              <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                Fotobox-Verwaltung
+              <Typography
+                variant="caption"
+                noWrap
+                sx={{
+                  color: "text.secondary",
+                  display: "block",
+                  fontSize: { xs: ".7rem", sm: ".75rem" },
+                }}
+              >
+                {isAdmin ? "Fotobox-Verwaltung" : "Eingeschränkter Zugang"}
               </Typography>
             </Box>
 
@@ -212,12 +241,12 @@ export default function AdminLayout() {
                   sx={{
                     width: 34, height: 34,
                     fontSize: ".95rem",
-                    bgcolor: "primary.main",
+                    bgcolor: isAdmin ? "primary.main" : "secondary.main",
                     color: "primary.contrastText",
                     fontWeight: 600,
                   }}
                 >
-                  A
+                  {isAdmin ? "A" : "G"}
                 </Avatar>
               </IconButton>
             </Tooltip>
@@ -246,7 +275,9 @@ export default function AdminLayout() {
           component="main"
           sx={{
             flex: 1,
-            p: { xs: 2, sm: 3, md: 4 },
+            px: { xs: 1.5, sm: 3, md: 4 },
+            pt: { xs: 2, sm: 3, md: 4 },
+            pb: "calc(var(--sa-bottom) + 24px)",
             maxWidth: 1100,
             width: "100%",
             mx: "auto",

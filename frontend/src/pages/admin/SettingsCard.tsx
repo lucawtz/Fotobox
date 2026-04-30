@@ -20,33 +20,52 @@ export default function SettingsCard({ title, description, icon, children, foote
         overflow: "hidden",
       }}
     >
-      <Box sx={{ p: { xs: 2.25, sm: 3 } }}>
-        <Stack direction="row" spacing={2} alignItems="flex-start" sx={{ mb: description ? 0.5 : 0 }}>
+      <Box sx={{ p: { xs: 1.75, sm: 3 } }}>
+        <Stack
+          direction="row"
+          spacing={{ xs: 1.25, sm: 2 }}
+          alignItems="flex-start"
+          sx={{ mb: description ? 0.5 : 0 }}
+        >
           {icon && (
             <Box
               sx={{
-                width: 40, height: 40, borderRadius: 2,
+                width: { xs: 36, sm: 40 },
+                height: { xs: 36, sm: 40 },
+                borderRadius: 2,
                 display: "grid", placeItems: "center",
                 bgcolor: "#e8f0fe",
                 color: "primary.main",
                 flexShrink: 0,
+                "& > svg": { fontSize: { xs: 20, sm: 24 } },
               }}
             >
               {icon}
             </Box>
           )}
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography variant="h6" sx={{ fontWeight: 600, fontSize: "1.05rem" }}>
+            <Typography
+              variant="h6"
+              sx={{
+                fontWeight: 600,
+                fontSize: { xs: ".95rem", sm: "1.05rem" },
+                lineHeight: 1.3,
+              }}
+            >
               {title}
             </Typography>
             {description && (
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ mt: 0.25, fontSize: { xs: ".8rem", sm: ".875rem" } }}
+              >
                 {description}
               </Typography>
             )}
           </Box>
         </Stack>
-        <Box sx={{ mt: 2.5 }}>{children}</Box>
+        <Box sx={{ mt: { xs: 1.75, sm: 2.5 } }}>{children}</Box>
       </Box>
       {footer && (
         <Box

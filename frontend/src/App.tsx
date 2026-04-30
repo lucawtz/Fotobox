@@ -42,9 +42,18 @@ export default function App() {
       >
         <Route index            element={<Suspense fallback={null}><AdminOverview /></Suspense>} />
         <Route path="event"     element={<Suspense fallback={null}><AdminEvent /></Suspense>} />
-        <Route path="wifi"      element={<Suspense fallback={null}><AdminWifi /></Suspense>} />
         <Route path="branding"  element={<Suspense fallback={null}><AdminBranding /></Suspense>} />
-        <Route path="maintenance" element={<Suspense fallback={null}><AdminMaintenance /></Suspense>} />
+        <Route path="wifi"      element={<Suspense fallback={null}><AdminWifi /></Suspense>} />
+        <Route
+          path="maintenance"
+          element={
+            <Suspense fallback={null}>
+              <RequireAuth requireAdmin>
+                <AdminMaintenance />
+              </RequireAuth>
+            </Suspense>
+          }
+        />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

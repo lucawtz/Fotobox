@@ -18,6 +18,7 @@ import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import ErrorOutlineRoundedIcon from "@mui/icons-material/ErrorOutlineRounded";
 import { api, AdminStatus } from "../../api";
+import { useAuth } from "./authContext";
 
 interface StatCardProps {
   icon: React.ReactNode;
@@ -44,8 +45,8 @@ function StatCard({ icon, label, value, hint, accent = "primary", loading }: Sta
     <Paper
       elevation={0}
       sx={{
-        p: { xs: 2, sm: 2.5 },
-        borderRadius: 3,
+        p: { xs: 1.5, sm: 2.5 },
+        borderRadius: { xs: 2.5, sm: 3 },
         border: "1px solid",
         borderColor: "divider",
         height: "100%",
@@ -55,26 +56,46 @@ function StatCard({ icon, label, value, hint, accent = "primary", loading }: Sta
         },
       }}
     >
-      <Stack direction="row" spacing={2} alignItems="flex-start">
+      <Stack direction="row" spacing={{ xs: 1.25, sm: 2 }} alignItems="flex-start">
         <Box
           sx={{
-            width: 44, height: 44, borderRadius: 2.5,
+            width: { xs: 36, sm: 44 },
+            height: { xs: 36, sm: 44 },
+            borderRadius: 2.5,
             display: "grid", placeItems: "center",
             bgcolor: accentBg, color: iconColor,
             flexShrink: 0,
+            "& > svg": { fontSize: { xs: 20, sm: 24 } },
           }}
         >
           {icon}
         </Box>
-        <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: ".06em", textTransform: "uppercase", fontSize: ".7rem" }}>
+        <Box sx={{ minWidth: 0, flex: 1, width: "100%" }}>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{
+              letterSpacing: ".06em",
+              textTransform: "uppercase",
+              fontSize: { xs: ".62rem", sm: ".7rem" },
+            }}
+          >
             {label}
           </Typography>
-          <Typography variant="h5" sx={{ mt: 0.25, fontWeight: 600, lineHeight: 1.1 }}>
-            {loading ? <Skeleton width={80} /> : value}
+          <Typography
+            variant="h5"
+            noWrap
+            sx={{
+              mt: 0.25,
+              fontWeight: 600,
+              lineHeight: 1.1,
+              fontSize: { xs: "1.1rem", sm: "1.5rem" },
+            }}
+          >
+            {loading ? <Skeleton width={60} /> : value}
           </Typography>
           {hint && (
-            <Box sx={{ mt: 1 }}>
+            <Box sx={{ mt: { xs: 0.5, sm: 1 } }}>
               {hint}
             </Box>
           )}
@@ -85,6 +106,8 @@ function StatCard({ icon, label, value, hint, accent = "primary", loading }: Sta
 }
 
 export default function AdminOverview() {
+  const { role } = useAuth();
+  const isAdmin = role === "admin";
   const [status, setStatus] = useState<AdminStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -115,7 +138,7 @@ export default function AdminOverview() {
   return (
     <Stack spacing={3}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>
-        <Box>
+        <Box sx={{ minWidth: 0 }}>
           <Typography variant="h5" sx={{ fontWeight: 500 }}>
             Übersicht
           </Typography>
@@ -129,17 +152,29 @@ export default function AdminOverview() {
           disabled={refreshing}
           variant="text"
           color="inherit"
-          sx={{ color: "text.secondary" }}
+          sx={{
+            color: "text.secondary",
+            flexShrink: 0,
+            minWidth: { xs: 40, sm: "auto" },
+            px: { xs: 1, sm: 2 },
+            "& .MuiButton-startIcon": {
+              mr: { xs: 0, sm: 1 },
+            },
+            "& .button-label": {
+              display: { xs: "none", sm: "inline" },
+            },
+          }}
+          aria-label="Aktualisieren"
         >
-          {refreshing ? "Lade…" : "Aktualisieren"}
+          <span className="button-label">{refreshing ? "Lade…" : "Aktualisieren"}</span>
         </Button>
       </Stack>
 
       <Box
         sx={{
           display: "grid",
-          gap: 2,
-          gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(4, 1fr)" },
+          gap: { xs: 1.25, sm: 2 },
+          gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(2, 1fr)", lg: "repeat(4, 1fr)" },
         }}
       >
         <StatCard
@@ -226,9 +261,14 @@ export default function AdminOverview() {
           Quick-Tipp
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Stelle Event-Name und Countdown unter <b>Event</b> ein — das Logo deines Kunden
-          lädst du unter <b>Logo</b> hoch. Vor jedem Event empfiehlt sich ein
-          Foto-Reset unter <b>Wartung</b>.
+          {isAdmin ? (
+            <>Stelle Event-Name und Countdown unter <b>Event</b> ein — das Logo deines Kunden
+            lädst du unter <b>Logo</b> hoch. Vor jedem Event empfiehlt sich ein
+            Foto-Reset unter <b>Wartung</b>.</>
+          ) : (
+            <>Trage hier den Namen deines Events ein und lade dein eigenes Logo hoch.
+            Den Countdown vor dem Auslösen kannst du ebenfalls anpassen.</>
+          )}
         </Typography>
       </Paper>
     </Stack>

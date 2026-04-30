@@ -19,13 +19,18 @@ import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
 import VisibilityOffRoundedIcon from "@mui/icons-material/VisibilityOffRounded";
 import { api, AdminConfig } from "../../api";
 import SettingsCard from "./SettingsCard";
+import { useAuth } from "./authContext";
 
 export default function AdminEvent() {
+  const { role } = useAuth();
+  const isAdmin = role === "admin";
   const [cfg, setCfg] = useState<AdminConfig | null>(null);
   const [eventName, setEventName] = useState("");
   const [countdown, setCountdown] = useState(3);
-  const [pin, setPin] = useState("");
-  const [showPin, setShowPin] = useState(false);
+  const [adminPin, setAdminPin] = useState("");
+  const [hostPin, setHostPin]   = useState("");
+  const [showAdminPin, setShowAdminPin] = useState(false);
+  const [showHostPin,  setShowHostPin]  = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ severity: "success" | "error"; msg: string } | null>(null);
 
@@ -34,18 +39,23 @@ export default function AdminEvent() {
       setCfg(c);
       setEventName(c.event_name);
       setCountdown(c.countdown_duration);
-      setPin(c.admin_pin);
+      setAdminPin(c.admin_pin ?? "");
+      setHostPin(c.host_pin ?? "");
     });
   }, []);
 
   const save = async () => {
     setBusy(true);
     try {
-      await api.admin.config.save({
+      const payload: Partial<AdminConfig> = {
         event_name: eventName,
         countdown_duration: countdown,
-        admin_pin: pin,
-      });
+      };
+      if (isAdmin) {
+        payload.admin_pin = adminPin;
+        payload.host_pin  = hostPin;
+      }
+      await api.admin.config.save(payload);
       setToast({ severity: "success", msg: "Einstellungen gespeichert" });
     } catch (e) {
       setToast({ severity: "error", msg: e instanceof Error ? e.message : String(e) });
@@ -57,8 +67,12 @@ export default function AdminEvent() {
   const dirty = !!cfg && (
     eventName !== cfg.event_name ||
     countdown !== cfg.countdown_duration ||
-    pin !== cfg.admin_pin
+    (isAdmin && adminPin !== (cfg.admin_pin ?? "")) ||
+    (isAdmin && hostPin  !== (cfg.host_pin  ?? ""))
   );
+
+  const adminPinValid = !isAdmin || (adminPin.length >= 4 && adminPin.length <= 12);
+  const hostPinValid  = !isAdmin || hostPin === "" || (hostPin.length >= 4 && hostPin.length <= 12);
 
   return (
     <>
@@ -68,7 +82,7 @@ export default function AdminEvent() {
             Event
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Anzeigename, Countdown und Admin-Zugang
+            {isAdmin ? "Anzeigename, Countdown und PIN-Zugänge" : "Anzeigename und Countdown"}
           </Typography>
         </Box>
 
@@ -124,53 +138,97 @@ export default function AdminEvent() {
           )}
         </SettingsCard>
 
-        <SettingsCard
-          icon={<LockRoundedIcon />}
-          title="Admin-PIN"
-          description="Mindestens 4 Zeichen. Wird zum Anmelden und Foto-Löschen verwendet."
-        >
-          {cfg ? (
-            <TextField
-              type={showPin ? "text" : "password"}
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              fullWidth
-              inputProps={{ maxLength: 12, inputMode: "numeric" }}
-              InputProps={{
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton onClick={() => setShowPin((s) => !s)} edge="end" size="small">
-                      {showPin ? <VisibilityOffRoundedIcon /> : <VisibilityRoundedIcon />}
-                    </IconButton>
-                  </InputAdornment>
-                ),
-              }}
-              helperText={pin.length > 0 && pin.length < 4 ? "PIN zu kurz" : " "}
-              error={pin.length > 0 && pin.length < 4}
-            />
-          ) : (
-            <Skeleton variant="rounded" height={56} />
-          )}
-        </SettingsCard>
+        {isAdmin && (
+          <>
+            <SettingsCard
+              icon={<LockRoundedIcon />}
+              title="Admin-PIN"
+              description="Voller Zugang. 4–12 Zeichen."
+            >
+              {cfg ? (
+                <TextField
+                  type={showAdminPin ? "text" : "password"}
+                  value={adminPin}
+                  onChange={(e) => setAdminPin(e.target.value)}
+                  fullWidth
+                  inputProps={{ maxLength: 12, inputMode: "numeric" }}
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton onClick={() => setShowAdminPin((s) => !s)} edge="end" size="small">
+                          {showAdminPin ? <VisibilityOffRoundedIcon /> : <VisibilityRoundedIcon />}
+                        </IconButton>
+                      </InputAdornment>
+                    ),
+                  }}
+                  helperText={adminPin.length > 0 && adminPin.length < 4 ? "PIN zu kurz" : " "}
+                  error={adminPin.length > 0 && adminPin.length < 4}
+                />
+              ) : (
+                <Skeleton variant="rounded" height={56} />
+              )}
+            </SettingsCard>
 
-        <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1.5, pt: 1 }}>
+            <SettingsCard
+              icon={<LockRoundedIcon />}
+              title="Gastgeber-PIN"
+              description="Eingeschränkter Zugang: nur Event-Name, Countdown und Logo. Leer lassen, um Gastgeber-Login zu deaktivieren."
+            >
+              {cfg ? (
+                <TextField
+                  type={showHostPin ? "text" : "password"}
+                  value={hostPin}
+                  onChange={(e) => setHostPin(e.target.value)}
+                  fullWidth
+                  inputProps={{ maxLength: 12, inputMode: "numeric" }}
+                  placeholder="z.B. 0000"
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton onClick={() => setShowHostPin((s) => !s)} edge="end" size="small">
+                          {showHostPin ? <VisibilityOffRoundedIcon /> : <VisibilityRoundedIcon />}
+                        </IconButton>
+                      </InputAdornment>
+                    ),
+                  }}
+                  helperText={hostPin.length > 0 && hostPin.length < 4 ? "PIN zu kurz" : " "}
+                  error={hostPin.length > 0 && hostPin.length < 4}
+                />
+              ) : (
+                <Skeleton variant="rounded" height={56} />
+              )}
+            </SettingsCard>
+          </>
+        )}
+
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: { xs: "stretch", sm: "flex-end" },
+            gap: 1.5,
+            pt: 1,
+          }}
+        >
           <Button
             disabled={!dirty || busy}
             onClick={() => {
               if (cfg) {
                 setEventName(cfg.event_name);
                 setCountdown(cfg.countdown_duration);
-                setPin(cfg.admin_pin);
+                setAdminPin(cfg.admin_pin ?? "");
+                setHostPin(cfg.host_pin ?? "");
               }
             }}
             color="inherit"
+            sx={{ flex: { xs: 1, sm: "0 0 auto" } }}
           >
             Verwerfen
           </Button>
           <Button
-            disabled={!dirty || busy || pin.length < 4 || pin.length > 12}
+            disabled={!dirty || busy || !adminPinValid || !hostPinValid}
             onClick={save}
             variant="contained"
+            sx={{ flex: { xs: 1, sm: "0 0 auto" } }}
           >
             {busy ? "Speichere…" : "Speichern"}
           </Button>

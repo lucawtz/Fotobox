@@ -171,6 +171,13 @@ const theme = createTheme({
             borderColor: outline,
           },
         }),
+        // iOS Safari zoomt Inputs <16px automatisch rein. Auf Touch-Devices
+        // immer mindestens 16px verwenden, Desktop bleibt 14px.
+        input: {
+          "@media (hover: none) and (pointer: coarse)": {
+            fontSize: 16,
+          },
+        },
       },
     },
     MuiAlert: {
