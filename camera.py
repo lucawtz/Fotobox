@@ -8,35 +8,37 @@ logger = logging.getLogger(__name__)
 
 
 class Camera:
-    """gphoto2-Wrapper mit Watchdog und Live-View-Keep-Alive für Canon-DSLRs.
+    """gphoto2-Wrapper mit Watchdog und manuellem Live-View-Wake.
 
-    Bei Canon-Kameras (z.B. EOS 700D) reicht es nicht, viewfinder=1 ein
-    einziges Mal zu setzen — die Kamera fällt nach kurzer Zeit wieder aus
-    dem Live-View-Modus. Stattdessen muss kontinuierlich ein Preview-Frame
-    über USB abgerufen werden, dann bleibt sowohl Display als auch HDMI-Out
-    dauerhaft aktiv.
-
-    KEEPALIVE_SECONDS: Wie oft ein Preview-Pull ausgelöst wird. Sollte
-    deutlich kürzer sein als der Auto-Off-Timer der Kamera (Canon-Default
-    ~15-30s). Bei Problemen: in config.json "camera_keepalive_s" setzen.
+    HINWEIS zur EOS 700D:
+    - 'gphoto2 --capture-preview' triggert auf manchen Canon-Modellen
+      tatsächlich den Auslöser. Wir nutzen es deshalb NICHT für Keep-Alive.
+    - Live-View wird über '--set-config viewfinder=1' gestartet. Das
+      reicht meist nicht um die Kamera dauerhaft wach zu halten — daher
+      die Empfehlung: im Kameramenü unter 'Auto-Power-Off' auf "Aus"
+      stellen, dann bleibt der Live-View permanent.
+    - Zusätzlich wird vor jeder Aufnahme automatisch wake_liveview()
+      gerufen, falls die Kamera zwischendurch eingeschlafen ist.
     """
 
-    DEFAULT_KEEPALIVE_S = 8
+    DEFAULT_KEEPALIVE_S = 30
+
+    # Config-Namen für Live-View je nach Kamera-Modell
+    _VIEWFINDER_KEYS = ("viewfinder", "eosviewfinder")
 
     def __init__(self, keepalive_s: int = DEFAULT_KEEPALIVE_S):
         self.available = False
         self.error_message = ""
         self._running = True
-        self._cmd_lock = threading.Lock()  # Serialisiert gphoto2-Aufrufe
+        self._cmd_lock = threading.Lock()
         self._capturing = False
-        self._keepalive_s = max(3, int(keepalive_s))
+        self._keepalive_s = max(5, int(keepalive_s))
         self._init()
         threading.Thread(target=self._watchdog, daemon=True).start()
 
     # ── gphoto2-Wrapper ────────────────────────────────────────────────────────
 
     def _gphoto(self, args: list, timeout: int = 10):
-        """Führt einen gphoto2-Befehl thread-sicher aus (mit capture_output)."""
         with self._cmd_lock:
             return subprocess.run(
                 ["gphoto2"] + args,
@@ -59,51 +61,47 @@ class Camera:
             logger.warning(self.error_message)
             return
 
-        # Bildkontrolle nach Aufnahme deaktivieren (best effort)
         try:
             self._gphoto(["--set-config", "reviewtime=0"], timeout=10)
         except Exception as exc:
             logger.debug("reviewtime: %s", exc)
 
-        # Auto-Power-Off versuchen zu deaktivieren — bei vielen Canons
-        # nicht via gphoto2 zugänglich, deshalb best effort
+        # Auto-Power-Off versuchen zu deaktivieren (best effort)
         for cfg in ("autopoweroff=0", "autopoweroff=65535"):
             try:
                 self._gphoto(["--set-config", cfg], timeout=5)
             except Exception:
                 pass
 
-        # Live-View durch einen Preview-Pull starten — das ist der zuverlässige
-        # Trigger für Canon-Kameras, viewfinder=1 alleine reicht oft nicht.
-        if not self._kick_liveview():
-            logger.warning("Init: Live-View-Start fehlgeschlagen — Display bleibt evtl. aus")
+        self.wake_liveview()
 
         self.available = True
         self.error_message = ""
-        logger.info("Kamera bereit — Keep-Alive alle %ds", self._keepalive_s)
+        logger.info("Kamera bereit")
 
-    # ── Live-View Keep-Alive ───────────────────────────────────────────────────
+    # ── Live-View Wake (ohne capture-preview!) ─────────────────────────────────
 
-    def _kick_liveview(self) -> bool:
-        """Holt einen Preview-Frame und verwirft ihn — Side-Effect: Live-View
-        wird gestartet bzw. der Auto-Off-Timer der Kamera zurückgesetzt.
+    def wake_liveview(self) -> bool:
+        """Aktiviert Live-View durch viewfinder=1 (sicher, kein Shutter-Trigger).
 
-        Return True wenn die Kamera erreichbar war.
+        Wird aufgerufen:
+        - Beim Init (Start-Display)
+        - Vor jeder Aufnahme (falls Kamera eingeschlafen ist)
+        - Vom Watchdog periodisch (Best-Effort-Keep-Alive)
+        - Manuell wenn der Nutzer den Wake-Knopf drückt
         """
-        try:
-            with self._cmd_lock:
-                result = subprocess.run(
-                    ["gphoto2", "--capture-preview", "--stdout"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=8,
-                )
-                return result.returncode == 0
-        except subprocess.TimeoutExpired:
-            logger.debug("LV-Kick: Timeout")
-        except Exception as exc:
-            logger.debug("LV-Kick: %s", exc)
-        return False
+        ok = False
+        for key in self._VIEWFINDER_KEYS:
+            try:
+                r = self._gphoto(["--set-config", f"{key}=1"], timeout=5)
+                if r.returncode == 0:
+                    ok = True
+                    break
+            except Exception:
+                continue
+        if not ok:
+            logger.debug("wake_liveview: kein viewfinder-Config setzbar")
+        return ok
 
     # ── Watchdog ───────────────────────────────────────────────────────────────
 
@@ -111,20 +109,20 @@ class Camera:
         while self._running:
             time.sleep(self._keepalive_s)
             if self._capturing:
-                continue  # Capture-Vorgang nicht stören
-
-            if not self.available:
-                if self._detect():
-                    logger.info("Watchdog: Kamera wieder erkannt – reinit")
-                    self._init()
                 continue
 
-            # Live-View durch Preview-Pull frisch halten. Schlägt der Pull
-            # fehl, ist die Verbindung wahrscheinlich verloren.
-            if not self._kick_liveview():
+            detected = self._detect()
+            if detected and not self.available:
+                logger.info("Watchdog: Kamera wieder erkannt – reinit")
+                self._init()
+            elif not detected and self.available:
                 self.available = False
-                self.error_message = "Kamera-Kontakt verloren – USB prüfen"
-                logger.warning("Watchdog: Live-View-Pull fehlgeschlagen")
+                self.error_message = "Kamera getrennt – USB prüfen"
+                logger.warning("Watchdog: Kamera verloren")
+            elif detected and self.available:
+                # Sicherer Keep-Alive: nur viewfinder=1 nachsetzen, nicht
+                # capture-preview (würde Shutter triggern bei der 700D)
+                self.wake_liveview()
 
     # ── Capture ────────────────────────────────────────────────────────────────
 
@@ -153,9 +151,8 @@ class Camera:
         finally:
             self._capturing = False
 
-        # Live-View nach Aufnahme reaktivieren — die Kamera fällt nach
-        # einem Capture meist aus dem Live-View-Modus
-        self._kick_liveview()
+        # Live-View nach Aufnahme reaktivieren
+        self.wake_liveview()
 
         after = set(os.listdir(directory))
         new_files = after - before

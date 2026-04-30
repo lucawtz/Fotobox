@@ -147,15 +147,25 @@ def main():
 
             # ── HOMESCREEN ────────────────────────────────────────────────────
             if state == "HOMESCREEN":
-                if now - idle_since >= cfg["idle_timeout"]:
+                idle_timeout = cfg.get("idle_timeout", 0)
+                if idle_timeout > 0 and now - idle_since >= idle_timeout:
                     ui.refresh_slideshow(cfg["picture_dir"])
                     state = "SLIDESHOW"
                     continue
 
+                left    = btns.left_pressed()
                 trigger = btns.trigger_pressed()
                 right   = btns.right_pressed()
 
-                if trigger or right:
+                # Linker Knopf (Q) auf dem Homescreen = Kamera-Display aufwecken
+                if left and not (trigger or right):
+                    idle_since = now
+                    if camera.available:
+                        logger.info("Manueller Wake — Live-View einschalten")
+                        camera.wake_liveview()
+                    btns.wait_for_release()
+
+                elif trigger or right:
                     idle_since = now
                     mode       = "single" if trigger else "collage"
 
@@ -171,6 +181,7 @@ def main():
                         logger.warning("Auslöser ignoriert: %s", camera.error_message)
                         btns.wait_for_release()
                     elif mode == "single":
+                        camera.wake_liveview()  # Kamera vor Aufnahme aufwecken
                         photo = _do_countdown(ui, camera, cfg, 1, 1)
                         if photo:
                             result_photo = photo
@@ -178,6 +189,7 @@ def main():
                             state = "RESULT"
                         btns.wait_for_release()
                     else:  # collage
+                        camera.wake_liveview()
                         shots: list[str] = []
                         for i in range(4):
                             photo = _do_countdown(ui, camera, cfg, i + 1, 4)
