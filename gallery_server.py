@@ -19,6 +19,13 @@ app.secret_key = os.urandom(24)
 _EXTS = {".jpg", ".jpeg", ".png"}
 _thumb_lock = threading.Lock()
 
+SPA_DIST  = os.path.join(config.BASE_DIR, "frontend", "dist")
+SPA_INDEX = os.path.join(SPA_DIST, "index.html")
+
+
+def _spa_enabled() -> bool:
+    return os.path.isfile(SPA_INDEX)
+
 
 # ── Hilfsfunktionen ────────────────────────────────────────────────────────────
 
@@ -82,6 +89,8 @@ def admin_required(f):
 
 @app.route("/")
 def gallery():
+    if _spa_enabled():
+        return send_file(SPA_INDEX)
     photos = _photo_list()
     for f in photos:
         threading.Thread(target=_make_thumb, args=(f,), daemon=True).start()
@@ -91,10 +100,22 @@ def gallery():
 
 @app.route("/photo/<filename>")
 def photo(filename):
+    if _spa_enabled():
+        return send_file(SPA_INDEX)
     if _safe_path(filename) is None:
         abort(404)
     return render_template("photo.html", filename=filename,
                            event_name=config.cfg.get("event_name", "Fotobox"))
+
+
+@app.route("/assets/<path:fname>")
+def spa_assets(fname: str):
+    if not _spa_enabled():
+        abort(404)
+    full = os.path.normpath(os.path.join(SPA_DIST, "assets", fname))
+    if not full.startswith(os.path.abspath(SPA_DIST)) or not os.path.isfile(full):
+        abort(404)
+    return send_file(full)
 
 
 @app.route("/img/<filename>")
@@ -124,6 +145,48 @@ def download(filename):
 @app.route("/api/count")
 def api_count():
     return jsonify(count=len(_photo_list()))
+
+
+@app.route("/api/photos")
+def api_photos():
+    files = _photo_list()
+    out = []
+    pic_dir = _pic_dir()
+    for f in files:
+        try:
+            st = os.stat(os.path.join(pic_dir, f))
+            out.append({"filename": f, "mtime": st.st_mtime, "size": st.st_size})
+        except OSError:
+            continue
+        threading.Thread(target=_make_thumb, args=(f,), daemon=True).start()
+    return jsonify({
+        "event_name": config.cfg.get("event_name", "Fotobox"),
+        "count": len(out),
+        "photos": out,
+    })
+
+
+@app.route("/api/delete/<filename>", methods=["POST"])
+def api_delete(filename: str):
+    pin = request.form.get("pin", "").strip()
+    if pin != config.cfg.get("admin_pin", "1234"):
+        return jsonify(ok=False, error="Falscher PIN"), 403
+    path = _safe_path(filename)
+    if path is None:
+        return jsonify(ok=False, error="Datei nicht gefunden"), 404
+    try:
+        os.remove(path)
+    except Exception as exc:
+        logger.error("Foto löschen: %s", exc)
+        return jsonify(ok=False, error="Löschen fehlgeschlagen"), 500
+    thumb_path = os.path.join(_thumb_dir(), filename)
+    if os.path.exists(thumb_path):
+        try:
+            os.remove(thumb_path)
+        except OSError:
+            pass
+    logger.info("Foto gelöscht: %s", filename)
+    return jsonify(ok=True)
 
 
 @app.route("/delete/<filename>", methods=["POST"])

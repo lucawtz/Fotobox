@@ -286,6 +286,8 @@ def main():
         btns.close()
         camera.close()
         ui.close()
+        if cfg.get("hotspot_enabled"):
+            hotspot.stop()
         logger.info("Fotobox beendet")
 
 
