@@ -21,19 +21,18 @@ class Camera:
       gerufen, falls die Kamera zwischendurch eingeschlafen ist.
     """
 
-    DEFAULT_KEEPALIVE_S = 30
+    DEFAULT_KEEPALIVE_S = 25
+    DEFAULT_OUTPUT_MODE = "3"  # 1=TFT, 2=PC, 3=TFT+PC, 7=TFT+PC+MOBILE
 
-    # Output-Mode für die EOS-700D: TFT = HDMI/Display, PC = USB-Preview.
-    # Wir brauchen beides: TFT für die Capture-Card, PC für capture-preview.
-    OUTPUT_MODE = "3"  # = TFT + PC
-
-    def __init__(self, keepalive_s: int = DEFAULT_KEEPALIVE_S):
+    def __init__(self, keepalive_s: int = DEFAULT_KEEPALIVE_S,
+                 output_mode: str = DEFAULT_OUTPUT_MODE):
         self.available = False
         self.error_message = ""
         self._running = True
         self._cmd_lock = threading.Lock()
         self._capturing = False
         self._keepalive_s = max(5, int(keepalive_s))
+        self._output_mode = str(output_mode)
         self._init()
         threading.Thread(target=self._watchdog, daemon=True).start()
 
@@ -100,15 +99,15 @@ class Camera:
         logger.info("wake_liveview(with_preview=%s)", with_preview)
         ok = False
 
-        # Schritt 1: output auf TFT+PC stellen (Default ist Off!)
+        # Schritt 1: output (HDMI/Display einschalten — Default ist Off!)
         try:
-            r = self._gphoto(["--set-config", f"output={self.OUTPUT_MODE}"], timeout=5)
+            r = self._gphoto(["--set-config", f"output={self._output_mode}"], timeout=5)
             if r.returncode == 0:
-                logger.info("  → output=%s (TFT+PC) OK", self.OUTPUT_MODE)
+                logger.info("  → output=%s OK", self._output_mode)
             else:
                 err = r.stderr.strip()[:120] if r.stderr else "(kein Fehlertext)"
                 logger.info("  → output=%s fehlgeschlagen: %s",
-                            self.OUTPUT_MODE, err)
+                            self._output_mode, err)
         except Exception as exc:
             logger.debug("  → output Exception: %s", exc)
 
@@ -164,11 +163,11 @@ class Camera:
                 self.error_message = "Kamera getrennt – USB prüfen"
                 logger.warning("Watchdog: Kamera verloren")
             elif detected and self.available:
-                # Sicherer Keep-Alive: nur viewfinder=1 nachsetzen ohne
-                # Preview-Pull — sonst klappert der Spiegel alle 30s.
-                # Live-View startet trotzdem nicht zuverlässig — der Nutzer
-                # muss Q drücken (= wake_liveview mit Preview-Pull).
-                self.wake_liveview(with_preview=False)
+                # Keep-Alive MIT Preview-Pull: bei der EOS 700D fällt
+                # Live-View ohne den Pull nach 1-2s wieder zurück.
+                # Macht alle KEEPALIVE_S einen kurzen Spiegelhub-Klick,
+                # dafür bleibt das HDMI-Signal kontinuierlich aktiv.
+                self.wake_liveview(with_preview=True)
 
     # ── Capture ────────────────────────────────────────────────────────────────
 

@@ -31,7 +31,8 @@ _DEFAULTS: dict = {
     "overlay_button_collage": [1475, 840, 385, 110],
     "disk_warn_mb": 500,
     "thumbnail_max_age_days": 30,
-    "camera_keepalive_s": 8,
+    "camera_keepalive_s": 25,
+    "camera_output_mode": "3",
 }
 
 

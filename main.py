@@ -107,7 +107,10 @@ def main():
     logger.info("Galerie: %s", cfg["gallery_url"])
 
     # Kamera (Watchdog im Hintergrund)
-    camera = Camera(keepalive_s=cfg.get("camera_keepalive_s", 8))
+    camera = Camera(
+        keepalive_s=cfg.get("camera_keepalive_s", 25),
+        output_mode=str(cfg.get("camera_output_mode", "3")),
+    )
 
     # Buttons (GPIO + Tastatur-Fallback)
     pins = cfg.get("gpio_pins", {})
