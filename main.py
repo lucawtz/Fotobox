@@ -167,7 +167,9 @@ def main():
     elif args.no_hotspot:
         logger.info("Hotspot per --no-hotspot übersprungen — Heim-WLAN bleibt aktiv")
 
-    # Galerie-Server (Daemon-Thread)
+    # Galerie-Server: Preflight synchron (Port-Bind-Check + ggf. Fallback)
+    # damit der QR-Code in der UI die korrekte Port-Info bekommt.
+    gallery_server.preflight()
     threading.Thread(target=gallery_server.run, daemon=True).start()
     logger.info("Galerie: %s", cfg["gallery_url"])
 

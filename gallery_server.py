@@ -871,6 +871,54 @@ def _prewarm_thumbnails():
 _running = True
 
 
+def _can_bind(host: str, port: int) -> bool:
+    """Probe-Bind: prüft ob (host, port) verfügbar ist OHNE den Server
+    zu starten. Wirft den eigentlichen Bind-Versuch von waitress zuvor
+    ab, damit wir eine klare Fehlermeldung loggen können statt eines
+    stummen Thread-Crashs."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind((host, port))
+        return True
+    except (PermissionError, OSError):
+        return False
+    finally:
+        s.close()
+
+
+def preflight() -> int:
+    """Prüft synchron ob der konfigurierte Port gebunden werden kann.
+
+    Muss VOR run() (im Thread) und VOR der QR-Code-Erstellung in der UI
+    laufen, damit gallery_url konsistent ist falls auf einen anderen Port
+    zurückgefallen werden muss.
+
+    Auf <1024 braucht's setcap auf der venv-Python (install.sh richtet
+    das ein). Fehlt der setcap, fallen wir auf 5000 zurück und passen
+    config.cfg["gallery_port"]+["gallery_url"] entsprechend an, sonst
+    crasht waitress später stumm im Thread und der Service ist tot ohne
+    Hinweis im Log.
+
+    Rückgabe: der tatsächlich nutzbare Port.
+    """
+    host = "0.0.0.0" if config.cfg.get("hotspot_enabled") else "127.0.0.1"
+    port = config.cfg["gallery_port"]
+    if _can_bind(host, port):
+        return port
+    fallback = 5000
+    logger.error(
+        "Galerie: Port %d kann nicht gebunden werden (setcap auf "
+        "venv-Python fehlt? './install.sh' erneut laufen lassen). "
+        "Fallback auf Port %d — Captive-Portal funktioniert in diesem "
+        "Modus NICHT.", port, fallback)
+    config.cfg["gallery_port"] = fallback
+    config.cfg["gallery_url"] = config.build_gallery_url(
+        config.cfg.get("hotspot_ip", "192.168.4.1"), fallback)
+    return fallback
+
+
 def run(host: Optional[str] = None, port: Optional[int] = None):
     """Startet den Galerie-Server.
 
@@ -905,6 +953,9 @@ def run(host: Optional[str] = None, port: Optional[int] = None):
     except ImportError:
         logger.warning("waitress nicht installiert — fallback auf Flask Dev-Server")
         app.run(host=host, port=port, threaded=True, use_reloader=False)
+    except (PermissionError, OSError) as exc:
+        # Sollte nach _can_bind nicht mehr passieren — nur als Sicherheitsnetz.
+        logger.error("Galerie-Server-Bind unerwartet gescheitert: %s", exc)
 
 
 if __name__ == "__main__":
