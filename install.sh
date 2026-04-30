@@ -22,13 +22,13 @@ sudo apt-get install -y \
     network-manager \
     python3-pip \
     python3-venv \
-    libatlas-base-dev \
     libjpeg-dev \
-    libopencv-dev \
     cups \
     cups-bsd \
     nodejs \
     npm
+# libatlas-base-dev und libopencv-dev sind auf Bookworm/Trixie nicht mehr
+# nötig — opencv-python kommt als Binary-Wheel mit allen Libs.
 
 # 2. Verzeichnisstruktur
 echo "→ Verzeichnisstruktur anlegen..."
