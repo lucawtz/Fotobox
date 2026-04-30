@@ -106,7 +106,10 @@ def spa_assets(fname: str):
     full = os.path.normpath(os.path.join(SPA_DIST, "assets", fname))
     if not full.startswith(os.path.abspath(SPA_DIST)) or not os.path.isfile(full):
         abort(404)
-    return send_file(full)
+    # Vite-Bundles haben Hash im Dateinamen → 1 Tag Cache ist sicher
+    response = send_file(full)
+    response.headers["Cache-Control"] = "public, max-age=86400, immutable"
+    return response
 
 
 @app.route("/img/<filename>")
@@ -114,7 +117,9 @@ def img(filename):
     path = _safe_path(filename)
     if path is None:
         abort(404)
-    return send_file(path)
+    response = send_file(path)
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    return response
 
 
 @app.route("/thumb/<filename>")
@@ -122,7 +127,9 @@ def thumb(filename):
     t = _make_thumb(filename)
     if t is None:
         abort(404)
-    return send_file(t)
+    response = send_file(t)
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    return response
 
 
 @app.route("/download/<filename>")
@@ -354,7 +361,29 @@ def api_admin_reset():
 
 # ── Server starten ─────────────────────────────────────────────────────────────
 
+def _prewarm_thumbnails():
+    """Generiert Thumbnails für alle existierenden Fotos im Hintergrund.
+    Sonst stallt der erste Galerie-Aufruf wenn 50+ Bilder gleichzeitig
+    durch PIL gejagt werden."""
+    files = _photo_list()
+    if not files:
+        return
+    logger.info("Thumbnail-Prewarm: %d Bilder werden vorab generiert", len(files))
+    for f in files:
+        if not _running:
+            return
+        try:
+            _make_thumb(f)
+        except Exception:
+            pass
+    logger.info("Thumbnail-Prewarm fertig")
+
+
+_running = True
+
+
 def run(host: str = "0.0.0.0", port: int = None):
+    global _running
     port = port or config.cfg["gallery_port"]
 
     log_dir = os.path.join(config.BASE_DIR, "logs")
@@ -363,8 +392,21 @@ def run(host: str = "0.0.0.0", port: int = None):
     fh.setLevel(logging.INFO)
     logging.getLogger("werkzeug").addHandler(fh)
 
+    # Thumbnails parallel zum Server-Start vorab generieren
+    threading.Thread(target=_prewarm_thumbnails, daemon=True).start()
+
     logger.info("Galerie: http://%s:%d", host, port)
-    app.run(host=host, port=port, threaded=True, use_reloader=False)
+
+    # Waitress (Production-WSGI) — deutlich schneller als Flasks Dev-Server.
+    # Fallback auf Flask wenn waitress nicht installiert ist.
+    try:
+        from waitress import serve
+        serve(app, host=host, port=port, threads=8,
+              ident="Fotobox-Gallery",
+              channel_timeout=120)
+    except ImportError:
+        logger.warning("waitress nicht installiert — fallback auf Flask Dev-Server")
+        app.run(host=host, port=port, threaded=True, use_reloader=False)
 
 
 if __name__ == "__main__":

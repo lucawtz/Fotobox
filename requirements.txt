@@ -2,5 +2,6 @@ gpiozero
 pygame
 opencv-python
 flask
+waitress
 qrcode[pil]
 pillow
