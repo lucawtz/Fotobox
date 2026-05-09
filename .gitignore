@@ -17,3 +17,6 @@ frontend/vite.config.js
 
 # Root-npm (dev-orchestration via concurrently)
 node_modules/
+
+# Generierte Script-Vorschaubilder
+scripts/preview_*.png
