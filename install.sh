@@ -143,6 +143,18 @@ sudo visudo -cf /etc/sudoers.d/fotobox-captive >/dev/null || {
     sudo rm -f /etc/sudoers.d/fotobox-captive
 }
 
+# 7d. Polkit-Regel: Service-User darf NetworkManager-Connections verwalten
+# (nmcli connection add/delete/up/down für Hotspot ohne sudo)
+echo "→ Polkit-Regel für NetworkManager einrichten..."
+sudo tee /etc/polkit-1/rules.d/50-fotobox-nm.rules > /dev/null <<EOF
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 &&
+        subject.user === "$INSTALL_USER") {
+        return polkit.Result.YES;
+    }
+});
+EOF
+
 # 8. Drucker-Gruppe
 sudo usermod -aG lpadmin "$INSTALL_USER" 2>/dev/null || true
 
