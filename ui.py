@@ -222,11 +222,10 @@ class UI:
             if self._logo_surf is not None else None
         )
 
-        # QR-Codes — Galerie als grosse Card, Instagram/Termine als Mini-QRs
-        # darunter (Kiosk-tauglich, weil Gäste mit dem Smartphone scannen).
+        # Galerie-QR als grosse Card. Instagram/Booking sind nur Icon+Text
+        # (siehe _draw_social_links) — drei QR-Codes in der Sidebar wirken
+        # zu überladen.
         self._qr_surf = self._make_qr(cfg.get("gallery_url", ""), size=160)
-        self._instagram_qr = self._make_mini_qr(cfg.get("instagram_url", ""))
-        self._booking_qr   = self._make_mini_qr(cfg.get("booking_url", ""))
 
         # Live-Reload-Tracking — gallery_server.py teilt config.cfg mit
         # dieser Instanz (siehe main.py: gallery_server.run im Thread).
@@ -236,8 +235,6 @@ class UI:
         self._logo_path_seen    = cfg.get("logo_path", "")
         self._logo_mtime        = self._mtime(self._logo_path_seen)
         self._qr_url_seen       = cfg.get("gallery_url", "")
-        self._insta_url_seen    = cfg.get("instagram_url", "")
-        self._booking_url_seen  = cfg.get("booking_url", "")
         self._theme_seen        = dict(cfg.get("theme") or {})
         self._last_reload_check = 0.0
 
@@ -332,20 +329,6 @@ class UI:
             logger.info("Live-Reload: gallery_url geändert (%s)", url)
             self._qr_surf     = self._make_qr(url, size=160)
             self._qr_url_seen = url
-
-        # Mini-QRs (Instagram + Termine) — Owner-Settings, die normalerweise
-        # nur per config.json-Edit + Restart geändert werden, aber die
-        # Reload-Logik ist trivial dazu zu nehmen.
-        insta_now = self._cfg.get("instagram_url", "")
-        if insta_now != self._insta_url_seen:
-            logger.info("Live-Reload: instagram_url geändert")
-            self._instagram_qr   = self._make_mini_qr(insta_now)
-            self._insta_url_seen = insta_now
-        booking_now = self._cfg.get("booking_url", "")
-        if booking_now != self._booking_url_seen:
-            logger.info("Live-Reload: booking_url geändert")
-            self._booking_qr       = self._make_mini_qr(booking_now)
-            self._booking_url_seen = booking_now
 
     # ── Homescreen ─────────────────────────────────────────────────────────────
 
@@ -1149,7 +1132,7 @@ class UI:
         return (H - margin_bottom - box_h, box_h)
 
     def _qr_group_height(self) -> int:
-        """Gesamthöhe der QR-Group: Card + Caption + (optional) Mini-QR-Reihen."""
+        """Gesamthöhe der QR-Group: Card + Caption + (optional) Social-Reihen."""
         QR_SIZE = 160
         PAD     = 14
         card_h  = QR_SIZE + PAD * 2
@@ -1160,8 +1143,8 @@ class UI:
             social_rows += 1
         if (self._cfg.get("booking_url") or "").strip():
             social_rows += 1
-        # Pro Reihe: Mini-QR (74 inkl. weißem Rand) + 10px Gap.
-        social_h = (16 + social_rows * (74 + 10)) if social_rows else 0
+        # Pro Reihe: 32 px (icon_size 22 + Padding/Gap), siehe _draw_social_links.
+        social_h = (16 + social_rows * 32) if social_rows else 0
         return card_h + caption_h + social_h
 
     def _sidebar_qr_y(self) -> int:
@@ -1204,53 +1187,42 @@ class UI:
         self._draw_social_links(cx, hint_y + hint.get_height() + 16)
 
     def _draw_social_links(self, cx: int, y: int):
-        """Instagram + Termine als Mini-QR-Reihen unter dem Hauptpfeil.
-        Da die Box keinen Touchscreen hat, sind echte QR-Codes der einzige
-        sinnvolle Weg, einen Link nach draussen zu kommunizieren — Gäste
-        scannen mit dem Handy und der Link öffnet sich dort.
-        Werden nur gezeigt wenn die URL in config.json gesetzt ist.
+        """Instagram-Handle und Termine-Buchen unter dem QR-Code.
+
+        Bewusst nur Icon + Text statt eigener Mini-QR-Codes: drei QR-Codes
+        in der schmalen Sidebar wirken überladen. Der grosse Galerie-QR
+        bleibt der einzige scannbare — Insta/Booking sind Info-Links, die
+        Gäste manuell suchen können.
         """
         rows = []
         insta = (self._cfg.get("instagram_url") or "").strip()
-        if insta and self._instagram_qr is not None:
-            rows.append((self._instagram_qr, "Instagram",
-                         self._instagram_handle(insta)))
+        if insta:
+            rows.append(("instagram", self._instagram_handle(insta)))
         booking = (self._cfg.get("booking_url") or "").strip()
-        if booking and self._booking_qr is not None:
-            rows.append((self._booking_qr, "Termine", "buchen"))
+        if booking:
+            rows.append(("calendar", "Termine buchen"))
         if not rows:
             return
 
-        qr_size = 70
-        qr_pad  = 2
-        gap_x   = 16
-        row_h   = qr_size + qr_pad * 2 + 10
+        icon_size  = 22
+        row_height = 32
 
-        for i, (qr_surf, title, sub) in enumerate(rows):
-            ry = y + i * row_h
-            title_lbl = self._f_sub.render(title, True, self._theme["sidebar_text"])
-            sub_lbl   = self._f_label.render(sub, True, self._theme["sidebar_dim"])
+        for i, (icon_type, label) in enumerate(rows):
+            ry  = y + i * row_height
+            lbl = self._f_sub.render(label, True, self._theme["sidebar_text"])
+            total_w = icon_size + 10 + lbl.get_width()
+            ix = cx - total_w // 2
+            iy = ry + (row_height - icon_size) // 2
 
-            text_w  = max(title_lbl.get_width(), sub_lbl.get_width())
-            total_w = (qr_size + qr_pad * 2) + gap_x + text_w
-            x_start = cx - total_w // 2
+            if icon_type == "instagram":
+                self._draw_instagram_icon(ix, iy, icon_size)
+            else:
+                self._draw_calendar_icon(ix, iy, icon_size)
 
-            # Weißer Container hinter dem QR — beim dunklen Sidebar-Hintergrund
-            # ist das nötig, damit Smartphone-Scanner den QR überhaupt finden.
-            bg_rect = pygame.Rect(x_start, ry,
-                                  qr_size + qr_pad * 2,
-                                  qr_size + qr_pad * 2)
-            pygame.draw.rect(self._screen, C_WHITE, bg_rect, border_radius=6)
-            self._screen.blit(qr_surf, (x_start + qr_pad, ry + qr_pad))
-
-            # Titel + Subtitle rechts vom QR, vertikal mittig zum QR.
-            text_x  = x_start + qr_size + qr_pad * 2 + gap_x
-            block_h = title_lbl.get_height() + 2 + sub_lbl.get_height()
-            tx_y    = ry + (qr_size + qr_pad * 2 - block_h) // 2
-            self._screen.blit(title_lbl, (text_x, tx_y))
             self._screen.blit(
-                sub_lbl,
-                (text_x, tx_y + title_lbl.get_height() + 2),
+                lbl,
+                (ix + icon_size + 10,
+                 ry + (row_height - lbl.get_height()) // 2),
             )
 
     def _draw_instagram_icon(self, x: int, y: int, size: int):
@@ -1419,16 +1391,6 @@ class UI:
         except Exception as exc:
             logger.warning("QR-Code-Fehler: %s", exc)
         return None
-
-    @staticmethod
-    def _make_mini_qr(url: str, size: int = 70) -> Optional[pygame.Surface]:
-        """Wie _make_qr, aber leise bei leerer URL — sonst spammt jede
-        nicht-konfigurierte Owner-URL (Insta, Termine) das Log voll.
-        """
-        url = (url or "").strip()
-        if not url:
-            return None
-        return UI._make_qr(url, size=size)
 
     @staticmethod
     def _scale_to_fill(surf: pygame.Surface, w: int, h: int) -> pygame.Surface:
