@@ -43,7 +43,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { to: "/admin",             label: "Übersicht", icon: <DashboardRoundedIcon /> },
   { to: "/admin/event",       label: "Event",     icon: <EventRoundedIcon />     },
-  { to: "/admin/branding",    label: "Logo",      icon: <ImageRoundedIcon />     },
+  { to: "/admin/branding",    label: "Design",    icon: <ImageRoundedIcon />     },
   { to: "/admin/wifi",        label: "WLAN",      icon: <WifiRoundedIcon />     },
   { to: "/admin/maintenance", label: "Wartung",   icon: <BuildRoundedIcon />,    adminOnly: true },
 ];

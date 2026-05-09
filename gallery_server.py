@@ -45,7 +45,7 @@ def _load_or_create_secret_key() -> bytes:
         return secrets.token_bytes(48)
 
 
-app = Flask(__name__, template_folder=os.path.join(config.BASE_DIR, "templates"))
+app = Flask(__name__)
 app.secret_key = _load_or_create_secret_key()
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -717,10 +717,12 @@ def api_admin_config():
         # selbst hochstufen.
         out = {
             "event_name":         config.cfg.get("event_name", "Fotobox"),
+            "subtitle":           config.cfg.get("subtitle", ""),
             "countdown_duration": config.cfg.get("countdown_duration", 3),
             "has_logo":           os.path.isfile(config.cfg.get("logo_path", "")),
             "wifi_ssid":          config.cfg.get("wifi_ssid", ""),
             "wifi_password":      config.cfg.get("wifi_password", ""),
+            "theme":              dict(config.cfg.get("theme") or {}),
             "role":               role,
         }
         if is_admin:
@@ -732,7 +734,7 @@ def api_admin_config():
 
     data = request.get_json(silent=True) or request.form
 
-    # Beide Rollen: event_name, countdown, WLAN
+    # Beide Rollen: event_name, subtitle, countdown, WLAN, theme
     try:
         countdown = int(data.get("countdown_duration",
                                  config.cfg["countdown_duration"]))
@@ -742,10 +744,33 @@ def api_admin_config():
 
     config.cfg.update({
         "event_name":         (data.get("event_name") or config.cfg["event_name"]).strip(),
+        "subtitle":           str(data.get("subtitle", config.cfg.get("subtitle", ""))).strip()[:80],
         "countdown_duration": countdown,
         "wifi_ssid":          (data.get("wifi_ssid")  or config.cfg["wifi_ssid"]).strip(),
         "wifi_password":      data.get("wifi_password", config.cfg["wifi_password"]) or "",
     })
+
+    # Theme: Hex-Strings + panel_alpha. Ungültige Werte werden ignoriert,
+    # damit ein kaputter Color-Picker das Theme nicht in Stücke schießt.
+    new_theme = data.get("theme")
+    if isinstance(new_theme, dict):
+        cleaned: dict = {}
+        for k, v in new_theme.items():
+            if k == "panel_alpha":
+                try:
+                    cleaned[k] = max(0, min(255, int(v)))
+                except (ValueError, TypeError):
+                    pass
+            elif isinstance(v, str) and len(v) == 7 and v.startswith("#"):
+                try:
+                    int(v[1:], 16)
+                    cleaned[k] = v.upper()
+                except ValueError:
+                    pass
+        if cleaned:
+            merged = dict(config.cfg.get("theme") or {})
+            merged.update(cleaned)
+            config.cfg["theme"] = merged
 
     # PIN-Verwaltung bleibt admin-only — vom Host-Request still ignoriert.
     if is_admin:

@@ -178,11 +178,11 @@ fotobox/
 ├── collage.py           # 2×2-Collage-Generator
 ├── disk_monitor.py      # Speicherüberwachung
 ├── hotspot.py           # WLAN-Hotspot (nmcli)
-├── Layout/              # Overlay-Bilder, Logo
+├── Layout/              # Logo
 ├── Picture_Box/         # Gespeicherte Fotos
 ├── thumbnails/          # Thumbnail-Cache
 ├── logs/                # Log-Dateien
-├── templates/           # HTML-Templates (Galerie, Admin)
+├── frontend/            # React-SPA (Galerie + Admin)
 ├── fotobox.service      # systemd-Unit
 ├── install.sh           # Installations-Skript
 └── requirements.txt     # Python-Abhängigkeiten

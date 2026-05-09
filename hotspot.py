@@ -126,11 +126,19 @@ def _delete_existing() -> None:
 
 def _build_connection(ifname: str, ssid: str, password: str,
                       hotspot_ip: str) -> bool:
-    """Erstellt die fotobox-hotspot-Connection mit expliziten Settings."""
+    """Erstellt die fotobox-hotspot-Connection mit expliziten Settings.
+
+    WICHTIG: alle Settings in einem einzigen 'connection add' setzen, nicht
+    add+modify aufteilen. NetworkManager (zumindest <=1.42 auf Bookworm)
+    legt bei 'ipv4.method=shared' das Subnetz beim ersten Aktivieren fest
+    — kommt 'ipv4.addresses' erst per späterem modify, ignoriert NM den
+    Wert und nutzt 10.42.0.1/24 (interner Default). Phone landet dann im
+    10.42-Subnet und kann den im QR-Code geworfenen 192.168.4.1 nie
+    erreichen.
+    """
     # Aus 192.168.4.1 wird 192.168.4.1/24 für den ipv4.addresses-Wert
     ipv4_addr = f"{hotspot_ip}/24"
 
-    # Schritt 1: Connection anlegen
     r = _nmcli([
         "connection", "add",
         "type", "wifi",
@@ -138,15 +146,6 @@ def _build_connection(ifname: str, ssid: str, password: str,
         "con-name", CONN_NAME,
         "autoconnect", "no",
         "ssid", ssid,
-    ], timeout=10)
-    if r is None or r.returncode != 0:
-        logger.warning("Hotspot-Add fehlgeschlagen: %s",
-                       (r.stderr if r else "no result").strip()[:200])
-        return False
-
-    # Schritt 2: AP-Mode + 2.4 GHz + Channel 6 + WPA2 + DHCP-Share
-    r = _nmcli([
-        "connection", "modify", CONN_NAME,
         "802-11-wireless.mode", "ap",
         "802-11-wireless.band", "bg",
         "802-11-wireless.channel", "6",
@@ -158,9 +157,9 @@ def _build_connection(ifname: str, ssid: str, password: str,
         "wifi-sec.pairwise", "ccmp",
         "wifi-sec.group", "ccmp",
         "wifi-sec.psk", password,
-    ], timeout=10)
+    ], timeout=15)
     if r is None or r.returncode != 0:
-        logger.warning("Hotspot-Modify fehlgeschlagen: %s",
+        logger.warning("Hotspot-Add fehlgeschlagen: %s",
                        (r.stderr if r else "no result").strip()[:200])
         return False
 
@@ -183,21 +182,27 @@ def _read_interface_ip(ifname: str, retries: int = 20,
     aufgeben.
     """
     import time
+    last_stdout = ""
     for _ in range(max(1, retries)):
         try:
             result = subprocess.run(
                 ["ip", "-4", "-o", "addr", "show", "dev", ifname],
                 capture_output=True, text=True, timeout=5,
             )
-        except Exception:
+        except Exception as exc:
+            logger.debug("ip-addr-Read auf %s fehlgeschlagen: %s", ifname, exc)
             time.sleep(delay_s)
             continue
         if result.returncode == 0:
+            last_stdout = result.stdout
             # Output: "4: wlan1    inet 10.42.0.1/24 brd 10.42.0.255 ..."
             for token in result.stdout.split():
                 if "/" in token and token.startswith(("10.", "192.168.", "172.")):
                     return token.split("/")[0]
         time.sleep(delay_s)
+    logger.warning(
+        "Hotspot: Interface %s hat nach %.1fs keine IPv4 — letzte 'ip addr' "
+        "Ausgabe: %r", ifname, retries * delay_s, last_stdout.strip()[:200])
     return None
 
 

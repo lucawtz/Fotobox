@@ -13,6 +13,7 @@ import {
   Skeleton,
 } from "@mui/material";
 import EventRoundedIcon from "@mui/icons-material/EventRounded";
+import SubtitlesRoundedIcon from "@mui/icons-material/SubtitlesRounded";
 import TimerRoundedIcon from "@mui/icons-material/TimerRounded";
 import LockRoundedIcon from "@mui/icons-material/LockRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
@@ -26,6 +27,7 @@ export default function AdminEvent() {
   const isAdmin = role === "admin";
   const [cfg, setCfg] = useState<AdminConfig | null>(null);
   const [eventName, setEventName] = useState("");
+  const [subtitle,  setSubtitle]  = useState("");
   const [countdown, setCountdown] = useState(3);
   const [adminPin, setAdminPin] = useState("");
   const [hostPin, setHostPin]   = useState("");
@@ -38,6 +40,7 @@ export default function AdminEvent() {
     api.admin.config.get().then((c) => {
       setCfg(c);
       setEventName(c.event_name);
+      setSubtitle(c.subtitle ?? "");
       setCountdown(c.countdown_duration);
       setAdminPin(c.admin_pin ?? "");
       setHostPin(c.host_pin ?? "");
@@ -49,6 +52,7 @@ export default function AdminEvent() {
     try {
       const payload: Partial<AdminConfig> = {
         event_name: eventName,
+        subtitle:   subtitle,
         countdown_duration: countdown,
       };
       if (isAdmin) {
@@ -66,6 +70,7 @@ export default function AdminEvent() {
 
   const dirty = !!cfg && (
     eventName !== cfg.event_name ||
+    subtitle  !== (cfg.subtitle ?? "") ||
     countdown !== cfg.countdown_duration ||
     (isAdmin && adminPin !== (cfg.admin_pin ?? "")) ||
     (isAdmin && hostPin  !== (cfg.host_pin  ?? ""))
@@ -98,6 +103,24 @@ export default function AdminEvent() {
               placeholder="z.B. Lisa & Tom Hochzeit"
               fullWidth
               inputProps={{ maxLength: 60 }}
+            />
+          ) : (
+            <Skeleton variant="rounded" height={56} />
+          )}
+        </SettingsCard>
+
+        <SettingsCard
+          icon={<SubtitlesRoundedIcon />}
+          title="Untertitel"
+          description="Erscheint klein unter dem Event-Namen — z.B. das Datum oder ein Spruch."
+        >
+          {cfg ? (
+            <TextField
+              value={subtitle}
+              onChange={(e) => setSubtitle(e.target.value)}
+              placeholder="z.B. 30. April 2026"
+              fullWidth
+              inputProps={{ maxLength: 80 }}
             />
           ) : (
             <Skeleton variant="rounded" height={56} />
@@ -214,6 +237,7 @@ export default function AdminEvent() {
             onClick={() => {
               if (cfg) {
                 setEventName(cfg.event_name);
+                setSubtitle(cfg.subtitle ?? "");
                 setCountdown(cfg.countdown_duration);
                 setAdminPin(cfg.admin_pin ?? "");
                 setHostPin(cfg.host_pin ?? "");

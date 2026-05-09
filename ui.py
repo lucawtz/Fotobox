@@ -28,13 +28,29 @@ C_BTN_HL = (180, 130, 60)
 
 # Layout-Konstanten — fest in Code. Mieter-Anpassungen laufen über
 # theme/branding/actions in config.json, das Layout bleibt fix.
-SIDEBAR_W    = 320
-SIDEBAR_PAD  = 20
-ACTION_X     = 1500
-ACTION_W     = 360
-ACTION_H     = 130
-ACTION_GAP   = 30
-LIVE_FRAME_W = 6
+SIDEBAR_W       = 320
+SIDEBAR_PAD     = 20
+LOGO_CIRCLE_R   = 80      # Radius des Cream-Kreises um das Logo.
+ACTION_X        = 1500
+ACTION_W        = 360
+ACTION_H        = 130
+ACTION_GAP      = 30
+LIVE_OUTER_W    = 12      # Aussenrahmen (braun) ums Live-View.
+LIVE_INNER_W    = 3       # Innerer Goldakzent.
+
+# Polaroid-Renderer
+POLAROID_PAD_TOP = 18
+POLAROID_PAD_LR  = 18
+POLAROID_PAD_BOT = 60
+POLAROID_PIN_R   = 9
+
+# Pastellfarbene Platzhalter für leere Polaroid-Slots — Hint, dass dort
+# Fotos erscheinen werden. Reihenfolge passt zum Mockup (taupe, hellblau, rosa).
+_PLACEHOLDER_COLORS = [
+    (201, 168, 138),
+    (157, 190, 210),
+    (212, 165, 181),
+]
 
 # Mapping: action.key (config) → pygame-Taste, damit der Button-Highlight
 # weiß welche Taste/GPIO ihn aktiviert. Halten parallel zu hardware.py.
@@ -64,7 +80,11 @@ class _LiveReader:
     neu zu öffnen — ohne dass die UI durchgängig 'kein Signal' anzeigt.
     """
 
-    _TARGET_FPS = 30
+    # Reader liest so schnell wie die Capture-Card liefert. cap.read() blockt
+    # ohnehin bis ein neuer Frame anliegt, und CAP_PROP_BUFFERSIZE=1 sorgt
+    # dafür, dass wir immer den frischesten Frame bekommen. Das Target ist
+    # nur eine Obergrenze für den Fall, dass die Card frei drehen würde.
+    _TARGET_FPS = 60
     _RECONNECT_INTERVAL_S = 3.0
     _MAX_CONSEC_READ_FAILS = 30
 
@@ -147,13 +167,15 @@ class UI:
         pygame.mouse.set_visible(False)
 
         # Fonts
-        self._f_big    = pygame.font.SysFont("sans-serif", 200, bold=True)
-        self._f_large  = pygame.font.SysFont("sans-serif", 110, bold=True)
-        self._f_medium = pygame.font.SysFont("sans-serif", 60,  bold=True)
-        self._f_normal = pygame.font.SysFont("sans-serif", 40,  bold=True)
-        self._f_small  = pygame.font.SysFont("sans-serif", 26)
-        self._f_event  = pygame.font.SysFont("sans-serif", 56,  bold=True)
-        self._f_sub    = pygame.font.SysFont("sans-serif", 24)
+        self._f_big      = pygame.font.SysFont("sans-serif", 200, bold=True)
+        self._f_large    = pygame.font.SysFont("sans-serif", 110, bold=True)
+        self._f_medium   = pygame.font.SysFont("sans-serif", 60,  bold=True)
+        self._f_normal   = pygame.font.SysFont("sans-serif", 40,  bold=True)
+        self._f_small    = pygame.font.SysFont("sans-serif", 26)
+        self._f_event    = pygame.font.SysFont("sans-serif", 36,  bold=True)
+        self._f_sub      = pygame.font.SysFont("sans-serif", 22)
+        self._f_initials = pygame.font.SysFont("sans-serif", 72,  bold=True)
+        self._f_label    = pygame.font.SysFont("sans-serif", 18,  bold=True)
 
         # Theme + Background-Gradient. _apply_theme baut self._bg neu —
         # läuft auch im Live-Reload, wenn der Mieter die Farben ändert.
@@ -271,13 +293,15 @@ class UI:
         self._check_config_reload()
         self._screen.blit(self._bg, (0, 0))
         self._draw_sidebar_bg()
+        self._draw_logo_sidebar()
+        self._draw_event_header()
+        self._draw_qr_card()
+        self._draw_wifi_box()
+        self._draw_live_frame_outer()
         self._draw_live()
         self._draw_live_frame()
         self._draw_polaroids()
         self._draw_action_buttons()
-        self._draw_logo_sidebar()
-        self._draw_event_header()
-        self._draw_qr_bottom_left()
         self._draw_status_bar(camera_ok, free_mb, photo_count)
         if not camera_ok:
             self._draw_error_banner(camera_msg or "Kamera nicht erkannt – USB prüfen")
@@ -309,7 +333,10 @@ class UI:
         scale  = min(w / fw, h / fh)
         nw, nh = int(fw * scale), int(fh * scale)
         frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
-        surf  = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+        # frombuffer ist 3-5x schneller als surfarray.make_surface(swapaxes),
+        # weil keine numpy-Achsen-Umordnung und keine Pixelformat-Konvertierung
+        # nötig ist — der RGB-Buffer aus cv2.resize wird direkt blittable.
+        surf = pygame.image.frombuffer(frame.tobytes(), (nw, nh), "RGB")
         self._screen.blit(surf, (x + (w - nw) // 2, y + (h - nh) // 2))
 
     def _draw_no_signal(self, x: int, y: int, w: int, h: int,
@@ -386,42 +413,48 @@ class UI:
                 for i, action in enumerate(actions)]
 
     def _draw_action_buttons(self):
-        """Zeichnet die Action-Buttons (Foto, Collage, …) programmatisch.
-        Idle: dunkles Panel mit Goldborder. Pressed: gold gefüllt + Glow.
+        """Zeichnet die Action-Buttons mit pro-Action Akzentfarbe. Foto-Style
+        ist 'filled' (Button gefüllt mit color, weisser Text), die anderen
+        sind Outline (dunkles Panel + farbiger Border + farbiger Text).
         """
-        keys = pygame.key.get_pressed()
-        accent     = self._theme["accent"]
-        accent_dim = self._theme["accent_dim"]
-        panel      = self._theme["panel_bg"]
-        text       = self._theme["text"]
+        keys  = pygame.key.get_pressed()
+        panel = self._theme["panel_bg"]
+        text  = self._theme["text"]
 
         for action, rect in self._action_rects():
             pg_key  = _ACTION_KEYS.get(action.get("key", ""))
             pressed = bool(pg_key and keys[pg_key])
+            color   = _hex_to_rgb(action.get("color", ""),
+                                  self._theme["accent"])
+            filled  = bool(action.get("filled", False))
 
             bg = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-            bg.fill((*accent, 235) if pressed else (*panel, 220))
+            if filled or pressed:
+                bg.fill((*color, 235))
+                label_color = text
+            else:
+                bg.fill((*panel, 230))
+                label_color = color
             self._screen.blit(bg, rect.topleft)
 
-            border = accent if pressed else accent_dim
-            pygame.draw.rect(self._screen, border, rect,
+            pygame.draw.rect(self._screen, color, rect,
                              width=3, border_radius=18)
 
             label = action.get("label", "Aktion")
-            color = panel if pressed else text
-            lbl = self._f_medium.render(label, True, color)
+            lbl = self._f_medium.render(label, True, label_color)
             self._screen.blit(lbl, lbl.get_rect(center=rect.center))
 
             if pressed:
-                self._draw_button_glow(rect)
+                self._draw_button_glow(rect, color)
 
-    def _draw_button_glow(self, rect: pygame.Rect):
+    def _draw_button_glow(self, rect: pygame.Rect, color=None):
+        if color is None:
+            color = self._theme["accent"]
         glow = pygame.Surface((rect.width + 40, rect.height + 40), pygame.SRCALPHA)
-        accent = self._theme["accent"]
         for i in range(8, 0, -1):
             alpha = 30 + (8 - i) * 10
             pygame.draw.rect(
-                glow, (*accent, alpha),
+                glow, (*color, alpha),
                 glow.get_rect().inflate(-i * 4, -i * 4),
                 width=4, border_radius=14,
             )
@@ -436,15 +469,30 @@ class UI:
         """
         t = cfg.get("theme") or {}
         self._theme = {
-            "bg_top":      _hex_to_rgb(t.get("bg_top",     "#2A1A0E"), C_DARK),
-            "bg_bottom":   _hex_to_rgb(t.get("bg_bottom",  "#0F0703"), C_BLACK),
-            "accent":      _hex_to_rgb(t.get("accent",     "#D4A86A"), C_GOLD),
-            "accent_dim":  _hex_to_rgb(t.get("accent_dim", "#9B7840"), C_DIM),
-            "text":        _hex_to_rgb(t.get("text",       "#FFFFFF"), C_WHITE),
-            "panel_bg":    _hex_to_rgb(t.get("panel_bg",   "#15090A"), C_BTN_BG),
-            "panel_alpha": int(t.get("panel_alpha", 200)),
+            "bg_top":         _hex_to_rgb(t.get("bg_top",         "#D5BB99"), (213, 187, 153)),
+            "bg_bottom":      _hex_to_rgb(t.get("bg_bottom",      "#B89A75"), (184, 154, 117)),
+            "sidebar_bg":     _hex_to_rgb(t.get("sidebar_bg",     "#3D2818"), (61,  40,  24)),
+            "sidebar_text":   _hex_to_rgb(t.get("sidebar_text",   "#FFFFFF"), C_WHITE),
+            "sidebar_dim":    _hex_to_rgb(t.get("sidebar_dim",    "#A09080"), (160, 144, 128)),
+            "logo_circle":    _hex_to_rgb(t.get("logo_circle",    "#F5EBD8"), (245, 235, 216)),
+            "logo_text":      _hex_to_rgb(t.get("logo_text",      "#A36B3F"), (163, 107, 63)),
+            "panel_bg":       _hex_to_rgb(t.get("panel_bg",       "#1F1812"), (31,  24,  18)),
+            "panel_border":   _hex_to_rgb(t.get("panel_border",   "#7A5A35"), (122, 90,  53)),
+            "polaroid_frame": _hex_to_rgb(t.get("polaroid_frame", "#FAEED9"), (250, 238, 217)),
+            "polaroid_pin":   _hex_to_rgb(t.get("polaroid_pin",   "#C24838"), (194, 72,  56)),
+            "live_bg":        _hex_to_rgb(t.get("live_bg",        "#1A140F"), (26,  20,  15)),
+            "live_outer":     _hex_to_rgb(t.get("live_outer",     "#5A3A1C"), (90,  58,  28)),
+            "live_inner":     _hex_to_rgb(t.get("live_inner",     "#C9A06A"), (201, 160, 106)),
+            "accent":         _hex_to_rgb(t.get("accent",         "#D4A86A"), C_GOLD),
+            "accent_dim":     _hex_to_rgb(t.get("accent_dim",     "#9B7840"), C_DIM),
+            "text":           _hex_to_rgb(t.get("text",           "#FFFFFF"), C_WHITE),
+            "panel_alpha":    int(t.get("panel_alpha", 255)),
         }
         self._bg = self._build_gradient_bg()
+        # Polaroid-Cache invalidieren — Frame-Farbe ist Theme-abhängig.
+        rot_cache = getattr(self, "_rot_cache", None)
+        if rot_cache is not None:
+            rot_cache.clear()
 
     def _build_gradient_bg(self) -> pygame.Surface:
         """Vertikaler Gradient bg_top → bg_bottom — ersetzt das frühere
@@ -464,60 +512,94 @@ class UI:
     # ── Sidebar / Header / Live-Frame ──────────────────────────────────────────
 
     def _draw_sidebar_bg(self):
-        """Halbtransparentes Sidebar-Panel mit Goldakzent rechts."""
-        panel  = self._theme["panel_bg"]
-        accent = self._theme["accent"]
-        alpha  = self._theme["panel_alpha"]
-        surf = pygame.Surface((SIDEBAR_W, H), pygame.SRCALPHA)
-        surf.fill((*panel, alpha))
-        pygame.draw.line(surf, accent, (SIDEBAR_W - 2, 0),
-                         (SIDEBAR_W - 2, H), 3)
-        self._screen.blit(surf, (0, 0))
+        """Vollflächige dunkle Sidebar — klarer Cut zum Hintergrund, kein Akzent."""
+        pygame.draw.rect(self._screen, self._theme["sidebar_bg"],
+                         (0, 0, SIDEBAR_W, H))
 
     def _draw_logo_sidebar(self):
-        """Logo oben in der Sidebar, mittig — wenn vorhanden."""
-        if self._logo_surf is None:
-            return
+        """Logo als kreisförmiger Cream-Container oben in der Sidebar.
+        Wenn ein Logo-Bild vorhanden ist, wird es im Kreis zentriert. Wenn
+        nicht, fallen wir auf Initialen aus dem Event-Namen zurück.
+        """
         cx = SIDEBAR_W // 2
-        x  = cx - self._logo_surf.get_width() // 2
-        self._screen.blit(self._logo_surf, (x, SIDEBAR_PAD + 10))
+        cy = SIDEBAR_PAD + LOGO_CIRCLE_R
+        circle_color = self._theme["logo_circle"]
+
+        # Cream-Kreis als Logo-Container.
+        pygame.draw.circle(self._screen, circle_color, (cx, cy), LOGO_CIRCLE_R)
+
+        if self._logo_surf is not None:
+            # Logo so skalieren, dass es in den Kreis passt (mit Padding).
+            target = LOGO_CIRCLE_R * 2 - 20
+            sw, sh = self._logo_surf.get_size()
+            scale = min(target / sw, target / sh, 1.0)
+            if scale < 1.0:
+                logo = pygame.transform.smoothscale(
+                    self._logo_surf, (int(sw * scale), int(sh * scale)))
+            else:
+                logo = self._logo_surf
+            self._screen.blit(logo, logo.get_rect(center=(cx, cy)))
+        else:
+            # Fallback: Initialen aus dem Event-Namen.
+            initials = self._event_initials(self._cfg.get("event_name", ""))
+            lbl = self._f_initials.render(initials, True, self._theme["logo_text"])
+            self._screen.blit(lbl, lbl.get_rect(center=(cx, cy)))
+
+    @staticmethod
+    def _event_initials(name: str) -> str:
+        """'Hochzeit Müller' → 'HM', 'Fotobox' → 'FB'. Maximal 2 Buchstaben."""
+        words = (name or "").strip().split()
+        if not words:
+            return "FB"
+        if len(words) == 1:
+            return words[0][:2].upper()
+        return (words[0][0] + words[1][0]).upper()
 
     def _draw_event_header(self):
-        """Event-Name + Subtitle in der Sidebar unter dem Logo."""
+        """Event-Name + Subtitle (z.B. Datum) in der Sidebar unter dem Logo."""
         cx = SIDEBAR_W // 2
-        if self._logo_surf is not None:
-            y = SIDEBAR_PAD + 10 + self._logo_surf.get_height() + 24
-        else:
-            y = SIDEBAR_PAD + 30
+        y  = SIDEBAR_PAD + LOGO_CIRCLE_R * 2 + 24
 
         event_name = (self._cfg.get("event_name") or "").strip()
         subtitle   = (self._cfg.get("subtitle")   or "").strip()
-        max_w      = SIDEBAR_W - 20
+        max_w      = SIDEBAR_W - 30
 
         for text, font, color in (
-            (event_name, self._f_event, self._theme["accent"]),
-            (subtitle,   self._f_sub,   self._theme["accent_dim"]),
+            (event_name, self._f_event, self._theme["sidebar_text"]),
+            (subtitle,   self._f_sub,   self._theme["sidebar_dim"]),
         ):
             if not text:
                 continue
             lbl = font.render(text, True, color)
-            # Auf Sidebar-Breite zuschneiden falls zu lang.
             if lbl.get_width() > max_w:
                 scale = max_w / lbl.get_width()
                 lbl = pygame.transform.smoothscale(
                     lbl, (int(lbl.get_width() * scale),
                           int(lbl.get_height() * scale)))
             self._screen.blit(lbl, lbl.get_rect(centerx=cx, top=y))
-            y += lbl.get_height() + 6
+            y += lbl.get_height() + 8
 
-    def _draw_live_frame(self):
-        """Goldener Rahmen um den Live-View — ersetzt den Rahmen der
-        früher im Overlay-PNG aufgemalt war.
+    def _draw_live_frame_outer(self):
+        """Brauner Aussenrahmen + dunkler Backing-Block. Wird VOR dem
+        Live-Bild gezeichnet, damit der Rahmen als Frame fungiert und
+        der Backing-Block bei 'kein Signal' den dunklen Bereich liefert.
         """
         x, y, w, h = self._cfg.get("live_view_rect", [440, 600, 1040, 450])
-        rect = pygame.Rect(x, y, w, h)
-        pygame.draw.rect(self._screen, self._theme["accent"],
-                         rect, width=LIVE_FRAME_W, border_radius=14)
+        outer = pygame.Rect(x - LIVE_OUTER_W, y - LIVE_OUTER_W,
+                            w + 2 * LIVE_OUTER_W, h + 2 * LIVE_OUTER_W)
+        pygame.draw.rect(self._screen, self._theme["live_outer"],
+                         outer, border_radius=14)
+        pygame.draw.rect(self._screen, self._theme["live_bg"],
+                         pygame.Rect(x, y, w, h), border_radius=6)
+
+    def _draw_live_frame(self):
+        """Innerer Goldakzent — NACH dem Live-Bild gezeichnet, sitzt als
+        dezenter Strich auf dem Bildrand.
+        """
+        x, y, w, h = self._cfg.get("live_view_rect", [440, 600, 1040, 450])
+        pygame.draw.rect(self._screen, self._theme["live_inner"],
+                         pygame.Rect(x, y, w, h),
+                         width=LIVE_INNER_W, border_radius=6)
 
     def _draw_status_bar(self, camera_ok: bool, free_mb: int, photo_count: int):
         bar = pygame.Surface((W, 28), pygame.SRCALPHA)
@@ -825,12 +907,16 @@ class UI:
         photos = list(self._gallery)
         for i, (cx, cy, angle) in enumerate(self._frames):
             if i < len(photos):
-                path  = photos[i]
-                photo = self._photo_cache.get(path)
-                alpha = self._photo_alpha(path)
+                path        = photos[i]
+                photo       = self._photo_cache.get(path)
+                alpha       = self._photo_alpha(path)
+                placeholder = None
             else:
-                path, photo, alpha = None, None, 255
-            self._draw_polaroid(cx, cy, angle, path, photo, alpha)
+                path        = None
+                photo       = None
+                alpha       = 255
+                placeholder = _PLACEHOLDER_COLORS[i % len(_PLACEHOLDER_COLORS)]
+            self._draw_polaroid(cx, cy, angle, path, photo, alpha, placeholder)
 
     def _photo_alpha(self, path: str) -> int:
         if path not in self._fade_start:
@@ -838,19 +924,66 @@ class UI:
         elapsed = pygame.time.get_ticks() - self._fade_start[path]
         return min(255, int(elapsed / self._FADE_MS * 255))
 
-    def _draw_polaroid(self, cx, cy, angle, path, photo, alpha):
-        if photo is None:
+    def _draw_polaroid(self, cx, cy, angle, path, photo, alpha,
+                       placeholder=None):
+        """Zeichnet ein Polaroid mit Cream-Frame, Pin oben und Schatten.
+        Wenn photo=None und placeholder gesetzt ist, wird der Foto-Bereich
+        mit einer Pastellfarbe gefüllt — Hint, dass dort später Fotos
+        erscheinen werden.
+        """
+        if photo is None and placeholder is None:
             return
-        rotated = self._rot_cache.get((path, angle))
+
+        cache_key = (path, angle) if photo is not None else (placeholder, angle)
+        rotated = self._rot_cache.get(cache_key)
         if rotated is None:
-            surf = pygame.Surface((self._PW, self._PH), pygame.SRCALPHA)
-            surf.blit(photo, (0, 0))
-            rotated = pygame.transform.rotate(surf, angle)
-            self._rot_cache[(path, angle)] = rotated
+            rotated = self._build_polaroid(photo, placeholder, angle)
+            self._rot_cache[cache_key] = rotated
+
+        # Schatten — separat rotieren, damit er zur Polaroid-Verkippung passt.
+        fw = self._PW + POLAROID_PAD_LR * 2
+        fh = self._PH + POLAROID_PAD_TOP + POLAROID_PAD_BOT
+        shadow = pygame.Surface((fw, fh), pygame.SRCALPHA)
+        pygame.draw.rect(shadow, (0, 0, 0, 90),
+                         shadow.get_rect(), border_radius=4)
+        shadow = pygame.transform.rotate(shadow, angle)
+        self._screen.blit(shadow,
+                          shadow.get_rect(center=(cx + 6, cy + 10)))
+
         if alpha < 255:
             rotated = rotated.copy()
             rotated.set_alpha(alpha)
         self._screen.blit(rotated, rotated.get_rect(center=(cx, cy)))
+
+    def _build_polaroid(self, photo, placeholder, angle):
+        """Baut ein einzelnes Polaroid: Cream-Frame, Foto/Platzhalter,
+        roter Pin oben — und rotiert es um angle Grad. Wird vom Aufrufer
+        gecached, also keine Optimierung nötig."""
+        fw = self._PW + POLAROID_PAD_LR * 2
+        fh = self._PH + POLAROID_PAD_TOP + POLAROID_PAD_BOT
+
+        frame = pygame.Surface((fw, fh), pygame.SRCALPHA)
+        pygame.draw.rect(frame, self._theme["polaroid_frame"],
+                         (0, 0, fw, fh), border_radius=2)
+
+        photo_rect = pygame.Rect(POLAROID_PAD_LR, POLAROID_PAD_TOP,
+                                 self._PW, self._PH)
+        if photo is not None:
+            frame.blit(photo, photo_rect.topleft)
+        else:
+            pygame.draw.rect(frame, placeholder, photo_rect)
+
+        # Pin oben — kleiner roter Kreis mit Schatten + Highlight.
+        pin_cx = fw // 2
+        pin_cy = POLAROID_PIN_R + 6
+        pygame.draw.circle(frame, (0, 0, 0, 100),
+                           (pin_cx + 1, pin_cy + 2), POLAROID_PIN_R)
+        pygame.draw.circle(frame, self._theme["polaroid_pin"],
+                           (pin_cx, pin_cy), POLAROID_PIN_R)
+        pygame.draw.circle(frame, (255, 255, 255, 140),
+                           (pin_cx - 3, pin_cy - 3), max(2, POLAROID_PIN_R // 3))
+
+        return pygame.transform.rotate(frame, angle)
 
     # ── Live-View ──────────────────────────────────────────────────────────────
 
@@ -869,7 +1002,7 @@ class UI:
         scale = min(W / fw, H / fh)
         nw, nh = int(fw * scale), int(fh * scale)
         frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
-        surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+        surf = pygame.image.frombuffer(frame.tobytes(), (nw, nh), "RGB")
         self._screen.blit(surf, ((W - nw) // 2, (H - nh) // 2))
 
     # ── QR-Code ────────────────────────────────────────────────────────────────
@@ -886,49 +1019,85 @@ class UI:
         self._screen.blit(bg, (x - PAD, y - PAD))
         self._screen.blit(self._qr_surf, (x, y))
 
-    def _draw_qr_bottom_left(self):
-        """QR zentriert in der Sidebar unter dem Logo."""
-        QR_SIZE = 160
-        PAD = 12
-        SIDEBAR_CENTER_X = 160  # Sidebar geht von x=0 bis x=320
-        x = SIDEBAR_CENTER_X - QR_SIZE // 2
-        y = 360  # Unter dem Logo
+    def _sidebar_content_y(self) -> int:
+        """y-Startposition unterhalb des Event-Headers — gemeinsamer Anker
+        für QR-Card und WLAN-Box, damit das Layout nicht statisch wird,
+        wenn der Subtitle leer ist.
+        """
+        y = SIDEBAR_PAD + LOGO_CIRCLE_R * 2 + 24
+        if (self._cfg.get("event_name") or "").strip():
+            y += self._f_event.get_height() + 8
+        if (self._cfg.get("subtitle") or "").strip():
+            y += self._f_sub.get_height() + 8
+        return y + 20
 
-        if self._qr_surf is None:
-            bg = pygame.Surface((QR_SIZE + PAD * 2, QR_SIZE + PAD * 2))
-            bg.fill((80, 30, 20))
-            bg.set_alpha(220)
-            self._screen.blit(bg, (x - PAD, y - PAD))
-            err = self._f_small.render("QR-Code fehlt", True, C_WHITE)
-            self._screen.blit(err, err.get_rect(center=(x + QR_SIZE // 2, y + QR_SIZE // 2 - 10)))
-            err2 = self._f_small.render("(qrcode-Paket?)", True, C_WHITE)
-            self._screen.blit(err2, err2.get_rect(center=(x + QR_SIZE // 2, y + QR_SIZE // 2 + 14)))
+    def _draw_qr_card(self):
+        """QR auf cremig-weißem Container in der Sidebar."""
+        cx = SIDEBAR_W // 2
+        QR_SIZE  = 160
+        PAD      = 14
+        card_w   = QR_SIZE + PAD * 2
+        card_h   = QR_SIZE + PAD * 2
+        y = self._sidebar_content_y()
+
+        # Cream-Container hinter dem QR.
+        card = pygame.Rect(cx - card_w // 2, y, card_w, card_h)
+        pygame.draw.rect(self._screen, self._theme["logo_circle"],
+                         card, border_radius=10)
+
+        if self._qr_surf is not None:
+            self._screen.blit(self._qr_surf,
+                              (card.x + PAD, card.y + PAD))
+        else:
+            err = self._f_small.render("QR fehlt", True, self._theme["panel_bg"])
+            self._screen.blit(err, err.get_rect(center=card.center))
+
+        hint = self._f_sub.render("Fotos auf's Handy", True,
+                                  self._theme["sidebar_text"])
+        self._screen.blit(hint, hint.get_rect(centerx=cx, top=card.bottom + 12))
+
+    def _draw_wifi_box(self):
+        """WLAN+Passwort als eigene Box mit Border-Akzent unten in der Sidebar."""
+        ssid = (self._cfg.get("wifi_ssid")     or "").strip()
+        pwd  = (self._cfg.get("wifi_password") or "").strip()
+        if not ssid and not pwd:
             return
 
-        QR = self._qr_surf.get_width()
-        bg = pygame.Surface((QR + PAD * 2, QR + PAD * 2))
-        bg.fill(C_WHITE)
-        bg.set_alpha(220)
-        self._screen.blit(bg, (x - PAD, y - PAD))
-        self._screen.blit(self._qr_surf, (x, y))
+        cx = SIDEBAR_W // 2
+        box_w = SIDEBAR_W - 40
+        # Bottom-up positionieren — direkt über der Status-Bar (28 px hoch).
+        margin_bottom = 56
+        # Box-Höhe abhängig davon ob beide Felder gesetzt sind.
+        line_h = self._f_normal.get_height()
+        label_h = self._f_label.get_height()
+        rows = (1 if ssid else 0) + (1 if pwd else 0)
+        box_h = 22 + rows * (label_h + 4 + line_h + 14)
 
-        cx = x + QR // 2
-        text_y = y + QR + PAD + 6
-        hint = self._f_small.render("Galerie scannen", True, C_WHITE)
-        self._screen.blit(hint, hint.get_rect(centerx=cx, top=text_y))
-        text_y += hint.get_height() + 8
+        x = (SIDEBAR_W - box_w) // 2
+        y = H - margin_bottom - box_h
+        box = pygame.Rect(x, y, box_w, box_h)
 
-        # WLAN-Daten direkt unter dem QR — falls jemand das Passwort nicht
-        # automatisch durch den QR-Code bekommt (oder am Eingang einfach
-        # nachschauen will). Nur anzeigen wenn konfiguriert.
-        ssid = (self._cfg.get("wifi_ssid") or "").strip()
-        pwd  = (self._cfg.get("wifi_password") or "").strip()
+        pygame.draw.rect(self._screen, self._theme["panel_bg"],
+                         box, border_radius=10)
+        pygame.draw.rect(self._screen, self._theme["panel_border"],
+                         box, width=2, border_radius=10)
+
+        ty = y + 14
         for label, value in (("WLAN", ssid), ("Passwort", pwd)):
             if not value:
                 continue
-            line = self._f_small.render(f"{label}: {value}", True, C_WHITE)
-            self._screen.blit(line, line.get_rect(centerx=cx, top=text_y))
-            text_y += line.get_height() + 2
+            lbl = self._f_label.render(label, True, self._theme["sidebar_dim"])
+            self._screen.blit(lbl, (x + 16, ty))
+            ty += lbl.get_height() + 2
+            val = self._f_normal.render(value, True, self._theme["sidebar_text"])
+            # Falls zu breit: skalieren.
+            if val.get_width() > box_w - 32:
+                scale = (box_w - 32) / val.get_width()
+                val = pygame.transform.smoothscale(
+                    val, (int(val.get_width() * scale),
+                          int(val.get_height() * scale)))
+            self._screen.blit(val, (x + 16, ty))
+            ty += val.get_height() + 12
 
     # ── Hilfsmethoden ─────────────────────────────────────────────────────────
 

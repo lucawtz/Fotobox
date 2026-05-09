@@ -9,23 +9,68 @@ import {
   CircularProgress,
 } from "@mui/material";
 import ImageRoundedIcon from "@mui/icons-material/ImageRounded";
+import PaletteRoundedIcon from "@mui/icons-material/PaletteRounded";
 import CloudUploadRoundedIcon from "@mui/icons-material/CloudUploadRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
-import { api } from "../../api";
+import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
+import { api, ThemeColors } from "../../api";
 import SettingsCard from "./SettingsCard";
 
+// Defaults müssen mit config.py / ui.py übereinstimmen — sonst sieht ein
+// frischer Mieter, der noch nichts gespeichert hat, andere Farben hier als
+// auf der Box. Wenn sich die Defaults dort ändern: hier nachziehen.
+const DEFAULT_THEME: Record<string, string> = {
+  bg_top:       "#D5BB99",
+  bg_bottom:    "#B89A75",
+  sidebar_bg:   "#3D2818",
+  accent:       "#D4A86A",
+  live_outer:   "#5A3A1C",
+  polaroid_pin: "#C24838",
+};
+
+const COLOR_FIELDS: { key: keyof typeof DEFAULT_THEME; label: string; hint: string }[] = [
+  { key: "bg_top",       label: "Hintergrund oben",  hint: "Heller Verlaufsstart" },
+  { key: "bg_bottom",    label: "Hintergrund unten", hint: "Dunkler Verlaufsende" },
+  { key: "sidebar_bg",   label: "Sidebar",            hint: "Linkes Panel" },
+  { key: "accent",       label: "Akzent",             hint: "Generischer Goldton" },
+  { key: "live_outer",   label: "Live-Rahmen",        hint: "Rahmen ums Live-Bild" },
+  { key: "polaroid_pin", label: "Polaroid-Pin",       hint: "Stecknadel oben" },
+];
+
+const normalizeHex = (raw: unknown, fallback: string): string => {
+  if (typeof raw !== "string") return fallback;
+  const v = raw.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toUpperCase();
+  return fallback;
+};
+
 export default function AdminBranding() {
+  // Logo-Section
   const [busy, setBusy] = useState(false);
   const [hasLogo, setHasLogo] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ severity: "success" | "error"; msg: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Theme-Section
+  const [theme, setTheme] = useState<Record<string, string>>(DEFAULT_THEME);
+  const [savedTheme, setSavedTheme] = useState<Record<string, string>>(DEFAULT_THEME);
+  const [themeBusy, setThemeBusy] = useState(false);
+
+  const [toast, setToast] = useState<{ severity: "success" | "error"; msg: string } | null>(null);
 
   useEffect(() => {
     api.admin.config.get().then((c) => {
       setHasLogo(c.has_logo);
       if (c.has_logo) setPreviewUrl(api.logoUrl());
+
+      const incoming: Record<string, string> = {};
+      const t = (c.theme as ThemeColors | undefined) ?? {};
+      for (const f of COLOR_FIELDS) {
+        incoming[f.key] = normalizeHex(t[f.key], DEFAULT_THEME[f.key]);
+      }
+      setTheme(incoming);
+      setSavedTheme(incoming);
     });
   }, []);
 
@@ -59,22 +104,39 @@ export default function AdminBranding() {
     if (file) upload(file);
   };
 
+  const themeDirty = COLOR_FIELDS.some((f) => theme[f.key] !== savedTheme[f.key]);
+
+  const saveTheme = async () => {
+    setThemeBusy(true);
+    try {
+      await api.admin.config.save({ theme: { ...theme } });
+      setSavedTheme({ ...theme });
+      setToast({ severity: "success", msg: "Farbschema gespeichert" });
+    } catch (e) {
+      setToast({ severity: "error", msg: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setThemeBusy(false);
+    }
+  };
+
+  const resetTheme = () => setTheme({ ...DEFAULT_THEME });
+
   return (
     <>
       <Stack spacing={3}>
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 500 }}>
-            Logo
+            Erscheinungsbild
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Eigenes Logo für Homescreen und Foto-Overlay
+            Logo und Farbschema des Homescreens
           </Typography>
         </Box>
 
         <SettingsCard
           icon={<ImageRoundedIcon />}
-          title="Logo-Datei"
-          description="PNG empfohlen, transparent. Wird automatisch eingebunden."
+          title="Logo"
+          description="PNG empfohlen, transparent. Erscheint im Cream-Kreis links oben."
         >
           <Box
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -161,6 +223,111 @@ export default function AdminBranding() {
               disabled={busy}
             >
               Datei auswählen
+            </Button>
+          </Box>
+        </SettingsCard>
+
+        <SettingsCard
+          icon={<PaletteRoundedIcon />}
+          title="Farbschema"
+          description="Farben für Hintergrund, Sidebar und Akzente. Änderungen sind nach 1 Sekunde live auf der Box."
+        >
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(3, 1fr)" },
+              gap: { xs: 1.5, sm: 2 },
+            }}
+          >
+            {COLOR_FIELDS.map((f) => (
+              <Box
+                key={f.key}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1.25,
+                  p: 1.25,
+                  borderRadius: 2,
+                  border: "1px solid",
+                  borderColor: "divider",
+                  bgcolor: "grey.50",
+                }}
+              >
+                <Box
+                  component="label"
+                  sx={{
+                    position: "relative",
+                    width: 44, height: 44,
+                    borderRadius: "50%",
+                    border: "2px solid",
+                    borderColor: "divider",
+                    overflow: "hidden",
+                    flexShrink: 0,
+                    cursor: "pointer",
+                    bgcolor: theme[f.key] ?? DEFAULT_THEME[f.key],
+                    "&:hover": { borderColor: "primary.main" },
+                  }}
+                >
+                  <input
+                    type="color"
+                    value={theme[f.key] ?? DEFAULT_THEME[f.key]}
+                    onChange={(e) =>
+                      setTheme((t) => ({ ...t, [f.key]: e.target.value.toUpperCase() }))
+                    }
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      opacity: 0,
+                      cursor: "pointer",
+                      width: "100%",
+                      height: "100%",
+                    }}
+                  />
+                </Box>
+                <Box sx={{ minWidth: 0, flex: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{ fontWeight: 600, lineHeight: 1.2 }}
+                    noWrap
+                  >
+                    {f.label}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: "block", lineHeight: 1.2 }}
+                    noWrap
+                  >
+                    {(theme[f.key] ?? DEFAULT_THEME[f.key]).toUpperCase()}
+                  </Typography>
+                </Box>
+              </Box>
+            ))}
+          </Box>
+
+          <Box
+            sx={{
+              mt: 2.5,
+              display: "flex",
+              justifyContent: { xs: "stretch", sm: "flex-end" },
+              gap: 1.5,
+            }}
+          >
+            <Button
+              startIcon={<RestartAltRoundedIcon />}
+              onClick={resetTheme}
+              color="inherit"
+              sx={{ flex: { xs: 1, sm: "0 0 auto" } }}
+            >
+              Standard
+            </Button>
+            <Button
+              variant="contained"
+              onClick={saveTheme}
+              disabled={!themeDirty || themeBusy}
+              sx={{ flex: { xs: 1, sm: "0 0 auto" } }}
+            >
+              {themeBusy ? "Speichere…" : "Speichern"}
             </Button>
           </Box>
         </SettingsCard>

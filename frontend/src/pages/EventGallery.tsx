@@ -17,19 +17,11 @@ import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import DownloadForOfflineRoundedIcon from "@mui/icons-material/DownloadForOfflineRounded";
 import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
-import { api, Photo } from "../api";
+import { api, Photo, formatDate } from "../api";
 import PhotoTile from "../components/PhotoTile";
 import ViewToggle, { useGalleryView } from "../components/ViewToggle";
 
 const POLL_MS = 8000;
-
-const formatDate = (iso: string): string => {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("de-DE", {
-    day: "numeric", month: "long", year: "numeric",
-  });
-};
 
 export default function EventGallery() {
   const { folder } = useParams<{ folder: string }>();

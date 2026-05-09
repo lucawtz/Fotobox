@@ -371,7 +371,10 @@ def main():
                 else:
                     ui.render_slideshow()
 
-            clock.tick(30)
+            # 60 fps für die UI-Schleife — damit der Live-View flüssig wirkt.
+            # Der teuerste Renderschritt (frombuffer + blit) liegt deutlich
+            # unter 16 ms auf einem Pi 4B, also ist 60 fps stabil erreichbar.
+            clock.tick(60)
 
     except Exception as exc:
         logger.error("Unerwarteter Fehler: %s", exc, exc_info=True)

@@ -32,30 +32,16 @@ export interface EventsResponse {
   photo_max_age_days: number;
 }
 
-/**
- * Lesbarer Hinweis "noch X Tage / Stunden / Minuten" bis ein Foto gelöscht wird.
- * mtime in Sekunden (Unix), maxAgeDays = 0 deaktiviert die Anzeige.
- */
-export function formatExpiry(mtime: number, maxAgeDays: number, nowMs = Date.now()): string {
-  if (!maxAgeDays || maxAgeDays <= 0) return "";
-  const expiresAtMs = mtime * 1000 + maxAgeDays * 86400 * 1000;
-  const remainingS = Math.floor((expiresAtMs - nowMs) / 1000);
-  if (remainingS <= 0)            return "wird gleich gelöscht";
-  if (remainingS < 60)            return `noch ${remainingS} Sekunde${remainingS === 1 ? "" : "n"}`;
-  if (remainingS < 3600) {
-    const m = Math.floor(remainingS / 60);
-    return `noch ${m} Minute${m === 1 ? "" : "n"}`;
-  }
-  if (remainingS < 86400) {
-    const h = Math.floor(remainingS / 3600);
-    return `noch ${h} Stunde${h === 1 ? "" : "n"}`;
-  }
-  const d = Math.floor(remainingS / 86400);
-  return `noch ${d} Tag${d === 1 ? "" : "e"}`;
-}
-
 export const photoKey = (p: Pick<Photo, "event" | "filename">) =>
   `${p.event}/${p.filename}`;
+
+export const formatDate = (iso: string): string => {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("de-DE", {
+    day: "numeric", month: "long", year: "numeric",
+  });
+};
 
 export interface DeleteResult {
   ok: boolean;
@@ -65,11 +51,15 @@ export interface DeleteResult {
 
 export type AdminRole = "admin" | "host";
 
+export type ThemeColors = Record<string, string | number>;
+
 export interface AdminConfig {
   event_name: string;
+  subtitle: string;
   countdown_duration: number;
   has_logo: boolean;
   role: AdminRole;
+  theme: ThemeColors;
   // Nur Admin sieht diese Felder — Gastgeber bekommt sie nicht vom Server.
   wifi_ssid?: string;
   wifi_password?: string;

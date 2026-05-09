@@ -96,15 +96,16 @@ class Camera:
             except Exception:
                 pass
 
-        # Beim Start nur output-Mode setzen (sonst kommt später kein HDMI),
-        # aber kein Preview-Pull — das würde der manuellen LV-Aktivierung
-        # in die Quere kommen.
-        self.wake_liveview(with_preview=False)
+        # Live-View direkt beim Start aktivieren (inkl. capture-preview-Pull,
+        # ohne den die EOS 700D nach dem Spiegelhub sofort wieder aussteigt).
+        # Damit zeigt die Fotobox sofort nach dem App-Start ein Live-Bild,
+        # ohne dass jemand erst den Q-Knopf oder den Display-Knopf drückt.
+        self.wake_liveview(with_preview=True)
 
         self.available = True
         self.error_message = ""
         _set_status(True, "")
-        logger.info("Kamera bereit (manuelle LV-Aktivierung)")
+        logger.info("Kamera bereit (Live-View aktiviert)")
 
     # ── Live-View Wake (ohne capture-preview!) ─────────────────────────────────
 

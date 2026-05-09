@@ -91,8 +91,25 @@ sudo chown "$INSTALL_USER":"$INSTALL_USER" /run/fotobox 2>/dev/null || true
 # 7. Privilegierte Ports — venv-Python darf Port 80 binden, damit
 # Gäste nur 'http://192.168.4.1' eingeben müssen statt ':5000'.
 # setcap wirkt nur für genau diese Python-Binary, kein System-Risiko.
+#
+# Real-Python hinter dem venv-Symlink berechtigen — setcap auf einem
+# Symlink wirkt nicht, der Kernel checkt nur die echte Binary.
 echo "→ venv-Python für Port 80 berechtigen..."
-sudo setcap 'cap_net_bind_service=+ep' "$PYTHON_BIN" || true
+PYTHON_REAL="$(readlink -f "$PYTHON_BIN")"
+if sudo setcap 'cap_net_bind_service=+ep' "$PYTHON_REAL"; then
+    # Verifizieren dass die Capability auch wirklich gesetzt ist
+    if sudo getcap "$PYTHON_REAL" 2>/dev/null | grep -q "cap_net_bind_service"; then
+        echo "  ✓ Port 80 ist jetzt für $PYTHON_REAL freigegeben"
+    else
+        echo "  ⚠  setcap meldete Erfolg, aber getcap zeigt keine Capability"
+        echo "     → Galerie wird auf Port 5000 ausweichen"
+        echo "     → iOS-Captive-Portal kann mit Non-Standard-Ports stolpern"
+    fi
+else
+    echo "  ⚠  setcap fehlgeschlagen — Filesystem unterstützt evtl. keine"
+    echo "     extended attributes (ungewöhnlich auf Bookworm)"
+    echo "     → Galerie startet auf Port 5000 statt 80"
+fi
 
 # 7b. Captive-Portal: dnsmasq alle DNS-Anfragen auf die Hotspot-IP
 # auflösen lassen. Damit kommen iOS/Android-Probe-URLs (apple.com,

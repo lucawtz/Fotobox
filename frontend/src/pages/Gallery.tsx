@@ -13,20 +13,11 @@ import {
 import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
 import FolderRoundedIcon from "@mui/icons-material/FolderRounded";
 import FiberManualRecordRoundedIcon from "@mui/icons-material/FiberManualRecordRounded";
-import { api, EventInfo } from "../api";
+import { api, EventInfo, formatDate } from "../api";
 import TopBar from "../components/TopBar";
 import ViewToggle, { useGalleryView } from "../components/ViewToggle";
 
 const POLL_MS = 8000;
-
-const formatDate = (iso: string): string => {
-  // "2026-04-30" → "30. April 2026"
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("de-DE", {
-    day: "numeric", month: "long", year: "numeric",
-  });
-};
 
 export default function Gallery() {
   const [items, setItems] = useState<EventInfo[]>([]);
