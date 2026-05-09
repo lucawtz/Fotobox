@@ -235,8 +235,15 @@ export default function AdminBranding() {
           <Box
             sx={{
               display: "grid",
-              gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(3, 1fr)" },
-              gap: { xs: 1.5, sm: 2 },
+              // Auf schmalen Screens 1 Spalte, damit lange Labels wie
+              // "Hintergrund unten" oder "Polaroid-Pin" nicht abgeschnitten
+              // werden. Ab sm 2 Spalten, ab md 3 Spalten.
+              gridTemplateColumns: {
+                xs: "1fr",
+                sm: "repeat(2, 1fr)",
+                md: "repeat(3, 1fr)",
+              },
+              gap: { xs: 1.25, sm: 2 },
             }}
           >
             {COLOR_FIELDS.map((f) => (
@@ -245,8 +252,9 @@ export default function AdminBranding() {
                 sx={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 1.25,
+                  gap: 1.5,
                   p: 1.25,
+                  minWidth: 0,
                   borderRadius: 2,
                   border: "1px solid",
                   borderColor: "divider",
@@ -284,19 +292,27 @@ export default function AdminBranding() {
                     }}
                   />
                 </Box>
-                <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Box sx={{ minWidth: 0, flex: 1, overflow: "hidden" }}>
                   <Typography
                     variant="body2"
-                    sx={{ fontWeight: 600, lineHeight: 1.2 }}
-                    noWrap
+                    sx={{
+                      fontWeight: 600,
+                      lineHeight: 1.2,
+                      // Lange Labels duerfen umbrechen statt abgeschnitten zu werden.
+                      whiteSpace: "normal",
+                      overflowWrap: "break-word",
+                    }}
                   >
                     {f.label}
                   </Typography>
                   <Typography
                     variant="caption"
                     color="text.secondary"
-                    sx={{ display: "block", lineHeight: 1.2 }}
-                    noWrap
+                    sx={{
+                      display: "block",
+                      lineHeight: 1.2,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
                   >
                     {(theme[f.key] ?? DEFAULT_THEME[f.key]).toUpperCase()}
                   </Typography>

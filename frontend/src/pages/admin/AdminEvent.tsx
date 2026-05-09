@@ -16,6 +16,8 @@ import EventRoundedIcon from "@mui/icons-material/EventRounded";
 import SubtitlesRoundedIcon from "@mui/icons-material/SubtitlesRounded";
 import TimerRoundedIcon from "@mui/icons-material/TimerRounded";
 import LockRoundedIcon from "@mui/icons-material/LockRounded";
+import InstagramIcon from "@mui/icons-material/Instagram";
+import EventAvailableRoundedIcon from "@mui/icons-material/EventAvailableRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
 import VisibilityOffRoundedIcon from "@mui/icons-material/VisibilityOffRounded";
 import { api, AdminConfig } from "../../api";
@@ -28,6 +30,8 @@ export default function AdminEvent() {
   const [cfg, setCfg] = useState<AdminConfig | null>(null);
   const [eventName, setEventName] = useState("");
   const [subtitle,  setSubtitle]  = useState("");
+  const [instagramUrl, setInstagramUrl] = useState("");
+  const [bookingUrl,   setBookingUrl]   = useState("");
   const [countdown, setCountdown] = useState(3);
   const [adminPin, setAdminPin] = useState("");
   const [hostPin, setHostPin]   = useState("");
@@ -41,6 +45,8 @@ export default function AdminEvent() {
       setCfg(c);
       setEventName(c.event_name);
       setSubtitle(c.subtitle ?? "");
+      setInstagramUrl(c.instagram_url ?? "");
+      setBookingUrl(c.booking_url ?? "");
       setCountdown(c.countdown_duration);
       setAdminPin(c.admin_pin ?? "");
       setHostPin(c.host_pin ?? "");
@@ -53,6 +59,8 @@ export default function AdminEvent() {
       const payload: Partial<AdminConfig> = {
         event_name: eventName,
         subtitle:   subtitle,
+        instagram_url: instagramUrl,
+        booking_url:   bookingUrl,
         countdown_duration: countdown,
       };
       if (isAdmin) {
@@ -71,6 +79,8 @@ export default function AdminEvent() {
   const dirty = !!cfg && (
     eventName !== cfg.event_name ||
     subtitle  !== (cfg.subtitle ?? "") ||
+    instagramUrl !== (cfg.instagram_url ?? "") ||
+    bookingUrl   !== (cfg.booking_url   ?? "") ||
     countdown !== cfg.countdown_duration ||
     (isAdmin && adminPin !== (cfg.admin_pin ?? "")) ||
     (isAdmin && hostPin  !== (cfg.host_pin  ?? ""))
@@ -121,6 +131,42 @@ export default function AdminEvent() {
               placeholder="z.B. 30. April 2026"
               fullWidth
               inputProps={{ maxLength: 80 }}
+            />
+          ) : (
+            <Skeleton variant="rounded" height={56} />
+          )}
+        </SettingsCard>
+
+        <SettingsCard
+          icon={<InstagramIcon />}
+          title="Instagram"
+          description="Wird unter dem QR-Code in der Sidebar als '@handle' angezeigt. Leer lassen, um die Zeile auszublenden."
+        >
+          {cfg ? (
+            <TextField
+              value={instagramUrl}
+              onChange={(e) => setInstagramUrl(e.target.value)}
+              placeholder="https://instagram.com/dein_handle"
+              fullWidth
+              inputProps={{ maxLength: 200 }}
+            />
+          ) : (
+            <Skeleton variant="rounded" height={56} />
+          )}
+        </SettingsCard>
+
+        <SettingsCard
+          icon={<EventAvailableRoundedIcon />}
+          title="Termine buchen"
+          description="Link zur Buchungs-Webseite. Erscheint unter dem QR-Code als 'Termine buchen'-Zeile."
+        >
+          {cfg ? (
+            <TextField
+              value={bookingUrl}
+              onChange={(e) => setBookingUrl(e.target.value)}
+              placeholder="https://deine-fotobox.de/termine"
+              fullWidth
+              inputProps={{ maxLength: 200 }}
             />
           ) : (
             <Skeleton variant="rounded" height={56} />
@@ -238,6 +284,8 @@ export default function AdminEvent() {
               if (cfg) {
                 setEventName(cfg.event_name);
                 setSubtitle(cfg.subtitle ?? "");
+                setInstagramUrl(cfg.instagram_url ?? "");
+                setBookingUrl(cfg.booking_url ?? "");
                 setCountdown(cfg.countdown_duration);
                 setAdminPin(cfg.admin_pin ?? "");
                 setHostPin(cfg.host_pin ?? "");

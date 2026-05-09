@@ -80,11 +80,7 @@ class _LiveReader:
     neu zu öffnen — ohne dass die UI durchgängig 'kein Signal' anzeigt.
     """
 
-    # Reader liest so schnell wie die Capture-Card liefert. cap.read() blockt
-    # ohnehin bis ein neuer Frame anliegt, und CAP_PROP_BUFFERSIZE=1 sorgt
-    # dafür, dass wir immer den frischesten Frame bekommen. Das Target ist
-    # nur eine Obergrenze für den Fall, dass die Card frei drehen würde.
-    _TARGET_FPS = 60
+    _TARGET_FPS = 30
     _RECONNECT_INTERVAL_S = 3.0
     _MAX_CONSEC_READ_FAILS = 30
 
@@ -181,8 +177,13 @@ class UI:
         # läuft auch im Live-Reload, wenn der Mieter die Farben ändert.
         self._apply_theme(cfg)
 
-        # Logo
+        # Logo — _logo_surf ist die rohe Datei, _logo_circular die runde
+        # Variante die in den Cream-Kreis blittet wird.
         self._logo_surf = self._load_logo(cfg.get("logo_path", ""))
+        self._logo_circular = (
+            self._make_circular_logo(self._logo_surf)
+            if self._logo_surf is not None else None
+        )
 
         # QR-Code
         self._qr_surf = self._make_qr(cfg.get("gallery_url", ""), size=160)
@@ -268,6 +269,10 @@ class UI:
         if logo_path != self._logo_path_seen or logo_mt != self._logo_mtime:
             logger.info("Live-Reload: Logo geändert (%s)", logo_path)
             self._logo_surf      = self._load_logo(logo_path)
+            self._logo_circular  = (
+                self._make_circular_logo(self._logo_surf)
+                if self._logo_surf is not None else None
+            )
             self._logo_path_seen = logo_path
             self._logo_mtime     = logo_mt
 
@@ -415,7 +420,8 @@ class UI:
     def _draw_action_buttons(self):
         """Zeichnet die Action-Buttons mit pro-Action Akzentfarbe. Foto-Style
         ist 'filled' (Button gefüllt mit color, weisser Text), die anderen
-        sind Outline (dunkles Panel + farbiger Border + farbiger Text).
+        sind Outline. Label sitzt links, Chevron-Pfeil rechts — signalisiert
+        klar 'das ist eine ausführbare Aktion'.
         """
         keys  = pygame.key.get_pressed()
         panel = self._theme["panel_bg"]
@@ -428,21 +434,40 @@ class UI:
                                   self._theme["accent"])
             filled  = bool(action.get("filled", False))
 
+            # Schatten unter dem Button — gibt Tiefe.
+            shadow = pygame.Surface((rect.width + 8, rect.height + 8),
+                                    pygame.SRCALPHA)
+            pygame.draw.rect(shadow, (0, 0, 0, 70),
+                             shadow.get_rect(), border_radius=20)
+            self._screen.blit(shadow, (rect.x - 4, rect.y + 6))
+
             bg = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
             if filled or pressed:
-                bg.fill((*color, 235))
+                bg.fill((*color, 240))
                 label_color = text
             else:
-                bg.fill((*panel, 230))
+                bg.fill((*panel, 235))
                 label_color = color
             self._screen.blit(bg, rect.topleft)
 
             pygame.draw.rect(self._screen, color, rect,
                              width=3, border_radius=18)
 
+            # Label: linksbündig mit fester Padding
             label = action.get("label", "Aktion")
             lbl = self._f_medium.render(label, True, label_color)
-            self._screen.blit(lbl, lbl.get_rect(center=rect.center))
+            self._screen.blit(
+                lbl, lbl.get_rect(midleft=(rect.left + 32, rect.centery)))
+
+            # Chevron-Pfeil rechts ›
+            cx = rect.right - 36
+            cy = rect.centery
+            ch = 18  # half-size
+            pygame.draw.lines(
+                self._screen, label_color, False,
+                [(cx - 12, cy - ch), (cx, cy), (cx - 12, cy + ch)],
+                width=5,
+            )
 
             if pressed:
                 self._draw_button_glow(rect, color)
@@ -518,29 +543,26 @@ class UI:
 
     def _draw_logo_sidebar(self):
         """Logo als kreisförmiger Cream-Container oben in der Sidebar.
-        Wenn ein Logo-Bild vorhanden ist, wird es im Kreis zentriert. Wenn
-        nicht, fallen wir auf Initialen aus dem Event-Namen zurück.
+        Hochgeladene Logos werden zirkulär maskiert (cover-Skalierung), damit
+        rechteckige Logos sauber in den Kreis passen. Wenn weder ein hoch-
+        geladenes Logo noch das Default-Logo (Layout/logo_default.png)
+        existiert, fallen wir auf Initialen aus dem Event-Namen zurück.
         """
         cx = SIDEBAR_W // 2
         cy = SIDEBAR_PAD + LOGO_CIRCLE_R
         circle_color = self._theme["logo_circle"]
 
-        # Cream-Kreis als Logo-Container.
+        # Cream-Kreis als Hintergrund — bleibt rund auch wenn das Logo
+        # transparente Bereiche hat.
         pygame.draw.circle(self._screen, circle_color, (cx, cy), LOGO_CIRCLE_R)
 
-        if self._logo_surf is not None:
-            # Logo so skalieren, dass es in den Kreis passt (mit Padding).
-            target = LOGO_CIRCLE_R * 2 - 20
-            sw, sh = self._logo_surf.get_size()
-            scale = min(target / sw, target / sh, 1.0)
-            if scale < 1.0:
-                logo = pygame.transform.smoothscale(
-                    self._logo_surf, (int(sw * scale), int(sh * scale)))
-            else:
-                logo = self._logo_surf
-            self._screen.blit(logo, logo.get_rect(center=(cx, cy)))
+        if self._logo_circular is not None:
+            self._screen.blit(
+                self._logo_circular,
+                self._logo_circular.get_rect(center=(cx, cy)),
+            )
         else:
-            # Fallback: Initialen aus dem Event-Namen.
+            # Letzter Fallback: Initialen aus dem Event-Namen.
             initials = self._event_initials(self._cfg.get("event_name", ""))
             lbl = self._f_initials.render(initials, True, self._theme["logo_text"])
             self._screen.blit(lbl, lbl.get_rect(center=(cx, cy)))
@@ -1019,28 +1041,69 @@ class UI:
         self._screen.blit(bg, (x - PAD, y - PAD))
         self._screen.blit(self._qr_surf, (x, y))
 
-    def _sidebar_content_y(self) -> int:
-        """y-Startposition unterhalb des Event-Headers — gemeinsamer Anker
-        für QR-Card und WLAN-Box, damit das Layout nicht statisch wird,
-        wenn der Subtitle leer ist.
-        """
+    # Layout-Anker für die Sidebar — gemeinsame Berechnung, sodass QR-Card
+    # und WLAN-Box konsistent positioniert sind und sich nicht überlappen
+    # können, egal welche Inhalte konfiguriert sind.
+
+    def _sidebar_header_bottom(self) -> int:
+        """y-Position direkt unterhalb des Event-Headers (Logo + Name + Sub)."""
         y = SIDEBAR_PAD + LOGO_CIRCLE_R * 2 + 24
         if (self._cfg.get("event_name") or "").strip():
             y += self._f_event.get_height() + 8
         if (self._cfg.get("subtitle") or "").strip():
             y += self._f_sub.get_height() + 8
-        return y + 20
+        return y
+
+    def _wifi_box_metrics(self) -> tuple:
+        """Liefert (top_y, height) der WLAN-Box. Nicht-konfigurierte Box
+        liefert (H, 0) — dann gibt es nichts zu vermeiden."""
+        ssid = (self._cfg.get("wifi_ssid")     or "").strip()
+        pwd  = (self._cfg.get("wifi_password") or "").strip()
+        rows = (1 if ssid else 0) + (1 if pwd else 0)
+        if rows == 0:
+            return (H, 0)
+        line_h  = self._f_normal.get_height()
+        label_h = self._f_label.get_height()
+        box_h   = 22 + rows * (label_h + 4 + line_h + 14)
+        margin_bottom = 56
+        return (H - margin_bottom - box_h, box_h)
+
+    def _qr_group_height(self) -> int:
+        """Gesamthöhe der QR-Group: Card + Caption + (optional) Social-Links."""
+        QR_SIZE = 160
+        PAD     = 14
+        card_h  = QR_SIZE + PAD * 2
+        caption_h = self._f_sub.get_height() + 12
+
+        social_rows = 0
+        if (self._cfg.get("instagram_url") or "").strip():
+            social_rows += 1
+        if (self._cfg.get("booking_url") or "").strip():
+            social_rows += 1
+        social_h = (16 + social_rows * 32) if social_rows else 0
+        return card_h + caption_h + social_h
+
+    def _sidebar_qr_y(self) -> int:
+        """y-Start der QR-Card. Vertikal zentriert zwischen Header und
+        WLAN-Box, damit die Sidebar visuell ausgewogen wirkt.
+        """
+        top    = self._sidebar_header_bottom() + 20
+        bottom = self._wifi_box_metrics()[0] - 30
+        total  = self._qr_group_height()
+        y      = top + ((bottom - top) - total) // 2
+        return max(top, y)
 
     def _draw_qr_card(self):
-        """QR auf cremig-weißem Container in der Sidebar."""
+        """QR auf cremig-weißem Container in der Sidebar — vertikal mittig.
+        Caption und Social-Links werden direkt darunter gezeichnet.
+        """
         cx = SIDEBAR_W // 2
         QR_SIZE  = 160
         PAD      = 14
         card_w   = QR_SIZE + PAD * 2
         card_h   = QR_SIZE + PAD * 2
-        y = self._sidebar_content_y()
+        y = self._sidebar_qr_y()
 
-        # Cream-Container hinter dem QR.
         card = pygame.Rect(cx - card_w // 2, y, card_w, card_h)
         pygame.draw.rect(self._screen, self._theme["logo_circle"],
                          card, border_radius=10)
@@ -1054,7 +1117,81 @@ class UI:
 
         hint = self._f_sub.render("Fotos auf's Handy", True,
                                   self._theme["sidebar_text"])
-        self._screen.blit(hint, hint.get_rect(centerx=cx, top=card.bottom + 12))
+        hint_y = card.bottom + 12
+        self._screen.blit(hint, hint.get_rect(centerx=cx, top=hint_y))
+
+        self._draw_social_links(cx, hint_y + hint.get_height() + 16)
+
+    def _draw_social_links(self, cx: int, y: int):
+        """Instagram-Handle und Termine-Buchen unter dem QR-Code.
+        Wird nur angezeigt wenn die jeweilige URL in der Config gesetzt ist —
+        sonst bleibt die Sidebar clean.
+        """
+        rows = []
+        insta = (self._cfg.get("instagram_url") or "").strip()
+        if insta:
+            rows.append(("instagram", self._instagram_handle(insta)))
+        booking = (self._cfg.get("booking_url") or "").strip()
+        if booking:
+            rows.append(("calendar", "Termine buchen"))
+        if not rows:
+            return
+
+        icon_size  = 22
+        row_height = 32
+
+        for i, (icon_type, label) in enumerate(rows):
+            ry  = y + i * row_height
+            lbl = self._f_sub.render(label, True, self._theme["sidebar_text"])
+            total_w = icon_size + 10 + lbl.get_width()
+            ix = cx - total_w // 2
+            iy = ry + (row_height - icon_size) // 2
+
+            if icon_type == "instagram":
+                self._draw_instagram_icon(ix, iy, icon_size)
+            else:
+                self._draw_calendar_icon(ix, iy, icon_size)
+
+            self._screen.blit(
+                lbl,
+                (ix + icon_size + 10,
+                 ry + (row_height - lbl.get_height()) // 2),
+            )
+
+    def _draw_instagram_icon(self, x: int, y: int, size: int):
+        """Vereinfachtes Instagram-Logo: gerundetes Quadrat + Kreis innen
+        + kleiner Punkt rechts oben (Flash). Programmatisch gezeichnet."""
+        color = self._theme["accent"]
+        pygame.draw.rect(self._screen, color, (x, y, size, size),
+                         width=2, border_radius=size // 5)
+        pygame.draw.circle(self._screen, color,
+                           (x + size // 2, y + size // 2), size // 4, width=2)
+        pygame.draw.circle(self._screen, color,
+                           (x + size - 5, y + 5), 1)
+
+    def _draw_calendar_icon(self, x: int, y: int, size: int):
+        """Vereinfachter Kalender: Rechteck mit zwei Bindern oben."""
+        color = self._theme["accent"]
+        body_y = y + 4
+        body_h = size - 4
+        pygame.draw.rect(self._screen, color, (x, body_y, size, body_h),
+                         width=2, border_radius=2)
+        pygame.draw.rect(self._screen, color, (x + 5, y, 3, 6))
+        pygame.draw.rect(self._screen, color, (x + size - 8, y, 3, 6))
+        pygame.draw.line(self._screen, color,
+                         (x, body_y + 7), (x + size, body_y + 7), 1)
+
+    @staticmethod
+    def _instagram_handle(url: str) -> str:
+        """'https://instagram.com/foo/' → '@foo'. Fallback: 'Instagram'."""
+        s = url.strip().rstrip("/")
+        if "instagram.com/" in s:
+            handle = s.split("instagram.com/")[-1].split("/")[0].split("?")[0]
+            if handle:
+                return f"@{handle}"
+        if s.startswith("@"):
+            return s
+        return "Instagram"
 
     def _draw_wifi_box(self):
         """WLAN+Passwort als eigene Box mit Border-Akzent unten in der Sidebar."""
@@ -1103,23 +1240,65 @@ class UI:
 
     @staticmethod
     def _load_logo(path: str) -> Optional[pygame.Surface]:
-        """Lädt das Logo und skaliert es, damit es in die Sidebar passt:
-        max-Höhe 160 px, max-Breite SIDEBAR_W - 40."""
-        if not path or not os.path.isfile(path):
-            return None
-        try:
-            img = pygame.image.load(path).convert_alpha()
-            max_h = 160
-            max_w = SIDEBAR_W - 40
-            sw, sh = img.get_size()
-            scale = min(max_h / sh, max_w / sw, 1.0)
-            if scale < 1.0:
-                img = pygame.transform.smoothscale(
-                    img, (int(sw * scale), int(sh * scale)))
-            return img
-        except Exception as exc:
-            logger.warning("Logo: %s", exc)
-            return None
+        """Lädt das aktive Logo. Wenn der konfigurierte Pfad fehlt,
+        wird auf Layout/logo_default.png (Box-Besitzer-Standard) zurück-
+        gefallen — das Default-Logo wird nicht durch Mieter-Uploads
+        überschrieben.
+
+        Skalierung erfolgt nur grob (max 200 px). Die finale runde Form
+        macht _make_circular_logo später, weil die Größe des Cream-Kreises
+        in der Sidebar Layout-fest ist.
+        """
+        here = os.path.dirname(os.path.abspath(__file__))
+        fallback = os.path.join(here, "Layout", "logo_default.png")
+        candidates = ([path] if path else []) + [fallback]
+
+        for candidate in candidates:
+            if not candidate or not os.path.isfile(candidate):
+                continue
+            try:
+                img = pygame.image.load(candidate).convert_alpha()
+                max_h = 200
+                max_w = SIDEBAR_W - 40
+                sw, sh = img.get_size()
+                scale = min(max_h / sh, max_w / sw, 1.0)
+                if scale < 1.0:
+                    img = pygame.transform.smoothscale(
+                        img, (int(sw * scale), int(sh * scale)))
+                return img
+            except Exception as exc:
+                logger.warning("Logo (%s): %s", candidate, exc)
+        return None
+
+    @staticmethod
+    def _make_circular_logo(logo: pygame.Surface) -> pygame.Surface:
+        """Skaliert das Logo so, dass es den Cream-Kreis komplett ausfüllt
+        (cover statt contain), und schneidet es rund zu. Das Ergebnis ist
+        ein Surface mit Durchmesser 2*(LOGO_CIRCLE_R - 6) — die 6 px Marge
+        verhindern, dass das Logo den Cream-Rand überdeckt.
+        """
+        radius   = LOGO_CIRCLE_R - 6
+        diameter = radius * 2
+
+        sw, sh = logo.get_size()
+        # cover-Skalierung: Logo füllt den Kreis aus, wird ggf. beschnitten.
+        scale  = max(diameter / sw, diameter / sh)
+        nw, nh = max(diameter, int(sw * scale)), max(diameter, int(sh * scale))
+        scaled = pygame.transform.smoothscale(logo, (nw, nh))
+
+        crop_x = (nw - diameter) // 2
+        crop_y = (nh - diameter) // 2
+        cropped = scaled.subsurface(
+            pygame.Rect(crop_x, crop_y, diameter, diameter)
+        ).copy()
+
+        # Kreis-Maske: BLEND_RGBA_MIN nimmt das Minimum pro Kanal — innerhalb
+        # des Kreises bleibt der Logo-Inhalt erhalten, außerhalb wird alpha=0.
+        masked = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
+        pygame.draw.circle(masked, (255, 255, 255, 255),
+                           (radius, radius), radius)
+        masked.blit(cropped, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
+        return masked
 
     @staticmethod
     def _make_qr(url: str, size: int = 160) -> Optional[pygame.Surface]:

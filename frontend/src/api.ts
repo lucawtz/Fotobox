@@ -60,6 +60,8 @@ export interface AdminConfig {
   has_logo: boolean;
   role: AdminRole;
   theme: ThemeColors;
+  instagram_url: string;
+  booking_url: string;
   // Nur Admin sieht diese Felder — Gastgeber bekommt sie nicht vom Server.
   wifi_ssid?: string;
   wifi_password?: string;

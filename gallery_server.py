@@ -723,6 +723,8 @@ def api_admin_config():
             "wifi_ssid":          config.cfg.get("wifi_ssid", ""),
             "wifi_password":      config.cfg.get("wifi_password", ""),
             "theme":              dict(config.cfg.get("theme") or {}),
+            "instagram_url":      config.cfg.get("instagram_url", ""),
+            "booking_url":        config.cfg.get("booking_url", ""),
             "role":               role,
         }
         if is_admin:
@@ -748,6 +750,8 @@ def api_admin_config():
         "countdown_duration": countdown,
         "wifi_ssid":          (data.get("wifi_ssid")  or config.cfg["wifi_ssid"]).strip(),
         "wifi_password":      data.get("wifi_password", config.cfg["wifi_password"]) or "",
+        "instagram_url":      str(data.get("instagram_url", config.cfg.get("instagram_url", ""))).strip()[:200],
+        "booking_url":        str(data.get("booking_url",   config.cfg.get("booking_url",   ""))).strip()[:200],
     })
 
     # Theme: Hex-Strings + panel_alpha. Ungültige Werte werden ignoriert,
