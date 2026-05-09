@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 W, H = 1920, 1080
 
-# Farben
+# Fallback-Farben — werden verwendet wenn das Theme im config.json fehlt
+# oder ungültig ist. Entsprechen dem Default-Look (Gold/Dunkel).
 C_GOLD   = (212, 168, 106)
 C_DARK   = (40,  25,  10)
 C_WHITE  = (255, 255, 255)
@@ -24,6 +25,35 @@ C_YELLOW = (255, 220, 50)
 C_DIM    = (155, 120, 65)
 C_BTN_BG = (60,  38,  15)
 C_BTN_HL = (180, 130, 60)
+
+# Layout-Konstanten — fest in Code. Mieter-Anpassungen laufen über
+# theme/branding/actions in config.json, das Layout bleibt fix.
+SIDEBAR_W    = 320
+SIDEBAR_PAD  = 20
+ACTION_X     = 1500
+ACTION_W     = 360
+ACTION_H     = 130
+ACTION_GAP   = 30
+LIVE_FRAME_W = 6
+
+# Mapping: action.key (config) → pygame-Taste, damit der Button-Highlight
+# weiß welche Taste/GPIO ihn aktiviert. Halten parallel zu hardware.py.
+_ACTION_KEYS = {
+    "trigger": pygame.K_SPACE,
+    "right":   pygame.K_e,
+    "left":    pygame.K_q,
+}
+
+
+def _hex_to_rgb(s: str, default=(0, 0, 0)) -> tuple:
+    """'#D4A86A' → (212, 168, 106). Robust gegen leere/kaputte Strings."""
+    s = (s or "").lstrip("#")
+    if len(s) != 6:
+        return default
+    try:
+        return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+    except ValueError:
+        return default
 
 
 class _LiveReader:
@@ -122,17 +152,12 @@ class UI:
         self._f_medium = pygame.font.SysFont("sans-serif", 60,  bold=True)
         self._f_normal = pygame.font.SysFont("sans-serif", 40,  bold=True)
         self._f_small  = pygame.font.SysFont("sans-serif", 26)
-        self._f_event  = pygame.font.SysFont("sans-serif", 52,  bold=True)
+        self._f_event  = pygame.font.SysFont("sans-serif", 56,  bold=True)
+        self._f_sub    = pygame.font.SysFont("sans-serif", 24)
 
-        # Overlay / Hintergrund
-        overlay = cfg.get("overlay_path", "")
-        if overlay and os.path.isfile(overlay):
-            img = pygame.image.load(overlay).convert()
-            self._bg = pygame.transform.scale(img, (W, H)) if img.get_size() != (W, H) else img
-        else:
-            self._bg = pygame.Surface((W, H))
-            self._bg.fill(C_DARK)
-            logger.warning("Overlay nicht gefunden — dunkler Hintergrund")
+        # Theme + Background-Gradient. _apply_theme baut self._bg neu —
+        # läuft auch im Live-Reload, wenn der Mieter die Farben ändert.
+        self._apply_theme(cfg)
 
         # Logo
         self._logo_surf = self._load_logo(cfg.get("logo_path", ""))
@@ -140,16 +165,15 @@ class UI:
         # QR-Code
         self._qr_surf = self._make_qr(cfg.get("gallery_url", ""), size=160)
 
-        # Live-Reload-Tracking — gallery_server.py läuft im gleichen Prozess
-        # (siehe main.py: threading.Thread(target=gallery_server.run, ...)),
-        # also teilen wir config.cfg direkt. Werte (event_name, countdown,
-        # WLAN-Texte) sind sofort sichtbar — nur die pygame-Surfaces hier
-        # müssen wir bei Datei-/URL-Änderungen neu bauen.
+        # Live-Reload-Tracking — gallery_server.py teilt config.cfg mit
+        # dieser Instanz (siehe main.py: gallery_server.run im Thread).
+        # Strings (event_name, subtitle, wifi-Texte) sind sofort sichtbar
+        # — nur Logo-Surface, QR und Theme-Gradient müssen wir bei
+        # Wert-Änderungen neu rendern.
         self._logo_path_seen    = cfg.get("logo_path", "")
         self._logo_mtime        = self._mtime(self._logo_path_seen)
-        self._overlay_path_seen = overlay
-        self._overlay_mtime     = self._mtime(overlay)
         self._qr_url_seen       = cfg.get("gallery_url", "")
+        self._theme_seen        = dict(cfg.get("theme") or {})
         self._last_reload_check = 0.0
 
         # Polaroid-Galerie
@@ -225,19 +249,12 @@ class UI:
             self._logo_path_seen = logo_path
             self._logo_mtime     = logo_mt
 
-        # Overlay-Hintergrund — gleiche Logik wie Logo.
-        overlay_path = self._cfg.get("overlay_path", "")
-        overlay_mt   = self._mtime(overlay_path)
-        if overlay_path != self._overlay_path_seen or overlay_mt != self._overlay_mtime:
-            if overlay_path and os.path.isfile(overlay_path):
-                try:
-                    img = pygame.image.load(overlay_path).convert()
-                    self._bg = pygame.transform.scale(img, (W, H)) if img.get_size() != (W, H) else img
-                    logger.info("Live-Reload: Overlay geändert (%s)", overlay_path)
-                except Exception as exc:
-                    logger.warning("Live-Reload Overlay: %s", exc)
-            self._overlay_path_seen = overlay_path
-            self._overlay_mtime     = overlay_mt
+        # Theme — bei Änderung Hintergrund-Gradient + Theme-Farben neu bauen.
+        theme_now = dict(self._cfg.get("theme") or {})
+        if theme_now != self._theme_seen:
+            logger.info("Live-Reload: Theme geändert")
+            self._apply_theme(self._cfg)
+            self._theme_seen = theme_now
 
         # QR-Code — neu generieren wenn sich gallery_url ändert (z.B. Port
         # oder hotspot_ip vom Admin verstellt).
@@ -253,9 +270,13 @@ class UI:
                           free_mb: int, photo_count: int):
         self._check_config_reload()
         self._screen.blit(self._bg, (0, 0))
+        self._draw_sidebar_bg()
         self._draw_live()
+        self._draw_live_frame()
         self._draw_polaroids()
-        self._draw_overlay_button_highlights()
+        self._draw_action_buttons()
+        self._draw_logo_sidebar()
+        self._draw_event_header()
         self._draw_qr_bottom_left()
         self._draw_status_bar(camera_ok, free_mb, photo_count)
         if not camera_ok:
@@ -344,33 +365,159 @@ class UI:
             return None
         return (y0, y1, x0, x1)
 
-    def _draw_overlay_button_highlights(self):
-        """Zeichnet einen Glow um die im Overlay enthaltenen Foto- und Collage-Buttons,
-        wenn die zugehörige Taste/GPIO-Knopf gedrückt ist."""
+    def _action_rects(self):
+        """Berechnet Position+Rect für jeden konfigurierten Action-Button.
+        Buttons werden vertikal gestapelt rechts angeordnet, mittig zur
+        Höhe der Live-View, damit sie auf Augenhöhe der Vorschau sitzen.
+        """
+        actions = self._cfg.get("actions") or []
+        if not actions:
+            return []
+        n = len(actions)
+        total_h = n * ACTION_H + (n - 1) * ACTION_GAP
+
+        live = self._cfg.get("live_view_rect", [440, 600, 1040, 450])
+        center_y = live[1] + live[3] // 2
+        y0 = max(80, center_y - total_h // 2)
+
+        return [(action,
+                 pygame.Rect(ACTION_X, y0 + i * (ACTION_H + ACTION_GAP),
+                             ACTION_W, ACTION_H))
+                for i, action in enumerate(actions)]
+
+    def _draw_action_buttons(self):
+        """Zeichnet die Action-Buttons (Foto, Collage, …) programmatisch.
+        Idle: dunkles Panel mit Goldborder. Pressed: gold gefüllt + Glow.
+        """
         keys = pygame.key.get_pressed()
-        foto_pressed    = keys[pygame.K_SPACE]
-        collage_pressed = keys[pygame.K_e]
+        accent     = self._theme["accent"]
+        accent_dim = self._theme["accent_dim"]
+        panel      = self._theme["panel_bg"]
+        text       = self._theme["text"]
 
-        foto_rect    = pygame.Rect(*self._cfg.get(
-            "overlay_button_foto",    [1475, 700, 385, 100]))
-        collage_rect = pygame.Rect(*self._cfg.get(
-            "overlay_button_collage", [1475, 840, 385, 110]))
+        for action, rect in self._action_rects():
+            pg_key  = _ACTION_KEYS.get(action.get("key", ""))
+            pressed = bool(pg_key and keys[pg_key])
 
-        if foto_pressed:
-            self._draw_button_glow(foto_rect)
-        if collage_pressed:
-            self._draw_button_glow(collage_rect)
+            bg = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+            bg.fill((*accent, 235) if pressed else (*panel, 220))
+            self._screen.blit(bg, rect.topleft)
+
+            border = accent if pressed else accent_dim
+            pygame.draw.rect(self._screen, border, rect,
+                             width=3, border_radius=18)
+
+            label = action.get("label", "Aktion")
+            color = panel if pressed else text
+            lbl = self._f_medium.render(label, True, color)
+            self._screen.blit(lbl, lbl.get_rect(center=rect.center))
+
+            if pressed:
+                self._draw_button_glow(rect)
 
     def _draw_button_glow(self, rect: pygame.Rect):
         glow = pygame.Surface((rect.width + 40, rect.height + 40), pygame.SRCALPHA)
+        accent = self._theme["accent"]
         for i in range(8, 0, -1):
             alpha = 30 + (8 - i) * 10
             pygame.draw.rect(
-                glow, (*C_GOLD, alpha),
+                glow, (*accent, alpha),
                 glow.get_rect().inflate(-i * 4, -i * 4),
                 width=4, border_radius=14,
             )
         self._screen.blit(glow, (rect.x - 20, rect.y - 20))
+
+    # ── Theme / Hintergrund ────────────────────────────────────────────────────
+
+    def _apply_theme(self, cfg: dict):
+        """Liest theme aus cfg, parst Hex-Strings zu RGB und baut den
+        Hintergrund-Gradient. Wird beim Init und bei jedem Live-Reload mit
+        geänderten Theme-Werten aufgerufen.
+        """
+        t = cfg.get("theme") or {}
+        self._theme = {
+            "bg_top":      _hex_to_rgb(t.get("bg_top",     "#2A1A0E"), C_DARK),
+            "bg_bottom":   _hex_to_rgb(t.get("bg_bottom",  "#0F0703"), C_BLACK),
+            "accent":      _hex_to_rgb(t.get("accent",     "#D4A86A"), C_GOLD),
+            "accent_dim":  _hex_to_rgb(t.get("accent_dim", "#9B7840"), C_DIM),
+            "text":        _hex_to_rgb(t.get("text",       "#FFFFFF"), C_WHITE),
+            "panel_bg":    _hex_to_rgb(t.get("panel_bg",   "#15090A"), C_BTN_BG),
+            "panel_alpha": int(t.get("panel_alpha", 200)),
+        }
+        self._bg = self._build_gradient_bg()
+
+    def _build_gradient_bg(self) -> pygame.Surface:
+        """Vertikaler Gradient bg_top → bg_bottom — ersetzt das frühere
+        Overlay-PNG. Wird 1× pro Theme-Änderung gebaut, nicht pro Frame.
+        """
+        surf = pygame.Surface((W, H))
+        top = self._theme["bg_top"]
+        bot = self._theme["bg_bottom"]
+        for y in range(H):
+            t = y / (H - 1)
+            c = (int(top[0] * (1 - t) + bot[0] * t),
+                 int(top[1] * (1 - t) + bot[1] * t),
+                 int(top[2] * (1 - t) + bot[2] * t))
+            pygame.draw.line(surf, c, (0, y), (W, y))
+        return surf
+
+    # ── Sidebar / Header / Live-Frame ──────────────────────────────────────────
+
+    def _draw_sidebar_bg(self):
+        """Halbtransparentes Sidebar-Panel mit Goldakzent rechts."""
+        panel  = self._theme["panel_bg"]
+        accent = self._theme["accent"]
+        alpha  = self._theme["panel_alpha"]
+        surf = pygame.Surface((SIDEBAR_W, H), pygame.SRCALPHA)
+        surf.fill((*panel, alpha))
+        pygame.draw.line(surf, accent, (SIDEBAR_W - 2, 0),
+                         (SIDEBAR_W - 2, H), 3)
+        self._screen.blit(surf, (0, 0))
+
+    def _draw_logo_sidebar(self):
+        """Logo oben in der Sidebar, mittig — wenn vorhanden."""
+        if self._logo_surf is None:
+            return
+        cx = SIDEBAR_W // 2
+        x  = cx - self._logo_surf.get_width() // 2
+        self._screen.blit(self._logo_surf, (x, SIDEBAR_PAD + 10))
+
+    def _draw_event_header(self):
+        """Event-Name + Subtitle in der Sidebar unter dem Logo."""
+        cx = SIDEBAR_W // 2
+        if self._logo_surf is not None:
+            y = SIDEBAR_PAD + 10 + self._logo_surf.get_height() + 24
+        else:
+            y = SIDEBAR_PAD + 30
+
+        event_name = (self._cfg.get("event_name") or "").strip()
+        subtitle   = (self._cfg.get("subtitle")   or "").strip()
+        max_w      = SIDEBAR_W - 20
+
+        for text, font, color in (
+            (event_name, self._f_event, self._theme["accent"]),
+            (subtitle,   self._f_sub,   self._theme["accent_dim"]),
+        ):
+            if not text:
+                continue
+            lbl = font.render(text, True, color)
+            # Auf Sidebar-Breite zuschneiden falls zu lang.
+            if lbl.get_width() > max_w:
+                scale = max_w / lbl.get_width()
+                lbl = pygame.transform.smoothscale(
+                    lbl, (int(lbl.get_width() * scale),
+                          int(lbl.get_height() * scale)))
+            self._screen.blit(lbl, lbl.get_rect(centerx=cx, top=y))
+            y += lbl.get_height() + 6
+
+    def _draw_live_frame(self):
+        """Goldener Rahmen um den Live-View — ersetzt den Rahmen der
+        früher im Overlay-PNG aufgemalt war.
+        """
+        x, y, w, h = self._cfg.get("live_view_rect", [440, 600, 1040, 450])
+        rect = pygame.Rect(x, y, w, h)
+        pygame.draw.rect(self._screen, self._theme["accent"],
+                         rect, width=LIVE_FRAME_W, border_radius=14)
 
     def _draw_status_bar(self, camera_ok: bool, free_mb: int, photo_count: int):
         bar = pygame.Surface((W, 28), pygame.SRCALPHA)
@@ -787,15 +934,19 @@ class UI:
 
     @staticmethod
     def _load_logo(path: str) -> Optional[pygame.Surface]:
+        """Lädt das Logo und skaliert es, damit es in die Sidebar passt:
+        max-Höhe 160 px, max-Breite SIDEBAR_W - 40."""
         if not path or not os.path.isfile(path):
             return None
         try:
             img = pygame.image.load(path).convert_alpha()
-            max_h = 80
-            if img.get_height() > max_h:
-                scale = max_h / img.get_height()
+            max_h = 160
+            max_w = SIDEBAR_W - 40
+            sw, sh = img.get_size()
+            scale = min(max_h / sh, max_w / sw, 1.0)
+            if scale < 1.0:
                 img = pygame.transform.smoothscale(
-                    img, (int(img.get_width() * scale), max_h))
+                    img, (int(sw * scale), int(sh * scale)))
             return img
         except Exception as exc:
             logger.warning("Logo: %s", exc)

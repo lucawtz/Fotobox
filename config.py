@@ -12,6 +12,7 @@ _DEFAULTS: dict = {
     "wifi_ssid": "Fotobox",
     "wifi_password": "fotobox123",
     "event_name": "Fotobox",
+    "subtitle": "Drück einen Knopf",
     "countdown_duration": 3,
     "max_photos": 500,
     "gpio_pins": {"left": 17, "trigger": 27, "right": 22},
@@ -26,14 +27,25 @@ _DEFAULTS: dict = {
     "hotspot_interface": "wlan0",
     "picture_dir": "Picture_Box",
     "capture_device": 0,
-    "overlay_path": "Layout/Overlay_Allgemein.png",
+    "theme": {
+        "bg_top":     "#2A1A0E",
+        "bg_bottom":  "#0F0703",
+        "accent":     "#D4A86A",
+        "accent_dim": "#9B7840",
+        "text":       "#FFFFFF",
+        "panel_bg":   "#15090A",
+        "panel_alpha": 200,
+    },
+    "actions": [
+        {"id": "foto",    "label": "Einzelfoto",  "key": "trigger"},
+        {"id": "collage", "label": "4er Collage", "key": "right"},
+    ],
     "polaroid_frames": [[567, 255, -5], [1098, 256, 5], [1633, 257, 12]],
     "polaroid_photo_size": [310, 295],
     "live_view_rect": [440, 600, 1040, 450],
-    "overlay_button_foto": [1475, 700, 385, 100],
-    "overlay_button_collage": [1475, 840, 385, 110],
     "disk_warn_mb": 500,
     "thumbnail_max_age_days": 30,
+    "photo_max_age_days": 7,
     "camera_keepalive_s": 25,
     "camera_output_mode": "3",
 }
@@ -53,9 +65,8 @@ def load_config() -> dict:
             logger.warning("config.json unlesbar: %s — nutze Defaults", exc)
 
     # Relative Pfade → absolut
-    for key in ("logo_path", "overlay_path"):
-        if not os.path.isabs(data[key]):
-            data[key] = os.path.join(BASE_DIR, data[key])
+    if not os.path.isabs(data["logo_path"]):
+        data["logo_path"] = os.path.join(BASE_DIR, data["logo_path"])
     if not os.path.isabs(data["picture_dir"]):
         data["picture_dir"] = os.path.join(BASE_DIR, data["picture_dir"])
 
@@ -81,7 +92,7 @@ def save_config(data: dict):
     """
     saveable = {k: v for k, v in data.items()
                 if k not in ("gallery_url", "thumbnail_dir")}
-    for key in ("logo_path", "overlay_path", "picture_dir"):
+    for key in ("logo_path", "picture_dir"):
         if key in saveable and os.path.isabs(saveable[key]):
             try:
                 saveable[key] = os.path.relpath(saveable[key], BASE_DIR)
