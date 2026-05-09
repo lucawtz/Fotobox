@@ -2,7 +2,6 @@ import { ReactNode } from "react";
 import { AppBar, Toolbar, Box, IconButton, Typography, Tooltip } from "@mui/material";
 import AdminPanelSettingsRoundedIcon from "@mui/icons-material/AdminPanelSettingsRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
-import PhotoLibraryRoundedIcon from "@mui/icons-material/PhotoLibraryRounded";
 
 interface Props {
   title: string;
@@ -33,18 +32,17 @@ export default function TopBar({ title, subtitle, onRefresh, showAdmin = true, a
         }}
       >
         <Box
+          component="img"
+          src="/logo-mark.svg"
+          alt="Fotobox"
           sx={{
             width: { xs: 32, sm: 36 },
             height: { xs: 32, sm: 36 },
-            borderRadius: "50%",
-            display: "grid", placeItems: "center", flexShrink: 0,
-            bgcolor: "primary.main",
-            color: "primary.contrastText",
+            flexShrink: 0,
             mr: { xs: 1, sm: 1.25 },
+            display: "block",
           }}
-        >
-          <PhotoLibraryRoundedIcon sx={{ fontSize: { xs: 18, sm: 20 } }} />
-        </Box>
+        />
 
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
           <Typography

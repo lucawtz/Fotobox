@@ -14,3 +14,6 @@ frontend/dist/
 frontend/*.tsbuildinfo
 frontend/vite.config.d.ts
 frontend/vite.config.js
+
+# Root-npm (dev-orchestration via concurrently)
+node_modules/

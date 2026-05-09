@@ -54,6 +54,40 @@ def _event_photos(event_dir: str) -> list[tuple[str, float]]:
     return out
 
 
+def enforce_photo_max_age(picture_dir: str, max_age_days: int):
+    """Loescht Fotos aelter als max_age_days quer ueber alle Event-Ordner.
+
+    max_age_days <= 0 deaktiviert das zeitbasierte Cleanup.
+    """
+    if max_age_days <= 0 or not os.path.isdir(picture_dir):
+        return
+    cutoff = time.time() - max_age_days * 86400
+    removed = 0
+    for entry in os.listdir(picture_dir):
+        ev_path = os.path.join(picture_dir, entry)
+        if not os.path.isdir(ev_path):
+            continue
+        for fname in os.listdir(ev_path):
+            if os.path.splitext(fname)[1].lower() not in _EXTS:
+                continue
+            fpath = os.path.join(ev_path, fname)
+            try:
+                if os.path.getmtime(fpath) < cutoff:
+                    os.remove(fpath)
+                    removed += 1
+            except OSError as exc:
+                logger.warning("Photo-Age-Cleanup: %s", exc)
+        # Leeren Event-Ordner aufraeumen
+        try:
+            if not os.listdir(ev_path):
+                os.rmdir(ev_path)
+        except OSError:
+            pass
+    if removed:
+        logger.info("Photo-Age-Cleanup: %d Fotos > %d Tage entfernt",
+                    removed, max_age_days)
+
+
 def enforce_max_photos(picture_dir: str, max_count: int, event_dir: str = None):
     """Löscht älteste Fotos in EINEM Event-Ordner bis max_count erreicht ist.
 

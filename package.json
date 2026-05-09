@@ -1,0 +1,15 @@
+{
+  "name": "fotobox",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --names backend,frontend --prefix-colors blue,magenta --kill-others-on-fail \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "python dev_server.py",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "start": "npm run dev",
+    "build": "npm --prefix frontend run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

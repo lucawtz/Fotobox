@@ -74,15 +74,11 @@ export default function AdminLayout() {
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column", bgcolor: "grey.50" }}>
       <Box sx={{ p: 2, pt: 2.5, pb: 1.5, display: "flex", alignItems: "center", gap: 1.25 }}>
         <Box
-          sx={{
-            width: 36, height: 36, borderRadius: "50%",
-            display: "grid", placeItems: "center",
-            bgcolor: "primary.main",
-            color: "primary.contrastText",
-          }}
-        >
-          <PhotoLibraryRoundedIcon sx={{ fontSize: 20 }} />
-        </Box>
+          component="img"
+          src="/logo-mark.svg"
+          alt="Fotobox"
+          sx={{ width: 36, height: 36, display: "block", flexShrink: 0 }}
+        />
         <Box>
           <Typography
             variant="subtitle1"

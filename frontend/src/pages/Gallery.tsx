@@ -31,6 +31,7 @@ const formatDate = (iso: string): string => {
 export default function Gallery() {
   const [items, setItems] = useState<EventInfo[]>([]);
   const [eventName, setEventName] = useState("Fotobox");
+  const [maxAgeDays, setMaxAgeDays] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,6 +40,7 @@ export default function Gallery() {
       const r = await api.events();
       setItems(r.events);
       setEventName(r.event_name);
+      setMaxAgeDays(r.photo_max_age_days || 0);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -78,6 +80,21 @@ export default function Gallery() {
           pb: "calc(var(--sa-bottom) + 24px)",
         }}
       >
+        {maxAgeDays > 0 && items.length > 0 && (
+          <Typography
+            variant="caption"
+            sx={{
+              display: "block",
+              textAlign: "center",
+              color: "text.secondary",
+              mb: { xs: 1.25, sm: 2 },
+              fontSize: { xs: ".72rem", sm: ".78rem" },
+            }}
+          >
+            Fotos werden nach {maxAgeDays} Tag{maxAgeDays === 1 ? "" : "en"} automatisch gelöscht
+          </Typography>
+        )}
+
         {loading && items.length === 0 && (
           <Stack alignItems="center" sx={{ pt: 12 }}>
             <CircularProgress size={28} />

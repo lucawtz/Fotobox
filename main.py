@@ -266,6 +266,9 @@ def main():
                     disk_monitor.cleanup_old_thumbnails(
                         cfg["thumbnail_dir"],
                         cfg.get("thumbnail_max_age_days", 30))
+                    disk_monitor.enforce_photo_max_age(
+                        cfg["picture_dir"],
+                        cfg.get("photo_max_age_days", 7))
                     disk_monitor.enforce_max_photos(
                         cfg["picture_dir"],
                         cfg.get("max_photos", 500),

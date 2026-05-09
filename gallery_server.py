@@ -15,6 +15,7 @@ from flask import (Flask, Response, abort, jsonify, request,
 
 import camera as camera_mod
 import config
+import disk_monitor
 import events
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,29 @@ app.config.update(
 
 _EXTS = {".jpg", ".jpeg", ".png"}
 _thumb_lock = threading.Lock()
+
+# Throttle fuer das zeitbasierte Foto-Cleanup. main.py macht das vor jeder
+# Aufnahme — falls aber niemand mehr knipst, wuerden abgelaufene Bilder ewig
+# in der Galerie haengen. Deshalb beim Galerie-API-Aufruf max 1x pro 5 Min.
+_age_cleanup_lock = threading.Lock()
+_age_cleanup_last = 0.0
+_AGE_CLEANUP_INTERVAL_S = 300
+
+
+def _maybe_cleanup_old_photos():
+    global _age_cleanup_last
+    max_age = int(config.cfg.get("photo_max_age_days", 0))
+    if max_age <= 0:
+        return
+    now = time.time()
+    with _age_cleanup_lock:
+        if now - _age_cleanup_last < _AGE_CLEANUP_INTERVAL_S:
+            return
+        _age_cleanup_last = now
+    try:
+        disk_monitor.enforce_photo_max_age(_pic_dir(), max_age)
+    except Exception as exc:
+        logger.warning("Photo-Age-Cleanup im Galerie-Server: %s", exc)
 
 # ── Brute-Force-Schutz für Admin-Login ───────────────────────────────────────
 # Per-IP Lockout: nach 5 Fehlversuchen 5 Minuten Sperre.
@@ -449,15 +473,18 @@ def api_count():
 
 @app.route("/api/events")
 def api_events():
+    _maybe_cleanup_old_photos()
     return jsonify({
-        "active": events.current_event_folder(config.cfg),
-        "events": events.list_events(config.cfg),
-        "event_name": config.cfg.get("event_name", "Fotobox"),
+        "active":             events.current_event_folder(config.cfg),
+        "events":             events.list_events(config.cfg),
+        "event_name":         config.cfg.get("event_name", "Fotobox"),
+        "photo_max_age_days": int(config.cfg.get("photo_max_age_days", 0)),
     })
 
 
 @app.route("/api/photos")
 def api_photos():
+    _maybe_cleanup_old_photos()
     event_filter = request.args.get("event") or None
     pic_dir = _pic_dir()
     out = []
@@ -473,11 +500,12 @@ def api_photos():
         except OSError:
             continue
     return jsonify({
-        "event_name":   config.cfg.get("event_name", "Fotobox"),
-        "active_event": events.current_event_folder(config.cfg),
-        "filter":       event_filter,
-        "count":        len(out),
-        "photos":       out,
+        "event_name":         config.cfg.get("event_name", "Fotobox"),
+        "active_event":       events.current_event_folder(config.cfg),
+        "filter":             event_filter,
+        "count":              len(out),
+        "photos":             out,
+        "photo_max_age_days": int(config.cfg.get("photo_max_age_days", 0)),
     })
 
 
@@ -974,6 +1002,9 @@ if __name__ == "__main__":
                         format="%(asctime)s [%(levelname)s] %(message)s")
     os.makedirs(_pic_dir(), exist_ok=True)
     events.migrate_flat_photos(config.cfg)
-    run(host="127.0.0.1")
+    # Preflight wechselt config.cfg["gallery_port"] auf 5000/8080 falls 80
+    # nicht bindbar ist (Windows-Dev ohne Admin) — sonst stirbt waitress stumm.
+    port = preflight()
+    run(host="127.0.0.1", port=port)
 
 

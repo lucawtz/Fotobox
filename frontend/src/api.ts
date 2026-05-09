@@ -11,6 +11,7 @@ export interface PhotosResponse {
   filter: string | null;
   count: number;
   photos: Photo[];
+  photo_max_age_days: number;
 }
 
 export interface EventInfo {
@@ -28,6 +29,29 @@ export interface EventsResponse {
   active: string;
   event_name: string;
   events: EventInfo[];
+  photo_max_age_days: number;
+}
+
+/**
+ * Lesbarer Hinweis "noch X Tage / Stunden / Minuten" bis ein Foto gelöscht wird.
+ * mtime in Sekunden (Unix), maxAgeDays = 0 deaktiviert die Anzeige.
+ */
+export function formatExpiry(mtime: number, maxAgeDays: number, nowMs = Date.now()): string {
+  if (!maxAgeDays || maxAgeDays <= 0) return "";
+  const expiresAtMs = mtime * 1000 + maxAgeDays * 86400 * 1000;
+  const remainingS = Math.floor((expiresAtMs - nowMs) / 1000);
+  if (remainingS <= 0)            return "wird gleich gelöscht";
+  if (remainingS < 60)            return `noch ${remainingS} Sekunde${remainingS === 1 ? "" : "n"}`;
+  if (remainingS < 3600) {
+    const m = Math.floor(remainingS / 60);
+    return `noch ${m} Minute${m === 1 ? "" : "n"}`;
+  }
+  if (remainingS < 86400) {
+    const h = Math.floor(remainingS / 3600);
+    return `noch ${h} Stunde${h === 1 ? "" : "n"}`;
+  }
+  const d = Math.floor(remainingS / 86400);
+  return `noch ${d} Tag${d === 1 ? "" : "e"}`;
 }
 
 export const photoKey = (p: Pick<Photo, "event" | "filename">) =>
