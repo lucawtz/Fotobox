@@ -1,3 +1,4 @@
+import functools
 import logging
 import math
 import os
@@ -8,6 +9,7 @@ from typing import Optional
 
 import cv2
 import pygame
+import pygame.gfxdraw
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +33,11 @@ C_BTN_HL = (180, 130, 60)
 SIDEBAR_W       = 320
 SIDEBAR_PAD     = 20
 LOGO_CIRCLE_R   = 80      # Radius des Cream-Kreises um das Logo.
-ACTION_X        = 1500
-ACTION_W        = 360
-ACTION_H        = 130
-ACTION_GAP      = 30
+ACTION_X        = 1530
+ACTION_W        = 320
+ACTION_H        = 110
+ACTION_GAP      = 24
+ACTION_RADIUS   = 28      # Stärker abgerundete Ecken — moderner als 18.
 LIVE_OUTER_W    = 12      # Aussenrahmen (braun) ums Live-View.
 LIVE_INNER_W    = 3       # Innerer Goldakzent.
 
@@ -70,6 +73,40 @@ def _hex_to_rgb(s: str, default=(0, 0, 0)) -> tuple:
         return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
     except ValueError:
         return default
+
+
+def _aa_filled_circle(surf, color, cx, cy, r):
+    """Antialiased gefüllter Kreis. pygame.draw.circle hat harte, gezackte
+    Kanten — gfxdraw.filled_circle + aacircle blendet die Kontur weich an
+    den Hintergrund an, sodass der Kreis nicht mehr 'pixelig' wirkt.
+    """
+    cx, cy, r = int(cx), int(cy), int(r)
+    if len(color) == 3:
+        color = (*color, 255)
+    pygame.gfxdraw.filled_circle(surf, cx, cy, r, color)
+    pygame.gfxdraw.aacircle(surf, cx, cy, r, color)
+
+
+@functools.lru_cache(maxsize=16)
+def _aa_round_rect_mask(w: int, h: int, radius: int,
+                        supersample: int = 2) -> pygame.Surface:
+    """Alpha-Maske für eine Rounded-Rect-Form mit weichen Ecken.
+
+    Die Maske wird supersample-fach grösser gerendert und per smoothscale
+    auf Zielgrösse runtergerechnet — das gibt sanft auslaufende Alpha-
+    Verläufe an den abgerundeten Ecken (statt gezackter Pixeltreppen).
+    RGB ist überall (255,255,255), nur Alpha variiert. So darf die Maske
+    via BLEND_RGBA_MIN auf eine farbige Surface geblittet werden, ohne
+    dass die Farbe an den Ecken nach Grau verfärbt.
+
+    Gecached, weil alle Action-Buttons identische Maße haben — sonst
+    würden wir die Supersample-Maske 60×/Sek/Button neu erstellen.
+    """
+    big = pygame.Surface((w * supersample, h * supersample), pygame.SRCALPHA)
+    big.fill((255, 255, 255, 0))
+    pygame.draw.rect(big, (255, 255, 255, 255), big.get_rect(),
+                     border_radius=radius * supersample)
+    return pygame.transform.smoothscale(big, (w, h))
 
 
 class _LiveReader:
@@ -185,8 +222,11 @@ class UI:
             if self._logo_surf is not None else None
         )
 
-        # QR-Code
+        # QR-Codes — Galerie als grosse Card, Instagram/Termine als Mini-QRs
+        # darunter (Kiosk-tauglich, weil Gäste mit dem Smartphone scannen).
         self._qr_surf = self._make_qr(cfg.get("gallery_url", ""), size=160)
+        self._instagram_qr = self._make_mini_qr(cfg.get("instagram_url", ""))
+        self._booking_qr   = self._make_mini_qr(cfg.get("booking_url", ""))
 
         # Live-Reload-Tracking — gallery_server.py teilt config.cfg mit
         # dieser Instanz (siehe main.py: gallery_server.run im Thread).
@@ -196,6 +236,8 @@ class UI:
         self._logo_path_seen    = cfg.get("logo_path", "")
         self._logo_mtime        = self._mtime(self._logo_path_seen)
         self._qr_url_seen       = cfg.get("gallery_url", "")
+        self._insta_url_seen    = cfg.get("instagram_url", "")
+        self._booking_url_seen  = cfg.get("booking_url", "")
         self._theme_seen        = dict(cfg.get("theme") or {})
         self._last_reload_check = 0.0
 
@@ -290,6 +332,20 @@ class UI:
             logger.info("Live-Reload: gallery_url geändert (%s)", url)
             self._qr_surf     = self._make_qr(url, size=160)
             self._qr_url_seen = url
+
+        # Mini-QRs (Instagram + Termine) — Owner-Settings, die normalerweise
+        # nur per config.json-Edit + Restart geändert werden, aber die
+        # Reload-Logik ist trivial dazu zu nehmen.
+        insta_now = self._cfg.get("instagram_url", "")
+        if insta_now != self._insta_url_seen:
+            logger.info("Live-Reload: instagram_url geändert")
+            self._instagram_qr   = self._make_mini_qr(insta_now)
+            self._insta_url_seen = insta_now
+        booking_now = self._cfg.get("booking_url", "")
+        if booking_now != self._booking_url_seen:
+            logger.info("Live-Reload: booking_url geändert")
+            self._booking_qr       = self._make_mini_qr(booking_now)
+            self._booking_url_seen = booking_now
 
     # ── Homescreen ─────────────────────────────────────────────────────────────
 
@@ -418,10 +474,11 @@ class UI:
                 for i, action in enumerate(actions)]
 
     def _draw_action_buttons(self):
-        """Zeichnet die Action-Buttons mit pro-Action Akzentfarbe. Foto-Style
-        ist 'filled' (Button gefüllt mit color, weisser Text), die anderen
-        sind Outline. Label sitzt links, Chevron-Pfeil rechts — signalisiert
-        klar 'das ist eine ausführbare Aktion'.
+        """Action-Buttons mit pro-Action Akzentfarbe und modernem Look:
+        - Filled (Foto): nur Fläche, ohne Border, weisser Text
+        - Outline: dünner 2-px-Border, farbiger Text
+        - Label zentriert, dezenter Chevron rechts als Hinweis
+        - Weicher Schatten unter dem Button für Tiefe
         """
         keys  = pygame.key.get_pressed()
         panel = self._theme["panel_bg"]
@@ -434,39 +491,58 @@ class UI:
                                   self._theme["accent"])
             filled  = bool(action.get("filled", False))
 
-            # Schatten unter dem Button — gibt Tiefe.
-            shadow = pygame.Surface((rect.width + 8, rect.height + 8),
-                                    pygame.SRCALPHA)
-            pygame.draw.rect(shadow, (0, 0, 0, 70),
-                             shadow.get_rect(), border_radius=20)
-            self._screen.blit(shadow, (rect.x - 4, rect.y + 6))
+            # AA-Maske einmal pro Button bauen — wird für Schatten,
+            # Body und Outline wiederverwendet, sodass alle drei Layer
+            # exakt denselben weichen Rand teilen.
+            aa_mask = _aa_round_rect_mask(rect.width, rect.height,
+                                          ACTION_RADIUS)
 
+            # Weicher Schatten — zwei Layer für mehr Tiefe ohne harte Kante.
+            for offset_y, alpha in ((4, 35), (8, 25)):
+                shadow = pygame.Surface((rect.width, rect.height),
+                                        pygame.SRCALPHA)
+                shadow.fill((0, 0, 0, alpha))
+                shadow.blit(aa_mask, (0, 0),
+                            special_flags=pygame.BLEND_RGBA_MIN)
+                self._screen.blit(shadow, (rect.x, rect.y + offset_y))
+
+            # Hauptkörper mit Theme-Farbe.
             bg = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
             if filled or pressed:
-                bg.fill((*color, 240))
+                bg.fill((*color, 245))
                 label_color = text
             else:
-                bg.fill((*panel, 235))
+                bg.fill((*panel, 240))
                 label_color = color
+            bg.blit(aa_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
             self._screen.blit(bg, rect.topleft)
 
-            pygame.draw.rect(self._screen, color, rect,
-                             width=3, border_radius=18)
+            # Outline-Buttons bekommen einen dünnen Border, Filled keinen
+            # — sonst wirkt der Button doppelt umrandet. AA über die
+            # gleiche Supersample-Maske, damit die Border-Ecken sauber sind.
+            if not (filled or pressed):
+                outline = pygame.Surface((rect.width, rect.height),
+                                         pygame.SRCALPHA)
+                pygame.draw.rect(outline, (*color, 255),
+                                 outline.get_rect(),
+                                 width=2, border_radius=ACTION_RADIUS)
+                outline.blit(aa_mask, (0, 0),
+                             special_flags=pygame.BLEND_RGBA_MIN)
+                self._screen.blit(outline, rect.topleft)
 
-            # Label: linksbündig mit fester Padding
+            # Label zentriert
             label = action.get("label", "Aktion")
             lbl = self._f_medium.render(label, True, label_color)
-            self._screen.blit(
-                lbl, lbl.get_rect(midleft=(rect.left + 32, rect.centery)))
+            self._screen.blit(lbl, lbl.get_rect(center=rect.center))
 
-            # Chevron-Pfeil rechts ›
-            cx = rect.right - 36
+            # Chevron rechts — kleiner und dünner als vorher, nur als Akzent.
+            cx = rect.right - 28
             cy = rect.centery
-            ch = 18  # half-size
+            ch = 12
             pygame.draw.lines(
                 self._screen, label_color, False,
-                [(cx - 12, cy - ch), (cx, cy), (cx - 12, cy + ch)],
-                width=5,
+                [(cx - 9, cy - ch), (cx, cy), (cx - 9, cy + ch)],
+                width=3,
             )
 
             if pressed:
@@ -481,7 +557,7 @@ class UI:
             pygame.draw.rect(
                 glow, (*color, alpha),
                 glow.get_rect().inflate(-i * 4, -i * 4),
-                width=4, border_radius=14,
+                width=4, border_radius=ACTION_RADIUS,
             )
         self._screen.blit(glow, (rect.x - 20, rect.y - 20))
 
@@ -553,8 +629,8 @@ class UI:
         circle_color = self._theme["logo_circle"]
 
         # Cream-Kreis als Hintergrund — bleibt rund auch wenn das Logo
-        # transparente Bereiche hat.
-        pygame.draw.circle(self._screen, circle_color, (cx, cy), LOGO_CIRCLE_R)
+        # transparente Bereiche hat. AA-Kontur, sonst Pixeltreppe am Rand.
+        _aa_filled_circle(self._screen, circle_color, cx, cy, LOGO_CIRCLE_R)
 
         if self._logo_circular is not None:
             self._screen.blit(
@@ -912,7 +988,8 @@ class UI:
             for _, _, angle in self._frames:
                 surf = pygame.Surface((self._PW, self._PH), pygame.SRCALPHA)
                 surf.blit(scaled, (0, 0))
-                self._rot_cache[(path, angle)] = pygame.transform.rotate(surf, angle)
+                self._rot_cache[(path, angle)] = pygame.transform.rotozoom(
+                    surf, angle, 1.0)
         except Exception as exc:
             logger.warning("Polaroid-Ladefehler: %s", exc)
 
@@ -968,7 +1045,7 @@ class UI:
         shadow = pygame.Surface((fw, fh), pygame.SRCALPHA)
         pygame.draw.rect(shadow, (0, 0, 0, 90),
                          shadow.get_rect(), border_radius=4)
-        shadow = pygame.transform.rotate(shadow, angle)
+        shadow = pygame.transform.rotozoom(shadow, angle, 1.0)
         self._screen.blit(shadow,
                           shadow.get_rect(center=(cx + 6, cy + 10)))
 
@@ -995,17 +1072,20 @@ class UI:
         else:
             pygame.draw.rect(frame, placeholder, photo_rect)
 
-        # Pin oben — kleiner roter Kreis mit Schatten + Highlight.
+        # Pin oben — kleiner roter Kreis mit Schatten + Highlight, AA-Kanten.
         pin_cx = fw // 2
         pin_cy = POLAROID_PIN_R + 6
-        pygame.draw.circle(frame, (0, 0, 0, 100),
-                           (pin_cx + 1, pin_cy + 2), POLAROID_PIN_R)
-        pygame.draw.circle(frame, self._theme["polaroid_pin"],
-                           (pin_cx, pin_cy), POLAROID_PIN_R)
-        pygame.draw.circle(frame, (255, 255, 255, 140),
-                           (pin_cx - 3, pin_cy - 3), max(2, POLAROID_PIN_R // 3))
+        _aa_filled_circle(frame, (0, 0, 0, 100),
+                          pin_cx + 1, pin_cy + 2, POLAROID_PIN_R)
+        _aa_filled_circle(frame, self._theme["polaroid_pin"],
+                          pin_cx, pin_cy, POLAROID_PIN_R)
+        _aa_filled_circle(frame, (255, 255, 255, 140),
+                          pin_cx - 3, pin_cy - 3, max(2, POLAROID_PIN_R // 3))
 
-        return pygame.transform.rotate(frame, angle)
+        # rotozoom statt rotate: gefilterte (smoothscale-basierte) Rotation.
+        # rotate gibt nearest-neighbour-Pixeltreppen am gedrehten Rand —
+        # rotozoom blendet die Pixel weich, kein Aliasing mehr.
+        return pygame.transform.rotozoom(frame, angle, 1.0)
 
     # ── Live-View ──────────────────────────────────────────────────────────────
 
@@ -1069,7 +1149,7 @@ class UI:
         return (H - margin_bottom - box_h, box_h)
 
     def _qr_group_height(self) -> int:
-        """Gesamthöhe der QR-Group: Card + Caption + (optional) Social-Links."""
+        """Gesamthöhe der QR-Group: Card + Caption + (optional) Mini-QR-Reihen."""
         QR_SIZE = 160
         PAD     = 14
         card_h  = QR_SIZE + PAD * 2
@@ -1080,7 +1160,8 @@ class UI:
             social_rows += 1
         if (self._cfg.get("booking_url") or "").strip():
             social_rows += 1
-        social_h = (16 + social_rows * 32) if social_rows else 0
+        # Pro Reihe: Mini-QR (74 inkl. weißem Rand) + 10px Gap.
+        social_h = (16 + social_rows * (74 + 10)) if social_rows else 0
         return card_h + caption_h + social_h
 
     def _sidebar_qr_y(self) -> int:
@@ -1123,39 +1204,53 @@ class UI:
         self._draw_social_links(cx, hint_y + hint.get_height() + 16)
 
     def _draw_social_links(self, cx: int, y: int):
-        """Instagram-Handle und Termine-Buchen unter dem QR-Code.
-        Wird nur angezeigt wenn die jeweilige URL in der Config gesetzt ist —
-        sonst bleibt die Sidebar clean.
+        """Instagram + Termine als Mini-QR-Reihen unter dem Hauptpfeil.
+        Da die Box keinen Touchscreen hat, sind echte QR-Codes der einzige
+        sinnvolle Weg, einen Link nach draussen zu kommunizieren — Gäste
+        scannen mit dem Handy und der Link öffnet sich dort.
+        Werden nur gezeigt wenn die URL in config.json gesetzt ist.
         """
         rows = []
         insta = (self._cfg.get("instagram_url") or "").strip()
-        if insta:
-            rows.append(("instagram", self._instagram_handle(insta)))
+        if insta and self._instagram_qr is not None:
+            rows.append((self._instagram_qr, "Instagram",
+                         self._instagram_handle(insta)))
         booking = (self._cfg.get("booking_url") or "").strip()
-        if booking:
-            rows.append(("calendar", "Termine buchen"))
+        if booking and self._booking_qr is not None:
+            rows.append((self._booking_qr, "Termine", "buchen"))
         if not rows:
             return
 
-        icon_size  = 22
-        row_height = 32
+        qr_size = 70
+        qr_pad  = 2
+        gap_x   = 16
+        row_h   = qr_size + qr_pad * 2 + 10
 
-        for i, (icon_type, label) in enumerate(rows):
-            ry  = y + i * row_height
-            lbl = self._f_sub.render(label, True, self._theme["sidebar_text"])
-            total_w = icon_size + 10 + lbl.get_width()
-            ix = cx - total_w // 2
-            iy = ry + (row_height - icon_size) // 2
+        for i, (qr_surf, title, sub) in enumerate(rows):
+            ry = y + i * row_h
+            title_lbl = self._f_sub.render(title, True, self._theme["sidebar_text"])
+            sub_lbl   = self._f_label.render(sub, True, self._theme["sidebar_dim"])
 
-            if icon_type == "instagram":
-                self._draw_instagram_icon(ix, iy, icon_size)
-            else:
-                self._draw_calendar_icon(ix, iy, icon_size)
+            text_w  = max(title_lbl.get_width(), sub_lbl.get_width())
+            total_w = (qr_size + qr_pad * 2) + gap_x + text_w
+            x_start = cx - total_w // 2
 
+            # Weißer Container hinter dem QR — beim dunklen Sidebar-Hintergrund
+            # ist das nötig, damit Smartphone-Scanner den QR überhaupt finden.
+            bg_rect = pygame.Rect(x_start, ry,
+                                  qr_size + qr_pad * 2,
+                                  qr_size + qr_pad * 2)
+            pygame.draw.rect(self._screen, C_WHITE, bg_rect, border_radius=6)
+            self._screen.blit(qr_surf, (x_start + qr_pad, ry + qr_pad))
+
+            # Titel + Subtitle rechts vom QR, vertikal mittig zum QR.
+            text_x  = x_start + qr_size + qr_pad * 2 + gap_x
+            block_h = title_lbl.get_height() + 2 + sub_lbl.get_height()
+            tx_y    = ry + (qr_size + qr_pad * 2 - block_h) // 2
+            self._screen.blit(title_lbl, (text_x, tx_y))
             self._screen.blit(
-                lbl,
-                (ix + icon_size + 10,
-                 ry + (row_height - lbl.get_height()) // 2),
+                sub_lbl,
+                (text_x, tx_y + title_lbl.get_height() + 2),
             )
 
     def _draw_instagram_icon(self, x: int, y: int, size: int):
@@ -1292,11 +1387,17 @@ class UI:
             pygame.Rect(crop_x, crop_y, diameter, diameter)
         ).copy()
 
-        # Kreis-Maske: BLEND_RGBA_MIN nimmt das Minimum pro Kanal — innerhalb
-        # des Kreises bleibt der Logo-Inhalt erhalten, außerhalb wird alpha=0.
-        masked = pygame.Surface((diameter, diameter), pygame.SRCALPHA)
-        pygame.draw.circle(masked, (255, 255, 255, 255),
-                           (radius, radius), radius)
+        # Kreis-Maske mit AA-Edge: 4× supersamplen + smoothscale gibt einen
+        # weichen Alpha-Verlauf am Rand — sonst wirkt das Logo entlang der
+        # Kreis-Kante "pixelig". Vorfüllen mit weissem RGB (Alpha=0) hält
+        # das RGB am Rand neutral, sodass BLEND_RGBA_MIN die Logo-Farben
+        # nicht entlang der Kante grau verfärbt.
+        SS = 4
+        big = pygame.Surface((diameter * SS, diameter * SS), pygame.SRCALPHA)
+        big.fill((255, 255, 255, 0))
+        pygame.draw.circle(big, (255, 255, 255, 255),
+                           (radius * SS, radius * SS), radius * SS)
+        masked = pygame.transform.smoothscale(big, (diameter, diameter))
         masked.blit(cropped, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
         return masked
 
@@ -1318,6 +1419,16 @@ class UI:
         except Exception as exc:
             logger.warning("QR-Code-Fehler: %s", exc)
         return None
+
+    @staticmethod
+    def _make_mini_qr(url: str, size: int = 70) -> Optional[pygame.Surface]:
+        """Wie _make_qr, aber leise bei leerer URL — sonst spammt jede
+        nicht-konfigurierte Owner-URL (Insta, Termine) das Log voll.
+        """
+        url = (url or "").strip()
+        if not url:
+            return None
+        return UI._make_qr(url, size=size)
 
     @staticmethod
     def _scale_to_fill(surf: pygame.Surface, w: int, h: int) -> pygame.Surface:

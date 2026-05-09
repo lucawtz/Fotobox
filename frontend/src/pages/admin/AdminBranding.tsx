@@ -15,20 +15,19 @@ import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
 import { api, ThemeColors } from "../../api";
 import SettingsCard from "./SettingsCard";
+import {
+  THEME_PRESETS,
+  DEFAULT_PRESET_ID,
+  findActivePreset,
+  ThemePreset,
+} from "./themePresets";
 
-// Defaults müssen mit config.py / ui.py übereinstimmen — sonst sieht ein
-// frischer Mieter, der noch nichts gespeichert hat, andere Farben hier als
-// auf der Box. Wenn sich die Defaults dort ändern: hier nachziehen.
-const DEFAULT_THEME: Record<string, string> = {
-  bg_top:       "#D5BB99",
-  bg_bottom:    "#B89A75",
-  sidebar_bg:   "#3D2818",
-  accent:       "#D4A86A",
-  live_outer:   "#5A3A1C",
-  polaroid_pin: "#C24838",
-};
+// Defaults = Vintage-Cream-Preset. Wenn sich die Box-Defaults in
+// config.py / ui.py ändern: dort UND im Preset nachziehen.
+const DEFAULT_PRESET = THEME_PRESETS.find((p) => p.id === DEFAULT_PRESET_ID)!;
+const DEFAULT_THEME: Record<string, string> = { ...DEFAULT_PRESET.colors };
 
-const COLOR_FIELDS: { key: keyof typeof DEFAULT_THEME; label: string; hint: string }[] = [
+const COLOR_FIELDS: { key: string; label: string; hint: string }[] = [
   { key: "bg_top",       label: "Hintergrund oben",  hint: "Heller Verlaufsstart" },
   { key: "bg_bottom",    label: "Hintergrund unten", hint: "Dunkler Verlaufsende" },
   { key: "sidebar_bg",   label: "Sidebar",            hint: "Linkes Panel" },
@@ -64,10 +63,13 @@ export default function AdminBranding() {
       setHasLogo(c.has_logo);
       if (c.has_logo) setPreviewUrl(api.logoUrl());
 
+      // Wir laden ALLE bekannten Theme-Felder (nicht nur die 6 UI-Picker),
+      // damit Preset-Wechsel auch Felder wie polaroid_frame oder logo_circle
+      // sauber übertragen — siehe themePresets.ts.
       const incoming: Record<string, string> = {};
       const t = (c.theme as ThemeColors | undefined) ?? {};
-      for (const f of COLOR_FIELDS) {
-        incoming[f.key] = normalizeHex(t[f.key], DEFAULT_THEME[f.key]);
+      for (const k of Object.keys(DEFAULT_THEME)) {
+        incoming[k] = normalizeHex(t[k], DEFAULT_THEME[k]);
       }
       setTheme(incoming);
       setSavedTheme(incoming);
@@ -104,7 +106,15 @@ export default function AdminBranding() {
     if (file) upload(file);
   };
 
-  const themeDirty = COLOR_FIELDS.some((f) => theme[f.key] !== savedTheme[f.key]);
+  const themeDirty = Object.keys(DEFAULT_THEME).some(
+    (k) => theme[k] !== savedTheme[k],
+  );
+
+  const activePreset: ThemePreset | null = findActivePreset(theme);
+
+  const applyPreset = (preset: ThemePreset) => {
+    setTheme({ ...preset.colors });
+  };
 
   const saveTheme = async () => {
     setThemeBusy(true);
@@ -230,8 +240,117 @@ export default function AdminBranding() {
         <SettingsCard
           icon={<PaletteRoundedIcon />}
           title="Farbschema"
-          description="Farben für Hintergrund, Sidebar und Akzente. Änderungen sind nach 1 Sekunde live auf der Box."
+          description="Vorgefertigte Designs auswählen oder unten manuell anpassen. Änderungen sind nach 1 Sekunde live auf der Box."
         >
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "repeat(2, 1fr)",
+                sm: "repeat(3, 1fr)",
+                md: "repeat(4, 1fr)",
+              },
+              gap: { xs: 1, sm: 1.25 },
+              mb: 2.5,
+            }}
+          >
+            {THEME_PRESETS.map((p) => {
+              const selected = activePreset?.id === p.id;
+              return (
+                <Box
+                  key={p.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => applyPreset(p)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      applyPreset(p);
+                    }
+                  }}
+                  sx={{
+                    cursor: "pointer",
+                    borderRadius: 2,
+                    border: "2px solid",
+                    borderColor: selected ? "primary.main" : "divider",
+                    bgcolor: selected ? "#e8f0fe" : "background.paper",
+                    p: 1.25,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 0.75,
+                    transition: "border-color .15s, background-color .15s",
+                    "&:hover": {
+                      borderColor: selected ? "primary.main" : "primary.light",
+                      bgcolor: selected ? "#e8f0fe" : "grey.50",
+                    },
+                  }}
+                >
+                  <Box
+                    aria-hidden
+                    sx={{
+                      display: "flex",
+                      borderRadius: 1.25,
+                      overflow: "hidden",
+                      height: 44,
+                      border: "1px solid",
+                      borderColor: "divider",
+                    }}
+                  >
+                    {p.swatch.map((c, i) => (
+                      <Box key={i} sx={{ flex: 1, bgcolor: c }} />
+                    ))}
+                  </Box>
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontWeight: 600,
+                        lineHeight: 1.2,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {p.name}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                        lineHeight: 1.25,
+                      }}
+                    >
+                      {p.description}
+                    </Typography>
+                  </Box>
+                </Box>
+              );
+            })}
+          </Box>
+
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 1.5 }}>
+            <Typography
+              variant="overline"
+              sx={{
+                color: "text.secondary",
+                fontWeight: 600,
+                letterSpacing: ".08em",
+              }}
+            >
+              Eigene Anpassung
+            </Typography>
+            <Box sx={{ flex: 1, height: "1px", bgcolor: "divider" }} />
+            {!activePreset && (
+              <Typography variant="caption" color="primary.main" sx={{ fontWeight: 600 }}>
+                Aktiv
+              </Typography>
+            )}
+          </Box>
+
           <Box
             sx={{
               display: "grid",

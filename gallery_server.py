@@ -744,14 +744,15 @@ def api_admin_config():
     except (ValueError, TypeError):
         countdown = config.cfg["countdown_duration"]
 
+    # Hinweis: instagram_url + booking_url sind Owner-Settings — werden vom
+    # Box-Besitzer direkt in config.json gepflegt und nie über die Admin-API
+    # geschrieben, damit Mieter sie nicht überschreiben können.
     config.cfg.update({
         "event_name":         (data.get("event_name") or config.cfg["event_name"]).strip(),
         "subtitle":           str(data.get("subtitle", config.cfg.get("subtitle", ""))).strip()[:80],
         "countdown_duration": countdown,
         "wifi_ssid":          (data.get("wifi_ssid")  or config.cfg["wifi_ssid"]).strip(),
         "wifi_password":      data.get("wifi_password", config.cfg["wifi_password"]) or "",
-        "instagram_url":      str(data.get("instagram_url", config.cfg.get("instagram_url", ""))).strip()[:200],
-        "booking_url":        str(data.get("booking_url",   config.cfg.get("booking_url",   ""))).strip()[:200],
     })
 
     # Theme: Hex-Strings + panel_alpha. Ungültige Werte werden ignoriert,

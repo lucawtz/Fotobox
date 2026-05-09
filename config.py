@@ -54,7 +54,7 @@ _DEFAULTS: dict = {
     "polaroid_frames": [[567, 255, -5], [1098, 256, 5], [1633, 257, 12]],
     "polaroid_photo_size": [310, 295],
     # 16:9 — passt zum HDMI-Output der Kamera, sodass kein Letterbox entsteht.
-    "live_view_rect": [430, 490, 960, 540],
+    "live_view_rect": [510, 540, 800, 450],
     "instagram_url": "",
     "booking_url":   "",
     "disk_warn_mb": 500,

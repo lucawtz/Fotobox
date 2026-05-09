@@ -77,6 +77,7 @@ export default function AdminLayout() {
           component="img"
           src="/logo-mark.svg"
           alt="Fotobox"
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
           sx={{ width: 36, height: 36, display: "block", flexShrink: 0 }}
         />
         <Box>
