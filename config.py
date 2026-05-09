@@ -19,7 +19,7 @@ _DEFAULTS: dict = {
     "logo_path": "Layout/logo.png",
     "admin_pin": "1234",
     "host_pin": "0000",
-    "idle_timeout": 300,
+    "idle_timeout": 0,
     "slide_duration_ms": 5000,
     "gallery_port": 80,
     "hotspot_enabled": False,
