@@ -8,6 +8,23 @@ logger = logging.getLogger(__name__)
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
+# Mieter-spezifische Felder — alles was über das Admin-Panel veränderbar
+# ist. NUR diese Werte landen in der lokalen config.json (gitignored).
+# Alle Owner-Defaults (idle_timeout, instagram_url, gpio_pins, hotspot_*,
+# polaroid_frames usw.) leben in _DEFAULTS unten, sind im Repo getrackt
+# und kommen automatisch via `git pull` aufs Pi.
+_MIETER_FIELDS = frozenset({
+    "event_name",
+    "subtitle",
+    "countdown_duration",
+    "wifi_ssid",
+    "wifi_password",
+    "admin_pin",
+    "host_pin",
+    "logo_path",
+    "theme",
+})
+
 _DEFAULTS: dict = {
     "wifi_ssid": "Fotobox",
     "wifi_password": "fotobox123",
@@ -74,7 +91,13 @@ def load_config() -> dict:
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 saved = json.load(f)
-            data.update(saved)
+            # Nur Mieter-Felder aus der lokalen config.json überlagern —
+            # so bleibt z.B. ein neuer idle_timeout-Default aus config.py
+            # nach `git pull` wirksam, statt von einer alten persistierten
+            # config.json überschrieben zu werden.
+            for k in _MIETER_FIELDS:
+                if k in saved:
+                    data[k] = saved[k]
         except Exception as exc:
             logger.warning("config.json unlesbar: %s — nutze Defaults", exc)
 
@@ -103,19 +126,21 @@ _save_lock = threading.Lock()
 def save_config(data: dict):
     """Atomic save: tmp-Datei schreiben + os.replace, damit ein Stromausfall
     während des Schreibens keine korrupte config.json hinterlässt.
+
+    Es werden NUR Mieter-Felder geschrieben — alle Owner-Defaults stammen
+    aus config.py und bleiben unberührt. So überschreibt die persistierte
+    config.json keine Code-Updates aus git.
     """
-    saveable = {k: v for k, v in data.items()
-                if k not in ("gallery_url", "thumbnail_dir")}
-    for key in ("logo_path", "picture_dir"):
-        if key in saveable and os.path.isabs(saveable[key]):
+    saveable = {k: v for k, v in data.items() if k in _MIETER_FIELDS}
+    if "logo_path" in saveable and isinstance(saveable["logo_path"], str):
+        if os.path.isabs(saveable["logo_path"]):
             try:
-                saveable[key] = os.path.relpath(saveable[key], BASE_DIR)
+                saveable["logo_path"] = os.path.relpath(saveable["logo_path"], BASE_DIR)
             except ValueError:
                 pass
         # Plattform-neutral speichern: Backslashes (Windows) auf Forward-Slashes,
         # damit die config.json zwischen Dev-Maschine und Pi austauschbar bleibt.
-        if key in saveable and isinstance(saveable[key], str):
-            saveable[key] = saveable[key].replace("\\", "/")
+        saveable["logo_path"] = saveable["logo_path"].replace("\\", "/")
 
     tmp_path = CONFIG_PATH + ".tmp"
     with _save_lock:
