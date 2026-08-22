@@ -43,7 +43,7 @@ LIVE_INNER_W    = 3       # Innerer Goldakzent.
 
 # Mini-QRs unter dem Galerie-Code (Instagram / Terminbuchung). Bewusst
 # kleiner als der Galerie-QR — der bleibt der Hauptcode der Sidebar.
-SOCIAL_QR_SIZE  = 84      # Zielgroesse; _make_qr rundet auf ganze Module auf.
+SOCIAL_QR_SIZE  = 80      # Zielgroesse; _make_qr rundet auf ganze Module auf.
 SOCIAL_QR_PAD   = 7       # Cremerand um den Code — zugleich seine Quiet-Zone.
 SOCIAL_ROW_GAP  = 10      # Luft zwischen den beiden Reihen.
 SOCIAL_ICON     = 18      # Instagram-/Kalender-Glyph neben der Beschriftung.
@@ -1373,44 +1373,110 @@ class UI:
 
         self._draw_social_links(cx, hint_y + hint.get_height() + 16)
 
-    def _draw_social_links(self, cx: int, y: int):
-        """Instagram-Handle und Termine-Buchen unter dem QR-Code.
+    def _link_url(self, slug: str, cfg_key: str) -> str:
+        """Ziel-URL für einen Mini-QR.
 
-        Bewusst nur Icon + Text statt eigener Mini-QR-Codes: drei QR-Codes
-        in der schmalen Sidebar wirken überladen. Der grosse Galerie-QR
-        bleibt der einzige scannbare — Insta/Booking sind Info-Links, die
-        Gäste manuell suchen können.
+        Default ist der lokale Kurzlink auf /go/<slug> (gallery_server.go_link)
+        statt der nackten Ziel-URL. Grund: hotspot.py biegt per
+        'address=/#/<ip>' jede DNS-Anfrage auf die Box um — ein QR mit
+        'https://…' läuft also für jeden Gast, der gerade im Fotobox-WLAN
+        hängt, in einen Verbindungsfehler. Die /go/-Seite ist dagegen eine
+        reine IP-URL über http, geht immer auf und leitet selbst weiter,
+        sobald das Handy Internet hat.
+
+        qr_link_mode="direct" packt stattdessen die Ziel-URL direkt in den
+        Code — nur sinnvoll, wenn die Gäste typischerweise nicht im
+        Fotobox-WLAN sind.
         """
+        target = (self._cfg.get(cfg_key) or "").strip()
+        if not target:
+            return ""
+        if self._cfg.get("qr_link_mode", "local") != "local":
+            return target
+        base = (self._cfg.get("gallery_url") or "").rstrip("/")
+        return f"{base}/go/{slug}" if base else target
+
+    def _mini_qr(self, url: str):
+        """Gecachte Mini-QR-Surface. Der Cache hängt an der URL, sodass ein
+        geänderter Link im nächsten Frame automatisch neu gerendert wird."""
+        if url not in self._mini_qr_cache:
+            if len(self._mini_qr_cache) > 8:
+                self._mini_qr_cache.clear()
+            # border=2 statt der üblichen 4 Module: den Rest der Quiet-Zone
+            # liefert der Cremerand der Kachel. Auf ~85 px zählt jedes Modul.
+            self._mini_qr_cache[url] = self._make_qr(
+                url, size=SOCIAL_QR_SIZE, border=2, low_ecc=True)
+        return self._mini_qr_cache[url]
+
+    def _social_rows(self) -> list:
+        """[(qr_surface, icon_type, label)] für die konfigurierten Links."""
         rows = []
-        insta = (self._cfg.get("instagram_url") or "").strip()
+        insta = self._link_url("instagram", "instagram_url")
         if insta:
-            rows.append(("instagram", self._instagram_handle(insta)))
-        booking = (self._cfg.get("booking_url") or "").strip()
+            rows.append((self._mini_qr(insta), "instagram",
+                         self._instagram_handle(
+                             self._cfg.get("instagram_url") or "")))
+        booking = self._link_url("termin", "booking_url")
         if booking:
-            rows.append(("calendar", "Termine buchen"))
+            label = (self._cfg.get("booking_label") or "").strip()
+            rows.append((self._mini_qr(booking), "calendar",
+                         label or "Termin buchen"))
+        return rows
+
+    @staticmethod
+    def _social_row_height(surf) -> int:
+        h = surf.get_height() if surf is not None else SOCIAL_QR_SIZE
+        return h + SOCIAL_QR_PAD * 2 + SOCIAL_ROW_GAP
+
+    def _draw_social_links(self, cx: int, y: int):
+        """Instagram und Terminbuchung als scannbare Mini-QR-Codes.
+
+        Der Boxbildschirm ist kein Touchscreen: ein reines Textlabel wie
+        "Termine buchen" ist für den Gast eine Sackgasse — er liest es und
+        kann nichts damit anfangen. Ein QR-Code ist der einzige Weg von der
+        Box aufs Handy, deshalb steht hier je ein kleiner Code statt eines
+        blossen Icons.
+
+        Der frühere Einwand (drei Codes in der schmalen Sidebar wirken
+        überladen) wird über die Hierarchie gelöst: die Mini-Codes sind
+        deutlich kleiner als der Galerie-QR und liegen auf einer flachen
+        Kachel statt auf dessen grosser Card.
+        """
+        rows = self._social_rows()
         if not rows:
             return
 
-        icon_size  = 22
-        row_height = 32
+        # Beide Reihen linksbündig zueinander ausrichten — sonst tanzen die
+        # Beschriftungen je nach Textlänge unterschiedlich weit heraus.
+        tile_w  = max((surf.get_width() if surf else SOCIAL_QR_SIZE)
+                      for surf, _, _ in rows) + SOCIAL_QR_PAD * 2
+        label_w = max(self._f_sub.size(lbl)[0] for _, _, lbl in rows)
+        block_w = tile_w + 12 + SOCIAL_ICON + 8 + label_w
+        x0 = max(12, cx - block_w // 2)
 
-        for i, (icon_type, label) in enumerate(rows):
-            ry  = y + i * row_height
-            lbl = self._f_sub.render(label, True, self._theme["sidebar_text"])
-            total_w = icon_size + 10 + lbl.get_width()
-            ix = cx - total_w // 2
-            iy = ry + (row_height - icon_size) // 2
+        ry = y
+        for surf, icon_type, label in rows:
+            tile_h = (surf.get_height() if surf else SOCIAL_QR_SIZE) \
+                + SOCIAL_QR_PAD * 2
+            tile = pygame.Rect(x0, ry, tile_w, tile_h)
+            pygame.draw.rect(self._screen, self._theme["logo_circle"],
+                             tile, border_radius=6)
+            if surf is not None:
+                self._screen.blit(surf, surf.get_rect(center=tile.center))
 
+            ix = tile.right + 12
+            iy = tile.centery - SOCIAL_ICON // 2
             if icon_type == "instagram":
-                self._draw_instagram_icon(ix, iy, icon_size)
+                self._draw_instagram_icon(ix, iy, SOCIAL_ICON)
             else:
-                self._draw_calendar_icon(ix, iy, icon_size)
+                self._draw_calendar_icon(ix, iy, SOCIAL_ICON)
 
+            lbl = self._f_sub.render(label, True, self._theme["sidebar_text"])
             self._screen.blit(
-                lbl,
-                (ix + icon_size + 10,
-                 ry + (row_height - lbl.get_height()) // 2),
-            )
+                lbl, (ix + SOCIAL_ICON + 8,
+                      tile.centery - lbl.get_height() // 2))
+
+            ry += tile_h + SOCIAL_ROW_GAP
 
     def _draw_instagram_icon(self, x: int, y: int, size: int):
         """Vereinfachtes Instagram-Logo: gerundetes Quadrat + Kreis innen
@@ -1561,17 +1627,48 @@ class UI:
         return masked
 
     @staticmethod
-    def _make_qr(url: str, size: int = 160) -> Optional[pygame.Surface]:
+    def _make_qr(url: str, size: int = 160, border: int = 4,
+                 low_ecc: bool = False) -> Optional[pygame.Surface]:
+        """QR-Surface, hochskaliert auf ein ganzzahliges Vielfaches der
+        Modulbreite.
+
+        Die gelieferte Kantenlänge ist deshalb meist etwas grösser als
+        `size` — Aufrufer müssen sie am Surface ablesen statt anzunehmen.
+        Der Grund: bei krummer Skalierung bekommt eine Modulspalte 2 und
+        die nächste 3 Pixel, und genau daran scheitern Handy-Scanner auf
+        den kleinen Kacheln.
+
+        `border` ist die Quiet-Zone in Modulen. Die Mini-Codes fahren mit
+        2 statt 4, weil der Cremerand ihrer Kachel den Rest beisteuert.
+
+        `low_ecc` schaltet auf die schwächste Fehlerkorrektur. Die ist hier
+        genau richtig: der Code steht auf einem sauberen Bildschirm, es gibt
+        keinen Fleck und keinen Knick zu kompensieren — dafür braucht er
+        eine QR-Version weniger und bleibt auf kleinen Kacheln lesbar.
+        """
         if not url:
             logger.warning("QR-Code: keine URL — gallery_url leer in config?")
             return None
         try:
             import qrcode
             from PIL import Image
-            qr = qrcode.make(url).convert("RGB").resize((size, size), Image.NEAREST)
-            surf = pygame.image.frombuffer(
-                qr.tobytes("raw", "RGB"), (size, size), "RGB").copy()
-            logger.info("QR-Code erstellt für %s (%dx%d)", url, size, size)
+
+            qr = qrcode.QRCode(
+                border=border,
+                error_correction=(qrcode.constants.ERROR_CORRECT_L if low_ecc
+                                  else qrcode.constants.ERROR_CORRECT_M),
+            )
+            qr.add_data(url)
+            qr.make(fit=True)
+            total = qr.modules_count + 2 * border
+            scale = max(1, math.ceil(size / total))
+            px    = total * scale
+            img   = qr.make_image().get_image().convert("RGB")
+            img   = img.resize((px, px), Image.NEAREST)
+            surf  = pygame.image.frombuffer(
+                img.tobytes("raw", "RGB"), (px, px), "RGB").copy()
+            logger.info("QR-Code erstellt für %s (%d Module → %dx%d px)",
+                        url, total, px, px)
             return surf
         except ImportError as exc:
             logger.warning("qrcode/pillow fehlt: %s — QR deaktiviert", exc)
