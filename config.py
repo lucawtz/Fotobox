@@ -131,7 +131,13 @@ _DEFAULTS: dict = {
     # gallery_server.preflight() auf einen Fallback-Port gezogen werden
     # kann — ein fest gezeichneter Galerie-Code zeigte dann ins Leere.
     # Leer = ui.py zeichnet weiter Kalender-Glyph und Domain.
-    "booking_qr_path": "",
+    #
+    # Wie instagram_qr_path ein lokaler Dateipfad, KEINE URL: die Box haengt
+    # am Event in ihrem eigenen WLAN ohne Internet und kann nichts laden.
+    # Die Adresse selbst steht in booking_url. Die Datei liegt wie das Logo
+    # in Layout/ und wird nicht mitcommittet — auf einer frischen Kopie
+    # fehlt sie, dann faellt ui.py auf das Glyph zurueck und sagt es im Log.
+    "booking_qr_path": "Layout/booking_qr.png",
     "disk_warn_mb": 500,
     # Harte Grenze: darunter wird die Aufnahme verweigert, statt gphoto2
     # ins Leere laufen zu lassen. Ein RAW+JPEG-Paar der 700D braucht ~30 MB,

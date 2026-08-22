@@ -78,18 +78,31 @@ ACTION_RADIUS   = 28      # Stärker abgerundete Ecken — moderner als 18.
 LIVE_OUTER_W    = 12      # Aussenrahmen (braun) ums Live-View.
 LIVE_INNER_W    = 3       # Innerer Goldakzent.
 
-# Instagram-/Booking-Reihen unter dem Galerie-Code. Bewusst ohne eigene
-# QR-Codes: der Galerie-QR bleibt der einzige Code der Sidebar (siehe
-# _draw_social_links).
+# Instagram-/Booking-Reihen unter dem Galerie-Code. Beide koennen einen
+# eigenen, fertig gestalteten Code tragen (instagram_qr_path,
+# booking_qr_path) — beide Ziele sind konstante externe URLs. Ist keiner
+# hinterlegt, zeichnet _draw_social_links das Glyph.
 SOCIAL_ICON     = 22      # Instagram-/Kalender-Glyph neben der Beschriftung.
 SOCIAL_ROW_GAP  = 18      # Luft zwischen den Reihen.
-# Kantenlaenge fuer instagram_qr_path. Instagrams Code hat 41 Module
-# (Version 6) — bei 96 px waeren das 2,3 px pro Modul, und mit runden
-# Punkten und dem Gradient-Kontrast ist das zu wenig zum Scannen. 130 px
-# ergeben ~3,2 px/Modul und bleiben trotzdem klar kleiner als der
-# Galerie-Code, der die Sidebar anfuehren soll.
+# Kantenlaenge fuer instagram_qr_path und booking_qr_path. Instagrams
+# Code hat 41 Module (Version 6) — bei 96 px waeren das 2,3 px pro Modul,
+# und mit runden Punkten und dem Gradient-Kontrast ist das zu wenig zum
+# Scannen. 130 px ergeben ~3,2 px/Modul.
+#
+# UI.QR_SIZE ist an diesen Wert gekoppelt: der Galerie-Code soll genauso
+# gross sein wie die Codes darunter. Wer hier dreht, dreht also an allen
+# dreien — siehe den Kommentar an QR_SIZE fuer den gemessenen Preis.
 SOCIAL_QR_SIZE  = 130
-SOCIAL_QR_PAD   = 10      # Cremerand darum — zugleich die Quiet-Zone.
+# Cremerand um die Sidebar-Codes — und zugleich deren einzige Quiet-Zone:
+# _crop_to_code schneidet die mitgelieferte Ruhezone weg, damit ein Export
+# mit breitem Rand nicht winzig skaliert wird. Die QR-Norm verlangt 4
+# Module. Bei 130 px sind das im groebsten Fall (33 Module, 3,9 px/Modul)
+# knapp 16 px — der frueher hier stehende Wert 10 ergab nur 2,5 Module.
+SOCIAL_QR_PAD   = 16
+# Untergrenze, auf die _social_qr_size herunterregeln darf. Darunter wird
+# Instagrams 41-Modul-Code mit unter 2,6 px/Modul unscannbar — dann lieber
+# eine Warnung im Log als ein huebscher, toter Code.
+SOCIAL_QR_MIN   = 104
 
 # Polaroid-Renderer
 POLAROID_PAD_TOP = 18
@@ -356,12 +369,18 @@ class UI:
         # stehen darunter als Text (_draw_social_links) — beides fuehrt
         # ueber die Galerie, und drei Codes nebeneinander erschlagen den
         # Blick, ohne dass einer davon gewinnt.
-        self._qr_surf = self._make_qr(cfg.get("gallery_url", ""), size=160,
-                                      **self._qr_colors())
+        self._qr_surf = self._make_qr(cfg.get("gallery_url", ""),
+                                      size=self.QR_SIZE, **self._qr_colors())
 
         # Optionaler Instagram-QR (instagram_qr_path). Ist er gesetzt, tritt
         # er in der Sidebar an die Stelle des Instagram-Glyphs.
-        self._insta_qr = self._load_social_qr(cfg.get("instagram_qr_path", ""))
+        self._insta_qr = self._load_social_qr(
+            cfg.get("instagram_qr_path", ""), "Instagram-QR")
+
+        # Optionaler Buchungs-QR (booking_qr_path). Selbst gestaltbar, weil
+        # booking_url eine konstante externe Adresse ist — siehe config.py.
+        self._booking_qr = self._load_social_qr(
+            cfg.get("booking_qr_path", ""), "Buchungs-QR")
 
         # Live-Reload-Tracking — gallery_server.py teilt config.cfg mit
         # dieser Instanz (siehe main.py: gallery_server.run im Thread).
@@ -372,6 +391,8 @@ class UI:
         self._logo_mtime        = self._mtime(self._logo_path_seen)
         self._insta_qr_seen     = cfg.get("instagram_qr_path", "")
         self._insta_qr_mtime    = self._mtime(self._insta_qr_seen)
+        self._booking_qr_seen   = cfg.get("booking_qr_path", "")
+        self._booking_qr_mtime  = self._mtime(self._booking_qr_seen)
         self._qr_url_seen       = cfg.get("gallery_url", "")
         self._theme_seen        = dict(cfg.get("theme") or {})
         # Von main.py gesetzt (gecachter CUPS-Zustand aus printing.status()).
@@ -502,9 +523,21 @@ class UI:
         if (insta_path != self._insta_qr_seen
                 or insta_mt != self._insta_qr_mtime):
             logger.info("Live-Reload: Instagram-QR geändert (%s)", insta_path)
-            self._insta_qr        = self._load_social_qr(insta_path)
+            self._insta_qr        = self._load_social_qr(insta_path,
+                                                          "Instagram-QR")
             self._insta_qr_seen   = insta_path
             self._insta_qr_mtime  = insta_mt
+
+        # Buchungs-QR — identisch, nur ein anderer Pfad.
+        book_path = self._cfg.get("booking_qr_path", "")
+        book_mt   = self._mtime(book_path)
+        if (book_path != self._booking_qr_seen
+                or book_mt != self._booking_qr_mtime):
+            logger.info("Live-Reload: Buchungs-QR geändert (%s)", book_path)
+            self._booking_qr        = self._load_social_qr(book_path,
+                                                            "Buchungs-QR")
+            self._booking_qr_seen   = book_path
+            self._booking_qr_mtime  = book_mt
 
         # Theme — bei Änderung Hintergrund-Gradient + Theme-Farben neu bauen.
         theme_now     = dict(self._cfg.get("theme") or {})
@@ -520,7 +553,7 @@ class UI:
         url = self._cfg.get("gallery_url", "")
         if url != self._qr_url_seen or theme_changed:
             logger.info("Live-Reload: QR neu erzeugt (%s)", url)
-            self._qr_surf     = self._make_qr(url, size=160,
+            self._qr_surf     = self._make_qr(url, size=self.QR_SIZE,
                                               **self._qr_colors())
             self._qr_url_seen = url
 
@@ -1481,24 +1514,71 @@ class UI:
         line_h  = self._f_normal.get_height()
         label_h = self._f_label.get_height()
         box_h   = 22 + rows * (label_h + 4 + line_h + 14)
-        margin_bottom = 56
+        # 24 statt der frueheren 56: mit drei Codes in der QR-Gruppe fehlten
+        # sonst 40 px und _social_qr_size musste die Kacheln kleinrechnen.
+        # Instagram landete dabei bei 2,7 px/Modul und damit unter der
+        # Scangrenze. Der Rand nach unten ist die guenstigere Stelle zum
+        # Sparen als die Codes selbst.
+        margin_bottom = 24
         return (H - margin_bottom - box_h, box_h)
 
-    def _qr_group_height(self) -> int:
-        """Gesamthöhe der QR-Group: Card + Caption + (optional) Mini-QR-Reihen."""
+    def _qr_group_bounds(self) -> tuple:
+        """(oberste, unterste) y-Grenze für die QR-Gruppe. Eine Stelle für
+        beide Nutzer — _sidebar_qr_y positioniert damit, _social_qr_size
+        prüft damit, und sie können nicht auseinanderlaufen."""
+        return (self._sidebar_header_bottom() + 20,
+                self._wifi_box_metrics()[0] - 20)
+
+    def _qr_group_height(self, qr_size: Optional[int] = None) -> int:
+        """Gesamthöhe der QR-Group: Card + Caption + (optional) Code-Reihen.
+
+        `qr_size` überschreibt die Kantenlänge der Reihen-Codes — genau so
+        probiert _social_qr_size durch, welche Grösse noch passt. Ohne
+        Angabe wird die effektive Grösse benutzt.
+        """
+        if qr_size is None:
+            qr_size = self._social_qr_size()
         caption_h = self._f_sub.get_height() + 12
         rows = self._social_rows()
         social_h = 0
         if rows:
-            social_h = 16 + sum(self._social_row_height(row) for row in rows)
+            social_h = 16 + sum(self._social_row_height(row, qr_size)
+                                for row in rows)
         return self._qr_card_size() + caption_h + social_h
+
+    def _social_qr_size(self) -> int:
+        """Effektive Kantenlänge der Codes unter der Galerie-Card.
+
+        Sie sind das einzig Elastische der Sidebar: Header und WLAN-Box
+        sitzen fest, und der Galerie-Code ist der, den der Gast scannen
+        soll — also schrumpfen diese Kacheln, wenn es eng wird, und nicht
+        der Code darüber.
+
+        Eng wird es real: mit drei Codes (Galerie + Instagram + Buchung)
+        ragt die Gruppe bei 1080 px Höhe rund 40 px in die WLAN-Box. Der
+        frühere Kommentar an den Layout-Ankern versprach, das könne nicht
+        passieren — es konnte, es fiel nur nie auf, solange höchstens zwei
+        Codes gesetzt waren.
+        """
+        top, bottom = self._qr_group_bounds()
+        room   = bottom - top
+        size   = SOCIAL_QR_SIZE
+        while size > SOCIAL_QR_MIN and self._qr_group_height(size) > room:
+            size -= 2
+        if self._qr_group_height(size) > room:
+            logger.warning(
+                "Sidebar überfüllt: QR-Gruppe braucht %d px, verfügbar sind "
+                "%d px. Codes stehen auf der Untergrenze %d px — einen Code "
+                "abschalten (booking_qr_path/instagram_qr_path leeren) oder "
+                "die WLAN-Box kürzen.",
+                self._qr_group_height(size), room, size)
+        return size
 
     def _sidebar_qr_y(self) -> int:
         """y-Start der QR-Card. Vertikal zentriert zwischen Header und
         WLAN-Box, damit die Sidebar visuell ausgewogen wirkt.
         """
-        top    = self._sidebar_header_bottom() + 20
-        bottom = self._wifi_box_metrics()[0] - 30
+        top, bottom = self._qr_group_bounds()
         total  = self._qr_group_height()
         y      = top + ((bottom - top) - total) // 2
         return max(top, y)
@@ -1535,7 +1615,7 @@ class UI:
 
     def _qr_card_size(self) -> int:
         """Kantenlänge der Galerie-QR-Card. Der Code selbst ist nicht exakt
-        160 px gross — _make_qr rundet auf ganze Module auf, damit keine
+        QR_SIZE gross — _make_qr rundet auf ganze Module auf, damit keine
         Modulspalte beim Skalieren ein Pixel breiter wird als die nächste."""
         qr = self._qr_surf.get_width() if self._qr_surf is not None else 160
         return qr + self._QR_CARD_PAD * 2
@@ -1585,20 +1665,32 @@ class UI:
             # aber nicht wo. Die Domain kann er sich merken oder abtippen.
             label = (self._cfg.get("booking_label") or "").strip()
             rows.append(("calendar", label or "Termin buchen",
-                         self._domain_of(booking), None))
+                         self._domain_of(booking), self._booking_qr))
         return rows
 
-    def _social_row_height(self, row) -> int:
-        """Höhe einer Reihe inklusive Abstand zur nächsten."""
+    def _social_row_height(self, row, qr_size: Optional[int] = None) -> int:
+        """Höhe einer Reihe inklusive Abstand zur nächsten.
+
+        `qr_size` ist die Kantenlänge, mit der die Kachel gezeichnet wird
+        — nicht zwingend die des geladenen Surfaces, siehe _social_qr_size.
+        """
         _, line1, line2, surf = row
         text_h = self._f_sub.get_height()
         if line2:
             text_h += self._f_label.get_height() + 2
         if surf is not None:
+            side = surf.get_height() if qr_size is None else qr_size
             # Code über der Beschriftung — wie die Galerie-Card darüber.
-            return (surf.get_height() + SOCIAL_QR_PAD * 2 + 6 + text_h
-                    + SOCIAL_ROW_GAP)
+            return (side + SOCIAL_QR_PAD * 2 + 6 + text_h + SOCIAL_ROW_GAP)
         return max(text_h, SOCIAL_ICON) + SOCIAL_ROW_GAP
+
+    @staticmethod
+    def _fit_social(surf: pygame.Surface, side: int) -> pygame.Surface:
+        """Kachel auf die effektive Kantenlänge bringen. Stimmt sie schon,
+        wird das Original durchgereicht — der Normalfall."""
+        if surf.get_width() == side:
+            return surf
+        return pygame.transform.smoothscale(surf, (side, side))
 
     @staticmethod
     def _domain_of(url: str) -> str:
@@ -1621,10 +1713,13 @@ class UI:
         drin ist. Erzeugen können wir ihn nicht, er kommt als Bild aus der
         App (instagram_qr_path).
 
-        Beim Buchungs-Link bleibt es bei Text: wer ihn scannen würde, hängt
-        schon im Fotobox-WLAN und damit in der Galerie, wo der Button steht.
-        Was am alten Label zu Recht kritisiert wurde, war das fehlende Ziel
-        — deshalb steht die Domain jetzt in der zweiten Zeile.
+        Der Buchungs-Link darf seit booking_qr_path ebenfalls einen eigenen
+        Code tragen. Der Gast braucht ihn nicht — er hängt im Fotobox-WLAN
+        und damit in der Galerie, wo der Button steht. Gedacht ist er für
+        alle anderen: Gäste, die abends abfotografieren, wo die Box herkam.
+        Ohne hinterlegtes Bild bleibt es bei Glyph und Domain; die Domain
+        steht in beiden Fällen in der zweiten Zeile, weil ein Label ohne
+        nennbares Ziel eine Sackgasse ist.
         """
         rows = self._social_rows()
         if not rows:
@@ -1634,6 +1729,7 @@ class UI:
         # neben einem 130-px-Code wirken nicht wie ein Symbol, sondern wie
         # ein Versehen.
         glyphs = not any(surf for _, _, _, surf in rows)
+        qr_size = self._social_qr_size()
 
         ry = y
         for row in rows:
@@ -1643,6 +1739,7 @@ class UI:
                    if line2 else None)
 
             if surf is not None:
+                surf = self._fit_social(surf, qr_size)
                 card_w = surf.get_width() + SOCIAL_QR_PAD * 2
                 card_h = surf.get_height() + SOCIAL_QR_PAD * 2
                 card = pygame.Rect(cx - card_w // 2, ry, card_w, card_h)
@@ -1661,7 +1758,7 @@ class UI:
                              sub.get_width() if sub else 0)
                 block_w = (SOCIAL_ICON + 10 if glyphs else 0) + text_w
                 x0 = cx - block_w // 2
-                row_h = self._social_row_height(row) - SOCIAL_ROW_GAP
+                row_h = self._social_row_height(row, qr_size) - SOCIAL_ROW_GAP
                 if glyphs:
                     iy = ry + (row_h - SOCIAL_ICON) // 2
                     if icon_type == "instagram":
@@ -1675,7 +1772,7 @@ class UI:
                 if sub:
                     self._screen.blit(sub, (tx, ty + lbl.get_height() + 2))
 
-            ry += self._social_row_height(row)
+            ry += self._social_row_height(row, qr_size)
 
     def _draw_instagram_icon(self, x: int, y: int, size: int):
         """Vereinfachtes Instagram-Logo: gerundetes Quadrat + Kreis innen
@@ -1758,7 +1855,8 @@ class UI:
     # ── Hilfsmethoden ─────────────────────────────────────────────────────────
 
     @staticmethod
-    def _load_social_qr(path: str) -> Optional[pygame.Surface]:
+    def _load_social_qr(path: str,
+                        label: str = "Sidebar-QR") -> Optional[pygame.Surface]:
         """Lädt einen fertigen QR-Code (Instagrams eigenen) für die Sidebar.
         Leerer Pfad oder fehlende Datei → None, dann zeichnet
         _draw_social_links wieder das Glyph.
@@ -1781,15 +1879,15 @@ class UI:
         """
         if not path or not os.path.isfile(path):
             if path:
-                logger.warning("Instagram-QR: '%s' nicht gefunden — nutze Glyph",
-                               path)
+                logger.warning("%s: '%s' nicht gefunden — nutze Glyph",
+                               label, path)
             return None
         try:
             from PIL import Image
             img = Image.open(path).convert("RGBA")
         except Exception as exc:
-            logger.warning("Instagram-QR '%s' nicht ladbar: %s — nutze Glyph",
-                           path, exc)
+            logger.warning("%s '%s' nicht ladbar: %s — nutze Glyph",
+                           label, path, exc)
             return None
 
         original = img.size
@@ -1798,8 +1896,9 @@ class UI:
             img = UI._white_to_alpha(img)
         except Exception as exc:
             # Lieber ungeschnitten anzeigen als gar nicht.
-            logger.warning("Instagram-QR '%s': Aufbereitung fehlgeschlagen "
-                           "(%s) — nehme das Bild unveraendert", path, exc)
+            logger.warning("%s '%s': Aufbereitung fehlgeschlagen "
+                           "(%s) — nehme das Bild unveraendert",
+                           label, path, exc)
 
         side  = max(img.size) or 1
         scale = SOCIAL_QR_SIZE / side
@@ -1808,8 +1907,8 @@ class UI:
         small = img.resize(size, Image.LANCZOS)
         surf  = pygame.image.frombuffer(
             small.tobytes("raw", "RGBA"), size, "RGBA").convert_alpha()
-        logger.info("Instagram-QR geladen (%s, %dx%d → beschnitten %dx%d "
-                    "→ %dx%d)", path, *original, *img.size, *size)
+        logger.info("%s geladen (%s, %dx%d → beschnitten %dx%d "
+                    "→ %dx%d)", label, path, *original, *img.size, *size)
         return surf
 
     @staticmethod
@@ -1960,6 +2059,20 @@ class UI:
     # das, was die Handykamera aus Distanz sieht): identisches Ergebnis.
     # Die Gestaltung kostet also keine Scanbarkeit. Begrenzend ist die
     # Kantenlänge — bei size=160 und 33 Modulen bleiben 5 px pro Modul.
+    # Zielkantenlänge des Galerie-Codes, bewusst an SOCIAL_QR_SIZE
+    # gekoppelt: beide Codes der Sidebar sollen gleich gross sein. Wer
+    # einen davon ändert, ändert absichtlich beide.
+    #
+    # Das ist eine Gestaltungsentscheidung mit gemessenem Preis. _make_qr
+    # rundet auf ganze Module auf, 130 landet bei 132 px — 4 px pro Modul.
+    # Im Decodertest mit Verkleinerung und Unschärfe (grob die Handykamera
+    # aus Distanz) kommt der Code damit auf 1 von 6 Stufen; bei 200 waren
+    # es 231 px, 7 px/Modul und 4 von 6.
+    #
+    # Wer am Eventabend Scan-Probleme sieht, dreht deshalb hier und nicht
+    # an den Farben — die Gestaltung kostet nachweislich nichts, die
+    # Kantenlänge alles.
+    QR_SIZE         = SOCIAL_QR_SIZE
     QR_BOX          = 10     # Rendergrösse je Modul vor dem Herunterskalieren.
     QR_MIN_CONTRAST = 3.0    # WCAG-Verhältnis Modul zu Grund, sonst s/w.
 
