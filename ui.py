@@ -98,11 +98,20 @@ SOCIAL_QR_SIZE  = 130
 # mit breitem Rand nicht winzig skaliert wird. Die QR-Norm verlangt 4
 # Module. Bei 130 px sind das im groebsten Fall (33 Module, 3,9 px/Modul)
 # knapp 16 px — der frueher hier stehende Wert 10 ergab nur 2,5 Module.
-SOCIAL_QR_PAD   = 16
-# Untergrenze, auf die _social_layout herunterregeln darf. Darunter wird
-# Instagrams 41-Modul-Code mit unter 2,6 px/Modul unscannbar — dann lieber
-# eine Warnung im Log als ein huebscher, toter Code.
-SOCIAL_QR_MIN   = 104
+# Untergrenze fuer den Cremerand um eine Code-Kachel. Der tatsaechliche
+# Wert kommt aus UI._qr_pad und richtet sich nach dem groebsten Raster.
+SOCIAL_QR_PAD   = 12
+# Untergrenze, auf die _social_layout herunterregeln darf. Reicht sie
+# nicht, wird stattdessen ein Code abgeworfen — Details in _social_layout.
+#
+# 100 statt der frueheren 104, weil die Groesse seit dem Umstieg auf ganze
+# Module in Schritten der Modulzahl laeuft (bei 25 Modulen also 125, 100,
+# 75, ...) und 104 den 100er-Schritt blockiert haette. Bei 100 px hat der
+# Galerie-Code 4,0 px/Modul und im Kameratest 3 von 6 Stufen. Instagrams
+# 41-Modul-Code kommt dort nur auf 2,4 px/Modul und ist damit unter seiner
+# Lesbarkeitsgrenze — wer beide gross UND scanbar will, braucht weniger
+# Codes oder kleinere Schrift.
+SOCIAL_QR_MIN   = 100
 
 # ── Header-Grenzen ────────────────────────────────────────────────────────────
 # Untergrenzen, unter die _fit_text den Header NICHT senken darf. Darunter
@@ -111,18 +120,10 @@ SOCIAL_QR_MIN   = 104
 EVENT_MIN_PT = 22
 SUB_MIN_PT   = 16
 
-# Zeichenlimits fuer event_name / subtitle, gemessen bei genau diesen
-# Untergrenzen gegen SIDEBAR_W - 30 = 290 px:
-#
-#   Event-Name  22 pt fett, 2 Zeilen -> 51 Zeichen gemischt, 43 in Versalien
-#   Untertitel  16 pt,      3 Zeilen -> 65 Zeichen gemischt, 62 in Versalien
-#
-# Genommen ist jeweils der Versalien-Fall, abgerundet. Wer mehr eintippt,
-# bekommt keinen kleineren Text mehr, sondern einen harten Umbruch mit "…" —
-# deshalb schneidet der Galerie-Server hier ab und das Admin-Panel zeigt den
-# Zaehler. gallery_server._MAX_EVENT_NAME / _MAX_SUBTITLE spiegeln die Werte.
-EVENT_NAME_MAX_CHARS = 40
-SUBTITLE_MAX_CHARS   = 60
+# Die daraus abgeleiteten Zeichengrenzen stehen in config.py
+# (EVENT_NAME_MAX_CHARS / SUBTITLE_MAX_CHARS) — dort kommt der Galerie-Server
+# ohne pygame-Import an sie heran. Durchgesetzt werden sie beim Speichern;
+# was trotzdem zu lang ankommt, faengt _hard_wrap ab.
 
 # Polaroid-Renderer
 POLAROID_PAD_TOP = 18
@@ -448,8 +449,11 @@ class UI:
         # stehen darunter als Text (_draw_social_links) — beides fuehrt
         # ueber die Galerie, und drei Codes nebeneinander erschlagen den
         # Blick, ohne dass einer davon gewinnt.
+        # border=0: die Ruhezone liefert der Cremerand der Karte, damit
+        # das Muster genauso gross ist wie bei den Codes darunter.
         self._qr_surf = self._make_qr(cfg.get("gallery_url", ""),
-                                      size=self.QR_SIZE, **self._qr_colors())
+                                      size=self.QR_SIZE, border=0,
+                                      **self._qr_colors())
 
         # Optionaler Instagram-QR (instagram_qr_path). Ist er gesetzt, tritt
         # er in der Sidebar an die Stelle des Instagram-Glyphs.
@@ -636,7 +640,7 @@ class UI:
         if url != self._qr_url_seen or theme_changed:
             logger.info("Live-Reload: QR neu erzeugt (%s)", url)
             self._qr_surf     = self._make_qr(url, size=self.QR_SIZE,
-                                              **self._qr_colors())
+                                              border=0, **self._qr_colors())
             self._qr_url_seen = url
 
     # ── Homescreen ─────────────────────────────────────────────────────────────
@@ -1791,7 +1795,9 @@ class UI:
         caption_h = self._f_sub.get_height() + 12
         social_h  = (16 + sum(self._social_row_height(r, qr_size) for r in rows)
                      if rows else 0)
-        return self._qr_card_size() + caption_h + social_h
+        # Die Galerie-Card zaehlt mit derselben Kantenlaenge: alle drei
+        # Muster sollen gleich gross sein, also schrumpfen sie gemeinsam.
+        return self._qr_card_size(qr_size) + caption_h + social_h
 
     def _social_layout(self) -> tuple:
         """(Reihen, Kachelgrösse) in der Fassung, die wirklich passt.
@@ -1826,9 +1832,19 @@ class UI:
             return self._social_cache[1]
 
         while True:
-            size = SOCIAL_QR_SIZE
-            while size > SOCIAL_QR_MIN and self._group_height(rows, size) > room:
-                size -= 2
+            # Die Groesse laeuft in ganzen Modulen des Galerie-Codes, denn
+            # der wird in ihr neu gerendert statt skaliert. Krumme
+            # Kantenlaengen kosten messbar: 125 px auf 113 heruntergerechnet
+            # ergibt 4,5 px/Modul und 2 von 6 Stufen im Kameratest, direkt
+            # auf 100 px gerendert sind es 4,0 px/Modul und 3 von 6. Harte
+            # Modulkanten wiegen schwerer als ein paar Pixel Kantenlaenge.
+            mods = self._qr_modules(self._cfg.get("gallery_url", ""))
+            k    = max(1, SOCIAL_QR_SIZE // mods)
+            size = mods * k
+            while (k > 1 and mods * (k - 1) >= SOCIAL_QR_MIN
+                   and self._group_height(rows, size) > room):
+                k -= 1
+                size = mods * k
             if self._group_height(rows, size) <= room:
                 self._social_cache = (key, (rows, size))
                 return rows, size
@@ -1901,31 +1917,88 @@ class UI:
                    None)
         return {"fg": fg, "bg": bg, "eye": eye}
 
-    _QR_CARD_PAD = 14
+    @staticmethod
+    @functools.lru_cache(maxsize=8)
+    def _qr_modules(url: str) -> int:
+        """Modulzahl des Codes fuer diese URL, ohne Ruhezone.
 
-    def _qr_card_size(self) -> int:
-        """Kantenlänge der Galerie-QR-Card. Der Code selbst ist nicht exakt
-        QR_SIZE gross — _make_qr rundet auf ganze Module auf, damit keine
-        Modulspalte beim Skalieren ein Pixel breiter wird als die nächste."""
-        qr = self._qr_surf.get_width() if self._qr_surf is not None else 160
-        return qr + self._QR_CARD_PAD * 2
+        Rechnet nur, rendert nicht — gebraucht, um Ruhezone und
+        Kachelgroessen zu bemessen, bevor irgendein Bild existiert.
+        """
+        try:
+            import qrcode
+            qr = qrcode.QRCode(border=0)
+            qr.add_data(url)
+            qr.make(fit=True)
+            return qr.modules_count
+        except Exception:
+            return 25
+
+    def _qr_module_px(self, size: int) -> int:
+        """Modulbreite, die _make_qr bei dieser Zielgroesse waehlen wird."""
+        return max(1, size // self._qr_modules(self._cfg.get("gallery_url", "")))
+
+    def _qr_pad(self) -> int:
+        """Cremerand um jede Code-Kachel — zugleich deren Quiet-Zone.
+
+        Ein Wert fuer alle drei Kacheln, damit sie gleich aussehen: der
+        Galerie-Code sass frueher 30 px vom Kartenrand entfernt und die
+        Social-Codes 16 px, weil nur der Galerie-Code seine Ruhezone im
+        Bild trug.
+
+        Bemessen wird am groebsten Raster, und das ist der Galerie-Code —
+        25 Module gegenueber 41 bei Instagram. Wer die 4 Module der QR-Norm
+        dort schafft, schafft sie bei den feineren Codes erst recht.
+        """
+        return max(SOCIAL_QR_PAD, 4 * self._qr_module_px(self.QR_SIZE))
+
+    def _qr_card_size(self, side: Optional[int] = None) -> int:
+        """Kantenlänge der Galerie-QR-Card zu einer Muster-Kantenlänge.
+
+        Ohne Angabe wird die Breite des vorhandenen Codes benutzt. Beim
+        Durchprobieren in _social_layout muss dagegen die Grösse zählen,
+        die dort gerade getestet wird — sonst rechnet die Layoutprüfung
+        mit einer Card, die es hinterher nicht gibt.
+        """
+        if side is None:
+            side = (self._qr_surf.get_width() if self._qr_surf is not None
+                    else SOCIAL_QR_SIZE)
+        return side + self._qr_pad() * 2
+
+    def _gallery_qr(self, side: int) -> Optional[pygame.Surface]:
+        """Galerie-Code in der Ziel-Kantenlaenge, neu gerendert statt
+        skaliert — siehe die Begruendung in _social_layout. Das Ergebnis
+        wird gecacht, weil die Sidebar jeden Frame neu gezeichnet wird.
+        """
+        if self._qr_surf is None:
+            return None
+        if self._qr_surf.get_width() == side:
+            return self._qr_surf
+        cached = getattr(self, "_qr_scaled", None)
+        if cached and cached[0] == side:
+            return cached[1]
+        surf = self._make_qr(self._cfg.get("gallery_url", ""), size=side,
+                             border=0, **self._qr_colors()) or self._qr_surf
+        self._qr_scaled = (side, surf)
+        return surf
 
     def _draw_qr_card(self):
         """QR auf cremig-weißem Container in der Sidebar — vertikal mittig.
-        Caption und Mini-QRs werden direkt darunter gezeichnet.
+        Caption und Code-Reihen werden direkt darunter gezeichnet.
         """
         cx = SIDEBAR_W // 2
-        PAD    = self._QR_CARD_PAD
-        card_w = card_h = self._qr_card_size()
+        PAD    = self._qr_pad()
+        _, side = self._social_layout()
+        qr = self._gallery_qr(side)
+        card_w = card_h = self._qr_card_size(side)
         y = self._sidebar_qr_y()
 
         card = pygame.Rect(cx - card_w // 2, y, card_w, card_h)
         pygame.draw.rect(self._screen, self._theme["logo_circle"],
                          card, border_radius=10)
 
-        if self._qr_surf is not None:
-            self._screen.blit(self._qr_surf,
-                              (card.x + PAD, card.y + PAD))
+        if qr is not None:
+            self._screen.blit(qr, (card.x + PAD, card.y + PAD))
         else:
             err = self._f_small.render("QR fehlt", True, self._theme["panel_bg"])
             self._screen.blit(err, err.get_rect(center=card.center))
@@ -1971,7 +2044,7 @@ class UI:
         if surf is not None:
             side = surf.get_height() if qr_size is None else qr_size
             # Code über der Beschriftung — wie die Galerie-Card darüber.
-            return (side + SOCIAL_QR_PAD * 2 + 6 + text_h + SOCIAL_ROW_GAP)
+            return (side + self._qr_pad() * 2 + 6 + text_h + SOCIAL_ROW_GAP)
         return max(text_h, SOCIAL_ICON) + SOCIAL_ROW_GAP
 
     @staticmethod
@@ -2029,13 +2102,13 @@ class UI:
 
             if surf is not None:
                 surf = self._fit_social(surf, qr_size)
-                card_w = surf.get_width() + SOCIAL_QR_PAD * 2
-                card_h = surf.get_height() + SOCIAL_QR_PAD * 2
+                pad    = self._qr_pad()
+                card_w = surf.get_width() + pad * 2
+                card_h = surf.get_height() + pad * 2
                 card = pygame.Rect(cx - card_w // 2, ry, card_w, card_h)
                 pygame.draw.rect(self._screen, self._theme["logo_circle"],
                                  card, border_radius=8)
-                self._screen.blit(surf, (card.x + SOCIAL_QR_PAD,
-                                         card.y + SOCIAL_QR_PAD))
+                self._screen.blit(surf, (card.x + pad, card.y + pad))
                 ty = card.bottom + 6
                 self._screen.blit(lbl, lbl.get_rect(centerx=cx, top=ty))
                 if sub:
@@ -2460,8 +2533,15 @@ class UI:
         die nächste 3 Pixel, und genau daran scheitern Handy-Scanner auf
         den kleinen Kacheln.
 
-        `border` ist die Quiet-Zone in Modulen, `fg`/`bg` sind Modul- und
-        Grundfarbe, `eye` färbt die inneren Kerne der drei Finder.
+        `border` ist die Quiet-Zone in Modulen. 0 ist zulaessig und der
+        Normalfall in der Sidebar: dort liefert der Cremerand der Karte die
+        Ruhezone, genau wie bei den Social-Codes, die _load_social_qr auf
+        ihr Muster beschneidet. Steckt die Ruhezone dagegen im Bild, ist
+        das sichtbare Muster kleiner als die Kachel daneben und sitzt
+        weiter vom Rand weg — beides fiel im Vergleich sofort auf.
+
+        `fg`/`bg` sind Modul- und Grundfarbe, `eye` faerbt die inneren
+        Kerne der drei Finder.
 
         Reichen fg/bg nicht für QR_MIN_CONTRAST, fällt die Farbwahl still
         auf Schwarz-Weiss zurück: der Mieter kann jede Theme-Farbe frei
@@ -2494,7 +2574,11 @@ class UI:
             qr.add_data(url)
             qr.make(fit=True)
             total = qr.modules_count + 2 * border
-            scale = max(1, math.ceil(size / total))
+            # Abrunden, nicht auf: `size` ist der Platz, der zur Verfuegung
+            # steht, und die Kachel daneben ist genauso breit. Aufrunden
+            # lieferte frueher 165 px fuer size=160 und liess den Code aus
+            # seinem Feld herausragen.
+            scale = max(1, size // total)
             px    = total * scale
 
             img, styled = UI._qr_pil(qr, fg, bg, eye)
@@ -2502,7 +2586,16 @@ class UI:
             # — deshalb hier zwei Filter statt einem.
             img  = img.resize((px, px),
                               Image.LANCZOS if styled else Image.NEAREST)
-            if not UI._qr_readable(img):
+
+            # Der Decodetest braucht die Ruhezone. Steckt sie nicht im Bild
+            # (border=0, weil die Kachel sie beisteuert), wird sie hier nur
+            # fuer den Test angesetzt — sonst meldet der Decoder einen
+            # Fehler, den es auf dem Bildschirm gar nicht gibt.
+            test, quiet = img, max(0, 4 - border) * scale
+            if quiet:
+                test = Image.new("RGB", (px + 2 * quiet,) * 2, bg)
+                test.paste(img, (quiet, quiet))
+            if not UI._qr_readable(test):
                 logger.warning(
                     "QR-Code für %s ist bei %d px nicht decodierbar — "
                     "QR-Card vergrössern oder Theme-Farben prüfen", url, px)
