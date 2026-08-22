@@ -16,6 +16,9 @@
 gpiozero~=2.0.1
 pygame~=2.6.1
 opencv-python~=5.0.0
+# Direkt genutzt: ui.py schneidet den Instagram-QR damit zu (_crop_to_code).
+# Kommt ohnehin mit opencv, steht hier aber explizit, weil wir darauf bauen.
+numpy~=2.0.2
 flask~=3.1.3
 waitress~=3.0.2
 qrcode[pil]~=8.2

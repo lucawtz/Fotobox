@@ -8,6 +8,7 @@ from collections import deque
 from typing import Optional
 
 import cv2
+import numpy as np
 import pygame
 import pygame.gfxdraw
 
@@ -81,7 +82,14 @@ LIVE_INNER_W    = 3       # Innerer Goldakzent.
 # QR-Codes: der Galerie-QR bleibt der einzige Code der Sidebar (siehe
 # _draw_social_links).
 SOCIAL_ICON     = 22      # Instagram-/Kalender-Glyph neben der Beschriftung.
-SOCIAL_ROW_GAP  = 12      # Luft zwischen den Reihen.
+SOCIAL_ROW_GAP  = 18      # Luft zwischen den Reihen.
+# Kantenlaenge fuer instagram_qr_path. Instagrams Code hat 41 Module
+# (Version 6) — bei 96 px waeren das 2,3 px pro Modul, und mit runden
+# Punkten und dem Gradient-Kontrast ist das zu wenig zum Scannen. 130 px
+# ergeben ~3,2 px/Modul und bleiben trotzdem klar kleiner als der
+# Galerie-Code, der die Sidebar anfuehren soll.
+SOCIAL_QR_SIZE  = 130
+SOCIAL_QR_PAD   = 10      # Cremerand darum — zugleich die Quiet-Zone.
 
 # Polaroid-Renderer
 POLAROID_PAD_TOP = 18
@@ -348,7 +356,12 @@ class UI:
         # stehen darunter als Text (_draw_social_links) — beides fuehrt
         # ueber die Galerie, und drei Codes nebeneinander erschlagen den
         # Blick, ohne dass einer davon gewinnt.
-        self._qr_surf = self._make_qr(cfg.get("gallery_url", ""), size=160)
+        self._qr_surf = self._make_qr(cfg.get("gallery_url", ""), size=160,
+                                      **self._qr_colors())
+
+        # Optionaler Instagram-QR (instagram_qr_path). Ist er gesetzt, tritt
+        # er in der Sidebar an die Stelle des Instagram-Glyphs.
+        self._insta_qr = self._load_social_qr(cfg.get("instagram_qr_path", ""))
 
         # Live-Reload-Tracking — gallery_server.py teilt config.cfg mit
         # dieser Instanz (siehe main.py: gallery_server.run im Thread).
@@ -357,6 +370,8 @@ class UI:
         # Wert-Änderungen neu rendern.
         self._logo_path_seen    = cfg.get("logo_path", "")
         self._logo_mtime        = self._mtime(self._logo_path_seen)
+        self._insta_qr_seen     = cfg.get("instagram_qr_path", "")
+        self._insta_qr_mtime    = self._mtime(self._insta_qr_seen)
         self._qr_url_seen       = cfg.get("gallery_url", "")
         self._theme_seen        = dict(cfg.get("theme") or {})
         # Von main.py gesetzt (gecachter CUPS-Zustand aus printing.status()).
@@ -480,19 +495,33 @@ class UI:
             self._logo_path_seen = logo_path
             self._logo_mtime     = logo_mt
 
+        # Instagram-QR — gleiches Spiel wie beim Logo: der Owner kann die
+        # Datei austauschen, ohne den Pfad zu ändern.
+        insta_path = self._cfg.get("instagram_qr_path", "")
+        insta_mt   = self._mtime(insta_path)
+        if (insta_path != self._insta_qr_seen
+                or insta_mt != self._insta_qr_mtime):
+            logger.info("Live-Reload: Instagram-QR geändert (%s)", insta_path)
+            self._insta_qr        = self._load_social_qr(insta_path)
+            self._insta_qr_seen   = insta_path
+            self._insta_qr_mtime  = insta_mt
+
         # Theme — bei Änderung Hintergrund-Gradient + Theme-Farben neu bauen.
-        theme_now = dict(self._cfg.get("theme") or {})
-        if theme_now != self._theme_seen:
+        theme_now     = dict(self._cfg.get("theme") or {})
+        theme_changed = theme_now != self._theme_seen
+        if theme_changed:
             logger.info("Live-Reload: Theme geändert")
             self._apply_theme(self._cfg)
             self._theme_seen = theme_now
 
         # QR-Code — neu generieren wenn sich gallery_url ändert (z.B. Port
-        # oder hotspot_ip vom Admin verstellt).
+        # oder hotspot_ip vom Admin verstellt) und seit der Code
+        # Theme-Farben trägt auch bei jedem Theme-Wechsel.
         url = self._cfg.get("gallery_url", "")
-        if url != self._qr_url_seen:
-            logger.info("Live-Reload: gallery_url geändert (%s)", url)
-            self._qr_surf     = self._make_qr(url, size=160)
+        if url != self._qr_url_seen or theme_changed:
+            logger.info("Live-Reload: QR neu erzeugt (%s)", url)
+            self._qr_surf     = self._make_qr(url, size=160,
+                                              **self._qr_colors())
             self._qr_url_seen = url
 
     # ── Homescreen ─────────────────────────────────────────────────────────────
@@ -1068,7 +1097,10 @@ class UI:
         PAD = 16
         x, y = W - QR - PAD, PAD
         bg = pygame.Surface((QR + PAD * 2, QR + PAD * 2))
-        bg.fill(C_WHITE)
+        # Creme statt Weiss: der Code bringt seine Quiet-Zone jetzt selbst
+        # in dieser Farbe mit, ein weisser Rahmen zöge eine sichtbare Kante
+        # genau um sie herum.
+        bg.fill(self._theme["logo_circle"])
         self._screen.blit(bg, (x - PAD, y - PAD))
         self._screen.blit(self._qr_surf, (x, y))
 
@@ -1420,7 +1452,7 @@ class UI:
         QR, PAD = self._qr_surf.get_width(), 12
         x, y = W - QR - PAD, H - QR - PAD
         bg = pygame.Surface((QR + PAD * 2, QR + PAD * 2))
-        bg.fill(C_WHITE)
+        bg.fill(self._theme["logo_circle"])   # siehe _draw_qr_result
         bg.set_alpha(220)
         self._screen.blit(bg, (x - PAD, y - PAD))
         self._screen.blit(self._qr_surf, (x, y))
@@ -1471,6 +1503,34 @@ class UI:
         y      = top + ((bottom - top) - total) // 2
         return max(top, y)
 
+    # Kandidaten für den Akzent in den Augenkernen, in dieser Reihenfolge.
+    # Genommen wird der erste, der zwei Hürden nimmt: genug Kontrast zum
+    # Grund (sonst leidet die Finder-Erkennung) UND genug Abstand zur
+    # Modulfarbe (sonst ist der Akzent gesetzt, aber nicht zu sehen).
+    #
+    # Beide Hürden sind nötig, und zwar wegen realer Themes: bordeaux
+    # setzt logo_text exakt auf sidebar_bg und accent_dim nur ΔE 39
+    # daneben — reine Ungleichheit hätte hier einen unsichtbaren Akzent
+    # durchgewinkt. In braun fällt umgekehrt accent durch, weil es auf
+    # Creme nur 1,85:1 bringt.
+    _QR_EYE_KEYS      = ("accent", "logo_text", "accent_dim", "panel_border")
+    _QR_EYE_MIN_DELTA = 60
+
+    def _qr_colors(self) -> dict:
+        """Theme-Farben für den Galerie-QR: Module im Sidebar-Ton, Grund in
+        der Cremefarbe der Karte — so verschwindet die Quiet-Zone in ihr,
+        statt als weisses Quadrat aufzusetzen. Dazu ein Akzent in den
+        Augenkernen, sofern das Theme einen hergibt, der sich sowohl von
+        der Modulfarbe als auch vom Grund abhebt.
+        """
+        fg  = self._theme["sidebar_bg"]
+        bg  = self._theme["logo_circle"]
+        eye = next((c for c in (self._theme[k] for k in self._QR_EYE_KEYS)
+                    if UI._contrast(c, bg) >= UI.QR_MIN_CONTRAST
+                    and UI._color_distance(c, fg) >= self._QR_EYE_MIN_DELTA),
+                   None)
+        return {"fg": fg, "bg": bg, "eye": eye}
+
     _QR_CARD_PAD = 14
 
     def _qr_card_size(self) -> int:
@@ -1508,13 +1568,16 @@ class UI:
         self._draw_social_links(cx, hint_y + hint.get_height() + 16)
 
     def _social_rows(self) -> list:
-        """[(icon_type, zeile1, zeile2|None)] für die konfigurierten Links."""
+        """[(icon_type, zeile1, zeile2|None, qr_surface|None)]."""
         rows = []
         insta = (self._cfg.get("instagram_url") or "").strip()
         if insta:
-            # Ein Handle ist für sich genommen handlungsfähig: der Gast tippt
-            # ihn in die Instagram-Suche. Deshalb reicht hier Text.
-            rows.append(("instagram", self._instagram_handle(insta), None))
+            # Mit hinterlegtem instagram_qr_path tritt Instagrams eigener
+            # Code an die Stelle des Glyphs — er ist an seiner Optik sofort
+            # als Instagram erkennbar und wirkt deshalb nicht wie ein
+            # zweiter, konkurrierender Code neben dem Galerie-QR.
+            rows.append(("instagram", self._instagram_handle(insta),
+                         None, self._insta_qr))
         booking = (self._cfg.get("booking_url") or "").strip()
         if booking:
             # Zweite Zeile mit der nackten Domain. "Termin buchen" allein war
@@ -1522,15 +1585,20 @@ class UI:
             # aber nicht wo. Die Domain kann er sich merken oder abtippen.
             label = (self._cfg.get("booking_label") or "").strip()
             rows.append(("calendar", label or "Termin buchen",
-                         self._domain_of(booking)))
+                         self._domain_of(booking), None))
         return rows
 
     def _social_row_height(self, row) -> int:
-        _, line1, line2 = row
-        h = self._f_sub.get_height()
+        """Höhe einer Reihe inklusive Abstand zur nächsten."""
+        _, line1, line2, surf = row
+        text_h = self._f_sub.get_height()
         if line2:
-            h += self._f_label.get_height() + 2
-        return max(h, SOCIAL_ICON) + SOCIAL_ROW_GAP
+            text_h += self._f_label.get_height() + 2
+        if surf is not None:
+            # Code über der Beschriftung — wie die Galerie-Card darüber.
+            return (surf.get_height() + SOCIAL_QR_PAD * 2 + 6 + text_h
+                    + SOCIAL_ROW_GAP)
+        return max(text_h, SOCIAL_ICON) + SOCIAL_ROW_GAP
 
     @staticmethod
     def _domain_of(url: str) -> str:
@@ -1539,51 +1607,75 @@ class UI:
         return rest[4:] if rest.startswith("www.") else rest
 
     def _draw_social_links(self, cx: int, y: int):
-        """Instagram-Handle und Terminbuchung unter dem Galerie-QR.
+        """Instagram und Terminbuchung unter dem Galerie-QR.
 
-        Bewusst ohne eigene QR-Codes. Der Galerie-Code ist die eine Sache,
-        die der Gast an der Box tun soll — stehen zwei weitere gleichartige
-        Codes daneben, verliert er genau diese Führung, und keiner der drei
-        gewinnt. Der Buchungs-Link braucht hier auch keinen eigenen Code:
-        wer ihn scannen würde, hängt bereits im Fotobox-WLAN und damit in
-        der Galerie, wo der Button ohnehin steht (OwnerLinks.tsx).
+        Alles zentriert und gestapelt, wie die Galerie-Card darüber: ein
+        Code mit seiner Beschriftung darunter. Nebeneinander gesetzt bliebe
+        in einer 320 px breiten Sidebar für den Text zu wenig übrig, und
+        die Zeile klebte am rechten Rand.
 
-        Was der ursprüngliche Einwand zu Recht traf, war das Label: "Termin
-        buchen" nennt kein Ziel. Deshalb steht die Domain jetzt darunter.
+        Der Galerie-Code bleibt der einzige selbst erzeugte QR — er ist die
+        eine Sache, die der Gast an der Box tun soll. Instagrams eigener
+        Code ist die Ausnahme, wenn er hinterlegt ist: den erkennt man an
+        seiner Optik, statt ihn erst scannen zu müssen um zu wissen was
+        drin ist. Erzeugen können wir ihn nicht, er kommt als Bild aus der
+        App (instagram_qr_path).
+
+        Beim Buchungs-Link bleibt es bei Text: wer ihn scannen würde, hängt
+        schon im Fotobox-WLAN und damit in der Galerie, wo der Button steht.
+        Was am alten Label zu Recht kritisiert wurde, war das fehlende Ziel
+        — deshalb steht die Domain jetzt in der zweiten Zeile.
         """
         rows = self._social_rows()
         if not rows:
             return
 
-        # Alle Reihen am selben linken Rand ausrichten, sonst tanzen Icon und
-        # Text je nach Textlänge unterschiedlich weit heraus.
-        width = 0
-        for _, line1, line2 in rows:
-            w = self._f_sub.size(line1)[0]
-            if line2:
-                w = max(w, self._f_label.size(line2)[0])
-            width = max(width, w)
-        x0 = max(12, cx - (SOCIAL_ICON + 10 + width) // 2)
+        # Glyphs nur, solange keine Reihe einen echten Code trägt: 22 px
+        # neben einem 130-px-Code wirken nicht wie ein Symbol, sondern wie
+        # ein Versehen.
+        glyphs = not any(surf for _, _, _, surf in rows)
 
         ry = y
         for row in rows:
-            icon_type, line1, line2 = row
-            row_h = self._social_row_height(row) - SOCIAL_ROW_GAP
-            iy = ry + (row_h - SOCIAL_ICON) // 2
-
-            if icon_type == "instagram":
-                self._draw_instagram_icon(x0, iy, SOCIAL_ICON)
-            else:
-                self._draw_calendar_icon(x0, iy, SOCIAL_ICON)
-
-            tx = x0 + SOCIAL_ICON + 10
+            icon_type, line1, line2, surf = row
             lbl = self._f_sub.render(line1, True, self._theme["sidebar_text"])
-            self._screen.blit(lbl, (tx, ry))
-            if line2:
-                sub = self._f_label.render(line2, True, self._theme["accent"])
-                self._screen.blit(sub, (tx, ry + lbl.get_height() + 2))
+            sub = (self._f_label.render(line2, True, self._theme["accent"])
+                   if line2 else None)
 
-            ry += row_h + SOCIAL_ROW_GAP
+            if surf is not None:
+                card_w = surf.get_width() + SOCIAL_QR_PAD * 2
+                card_h = surf.get_height() + SOCIAL_QR_PAD * 2
+                card = pygame.Rect(cx - card_w // 2, ry, card_w, card_h)
+                pygame.draw.rect(self._screen, self._theme["logo_circle"],
+                                 card, border_radius=8)
+                self._screen.blit(surf, (card.x + SOCIAL_QR_PAD,
+                                         card.y + SOCIAL_QR_PAD))
+                ty = card.bottom + 6
+                self._screen.blit(lbl, lbl.get_rect(centerx=cx, top=ty))
+                if sub:
+                    self._screen.blit(
+                        sub, sub.get_rect(centerx=cx,
+                                          top=ty + lbl.get_height() + 2))
+            else:
+                text_w = max(lbl.get_width(),
+                             sub.get_width() if sub else 0)
+                block_w = (SOCIAL_ICON + 10 if glyphs else 0) + text_w
+                x0 = cx - block_w // 2
+                row_h = self._social_row_height(row) - SOCIAL_ROW_GAP
+                if glyphs:
+                    iy = ry + (row_h - SOCIAL_ICON) // 2
+                    if icon_type == "instagram":
+                        self._draw_instagram_icon(x0, iy, SOCIAL_ICON)
+                    else:
+                        self._draw_calendar_icon(x0, iy, SOCIAL_ICON)
+                tx = x0 + (SOCIAL_ICON + 10 if glyphs else 0)
+                text_h = lbl.get_height() + (sub.get_height() + 2 if sub else 0)
+                ty = ry + (row_h - text_h) // 2
+                self._screen.blit(lbl, (tx, ty))
+                if sub:
+                    self._screen.blit(sub, (tx, ty + lbl.get_height() + 2))
+
+            ry += self._social_row_height(row)
 
     def _draw_instagram_icon(self, x: int, y: int, size: int):
         """Vereinfachtes Instagram-Logo: gerundetes Quadrat + Kreis innen
@@ -1666,6 +1758,131 @@ class UI:
     # ── Hilfsmethoden ─────────────────────────────────────────────────────────
 
     @staticmethod
+    def _load_social_qr(path: str) -> Optional[pygame.Surface]:
+        """Lädt einen fertigen QR-Code (Instagrams eigenen) für die Sidebar.
+        Leerer Pfad oder fehlende Datei → None, dann zeichnet
+        _draw_social_links wieder das Glyph.
+
+        Instagrams Code lässt sich nicht selbst erzeugen — er kommt als Bild
+        aus der App, und zwar als grosse Kachel: weisse Karte, viel Rand,
+        darunter das Handle als Schriftzug. Beides wird hier automatisch
+        entfernt, damit der Owner nichts von Hand zuschneiden muss:
+
+        * Der Schriftzug fliegt raus. Er steht ohnehin als Text daneben, und
+          jeder Pixel, den er belegt, fehlt dem Code beim Verkleinern.
+        * Der Rand fliegt raus, der Code füllt die Kachel.
+        * Das Weiss wird transparent, damit der Code auf der Cremekachel der
+          Sidebar sitzt statt in einem weissen Rechteck darauf.
+
+        Das Weiss wird bewusst nur durch die *helle* Kachel ersetzt und nicht
+        durch das Sidebar-Braun: ein QR-Code braucht dunkle Module auf hellem
+        Grund. Auf dem Braun wäre der Kontrast umgekehrt, und daran scheitern
+        viele Scanner.
+        """
+        if not path or not os.path.isfile(path):
+            if path:
+                logger.warning("Instagram-QR: '%s' nicht gefunden — nutze Glyph",
+                               path)
+            return None
+        try:
+            from PIL import Image
+            img = Image.open(path).convert("RGBA")
+        except Exception as exc:
+            logger.warning("Instagram-QR '%s' nicht ladbar: %s — nutze Glyph",
+                           path, exc)
+            return None
+
+        original = img.size
+        try:
+            img = UI._crop_to_code(img)
+            img = UI._white_to_alpha(img)
+        except Exception as exc:
+            # Lieber ungeschnitten anzeigen als gar nicht.
+            logger.warning("Instagram-QR '%s': Aufbereitung fehlgeschlagen "
+                           "(%s) — nehme das Bild unveraendert", path, exc)
+
+        side  = max(img.size) or 1
+        scale = SOCIAL_QR_SIZE / side
+        size  = (max(1, round(img.width * scale)),
+                 max(1, round(img.height * scale)))
+        small = img.resize(size, Image.LANCZOS)
+        surf  = pygame.image.frombuffer(
+            small.tobytes("raw", "RGBA"), size, "RGBA").convert_alpha()
+        logger.info("Instagram-QR geladen (%s, %dx%d → beschnitten %dx%d "
+                    "→ %dx%d)", path, *original, *img.size, *size)
+        return surf
+
+    @staticmethod
+    def _crop_to_code(img):
+        """Schneidet Rand und Handle-Schriftzug weg, lässt nur den Code."""
+        arr   = np.array(img)
+        rgb   = arr[..., :3].astype(np.int16)
+        alpha = arr[..., 3]
+        # "Tinte" = sichtbar und nicht nahezu weiss.
+        ink = (alpha > 40) & (rgb.min(axis=2) < 220)
+        if not ink.any():
+            return img
+
+        rows   = ink.any(axis=1)
+        top    = int(np.argmax(rows))
+        bottom = int(len(rows) - np.argmax(rows[::-1]))
+
+        band = UI._caption_gap(rows, top, bottom)
+        if band is not None:
+            bottom = band
+
+        cols  = ink[top:bottom].any(axis=0)
+        left  = int(np.argmax(cols))
+        right = int(len(cols) - np.argmax(cols[::-1]))
+        return img.crop((left, top, right, bottom))
+
+    @staticmethod
+    def _caption_gap(rows, top: int, bottom: int) -> Optional[int]:
+        """y, ab dem der Handle-Schriftzug beginnt — oder None.
+
+        Instagram setzt ihn als eigene Zeile unter den Code, getrennt durch
+        ein leeres Band. Gesucht ist deshalb das breiteste leere Band in der
+        unteren Hälfte. Die schmalen Lücken zwischen den Punktreihen des
+        Codes sind um Grössenordnungen kleiner und fallen durch das
+        Mindestmass heraus.
+        """
+        threshold = top + int((bottom - top) * 0.55)
+        min_band  = max(4, int((bottom - top) * 0.02))
+        best, best_len, start = None, 0, None
+        for y in range(top, bottom):
+            if not rows[y]:
+                if start is None:
+                    start = y
+            elif start is not None:
+                if start >= threshold and (y - start) > best_len:
+                    best, best_len = start, y - start
+                start = None
+        return best if best_len >= min_band else None
+
+    @staticmethod
+    def _white_to_alpha(img):
+        """Weissen Kartenhintergrund transparent machen.
+
+        Kein harter Schwellwert: die Punkte sind weich gegen Weiss gerendert,
+        ein Keying liesse an jeder Kante einen hellen Saum stehen. Stattdessen
+        wird das Bild als farbige Tinte *auf* Weiss aufgefasst und diese
+        Komposition umgekehrt — wie weit ein Pixel vom reinen Weiss entfernt
+        ist, ergibt sein Alpha.
+        """
+        from PIL import Image
+
+        arr   = np.array(img).astype(np.float32)
+        rgb   = arr[..., :3]
+        alpha = arr[..., 3:4] / 255.0
+        # So sieht der Pixel aus, wenn das Bild auf Weiss liegt.
+        over = rgb * alpha + 255.0 * (1.0 - alpha)
+        new_alpha = 255.0 - over.min(axis=2, keepdims=True)
+        safe = np.maximum(new_alpha / 255.0, 1e-6)
+        new_rgb = np.clip((over - 255.0 * (1.0 - safe)) / safe, 0, 255)
+        out = np.concatenate([new_rgb, new_alpha], axis=2).astype(np.uint8)
+        return Image.fromarray(out, "RGBA")
+
+    @staticmethod
     def _load_logo(path: str) -> Optional[pygame.Surface]:
         """Lädt das aktive Logo. Wenn der konfigurierte Pfad fehlt,
         wird auf Layout/logo_default.png (Box-Besitzer-Standard) zurück-
@@ -1733,11 +1950,110 @@ class UI:
         masked.blit(cropped, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
         return masked
 
+    # ── Galerie-QR ────────────────────────────────────────────────────────────
+    # Der Galerie-Code ist der einzige QR, den die Box selbst erzeugt — er
+    # darf deshalb gestaltet werden, anders als Instagrams fertige Grafik:
+    # runde Module, eckige Augen, Augenkerne im Goldton des Themes.
+    #
+    # Gegen die frühere schwarz-weisse Fassung geprüft mit _qr_readable,
+    # einmal pixelgenau und viermal verkleinert plus weichgezeichnet (grob
+    # das, was die Handykamera aus Distanz sieht): identisches Ergebnis.
+    # Die Gestaltung kostet also keine Scanbarkeit. Begrenzend ist die
+    # Kantenlänge — bei size=160 und 33 Modulen bleiben 5 px pro Modul.
+    QR_BOX          = 10     # Rendergrösse je Modul vor dem Herunterskalieren.
+    QR_MIN_CONTRAST = 3.0    # WCAG-Verhältnis Modul zu Grund, sonst s/w.
+
     @staticmethod
-    def _make_qr(url: str, size: int = 160,
-                 border: int = 4) -> Optional[pygame.Surface]:
-        """QR-Surface, hochskaliert auf ein ganzzahliges Vielfaches der
-        Modulbreite.
+    def _contrast(a, b) -> float:
+        """WCAG-Kontrastverhältnis zweier RGB-Farben (1.0 bis 21.0)."""
+        def lum(c):
+            v = [x / 255.0 for x in c[:3]]
+            v = [x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4
+                 for x in v]
+            return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]
+        hi, lo = sorted((lum(a), lum(b)), reverse=True)
+        return (hi + 0.05) / (lo + 0.05)
+
+    @staticmethod
+    def _color_distance(a, b) -> float:
+        """Wahrgenommener Farbabstand (Riemersma), nicht euklidisch: Rot-
+        und Blauanteil werden je nach Helligkeit unterschiedlich gewichtet.
+
+        Gebraucht, weil "andere Farbe" und "sichtbar andere Farbe" zwei
+        verschiedene Dinge sind — #6E2A3A und #5C1F30 sind ungleich, aber
+        nebeneinander nicht zu unterscheiden.
+        """
+        rm = (a[0] + b[0]) / 2
+        dr, dg, db = a[0] - b[0], a[1] - b[1], a[2] - b[2]
+        return math.sqrt((2 + rm / 256) * dr * dr + 4 * dg * dg
+                         + (2 + (255 - rm) / 256) * db * db)
+
+    @staticmethod
+    def _qr_readable(img) -> bool:
+        """Liest der Decoder den fertig skalierten Code noch?
+
+        Diagnose, kein Gate: schlägt der Test selbst fehl, gilt der Code
+        als in Ordnung — ein streikendes Testwerkzeug darf die Sidebar
+        nicht leer lassen.
+        """
+        try:
+            gray = cv2.cvtColor(np.array(img.convert("RGB")),
+                                cv2.COLOR_RGB2GRAY)
+            return bool(cv2.QRCodeDetector().detectAndDecode(gray)[0])
+        except Exception as exc:
+            logger.debug("QR-Decodetest nicht möglich: %s", exc)
+            return True
+
+    @staticmethod
+    def _qr_pil(qr, fg: tuple, bg: tuple, eye: Optional[tuple]):
+        """Zeichnet den Code als PIL-Bild. Rückgabe: (Bild, gestaltet?).
+
+        Fehlt der styledpil-Zweig der qrcode-Lib (ältere Installation als
+        das in requirements.txt gepinnte 8.2), wird eckig gezeichnet: die
+        Gestaltung ist Kür, ein lesbarer Code ist Pflicht.
+        """
+        from PIL import ImageDraw
+        styled = True
+        try:
+            from qrcode.image.styledpil import StyledPilImage
+            from qrcode.image.styles.colormasks import SolidFillColorMask
+            from qrcode.image.styles.moduledrawers.pil import (
+                RoundedModuleDrawer, SquareModuleDrawer)
+            img = qr.make_image(
+                image_factory=StyledPilImage,
+                module_drawer=RoundedModuleDrawer(radius_ratio=1),
+                # Die drei Finder bleiben eckig — an ihnen findet der
+                # Scanner den Code überhaupt erst.
+                eye_drawer=SquareModuleDrawer(),
+                color_mask=SolidFillColorMask(back_color=bg, front_color=fg),
+            ).get_image().convert("RGB")
+        except ImportError as exc:
+            logger.info("qrcode-Styles fehlen (%s) — eckige Module", exc)
+            img = qr.make_image(fill_color=fg,
+                                back_color=bg).get_image().convert("RGB")
+            styled = False
+
+        if eye is not None:
+            # Nur der innere 3x3-Kern der Finder trägt Farbe. Der Ring
+            # darum muss die Modulfarbe behalten, sonst verliert die
+            # Finder-Erkennung ihr 1:1:3:1:1-Verhältnis.
+            box   = qr.box_size
+            total = qr.modules_count + 2 * qr.border
+            d     = ImageDraw.Draw(img)
+            for ox, oy in ((qr.border, qr.border),
+                           (total - qr.border - 7, qr.border),
+                           (qr.border, total - qr.border - 7)):
+                d.rectangle(((ox + 2) * box, (oy + 2) * box,
+                             (ox + 5) * box - 1, (oy + 5) * box - 1),
+                            fill=eye)
+        return img, styled
+
+    @staticmethod
+    def _make_qr(url: str, size: int = 160, border: int = 4,
+                 fg: tuple = (0, 0, 0), bg: tuple = (255, 255, 255),
+                 eye: Optional[tuple] = None) -> Optional[pygame.Surface]:
+        """QR-Surface in Theme-Farben, hochskaliert auf ein ganzzahliges
+        Vielfaches der Modulbreite.
 
         Die gelieferte Kantenlänge ist deshalb meist etwas grösser als
         `size` — Aufrufer müssen sie am Surface ablesen statt anzunehmen.
@@ -1745,7 +2061,13 @@ class UI:
         die nächste 3 Pixel, und genau daran scheitern Handy-Scanner auf
         den kleinen Kacheln.
 
-        `border` ist die Quiet-Zone in Modulen.
+        `border` ist die Quiet-Zone in Modulen, `fg`/`bg` sind Modul- und
+        Grundfarbe, `eye` färbt die inneren Kerne der drei Finder.
+
+        Reichen fg/bg nicht für QR_MIN_CONTRAST, fällt die Farbwahl still
+        auf Schwarz-Weiss zurück: der Mieter kann jede Theme-Farbe frei
+        setzen, und ein hübscher, aber unscannbarer Code wäre am
+        Eventabend teurer als ein hässlicher.
         """
         if not url:
             logger.warning("QR-Code: keine URL — gallery_url leer in config?")
@@ -1754,18 +2076,42 @@ class UI:
             import qrcode
             from PIL import Image
 
-            qr = qrcode.QRCode(border=border)
+            fg, bg = tuple(fg), tuple(bg)
+            eye = tuple(eye) if eye is not None else None
+
+            ratio = UI._contrast(fg, bg)
+            if ratio < UI.QR_MIN_CONTRAST:
+                logger.warning(
+                    "QR-Code: Kontrast Modul/Grund nur %.1f:1 (< %.1f) — "
+                    "Theme-Farben verworfen, zeichne schwarz auf weiss",
+                    ratio, UI.QR_MIN_CONTRAST)
+                fg, bg, eye = (0, 0, 0), (255, 255, 255), None
+            if eye is not None and UI._contrast(eye, bg) < UI.QR_MIN_CONTRAST:
+                logger.info("QR-Code: Augenfarbe zu kontrastarm — Kerne "
+                            "bleiben in Modulfarbe")
+                eye = None
+
+            qr = qrcode.QRCode(border=border, box_size=UI.QR_BOX)
             qr.add_data(url)
             qr.make(fit=True)
             total = qr.modules_count + 2 * border
             scale = max(1, math.ceil(size / total))
             px    = total * scale
-            img   = qr.make_image().get_image().convert("RGB")
-            img   = img.resize((px, px), Image.NEAREST)
-            surf  = pygame.image.frombuffer(
+
+            img, styled = UI._qr_pil(qr, fg, bg, eye)
+            # Runde Module leben von geglätteten Kanten, eckige von harten
+            # — deshalb hier zwei Filter statt einem.
+            img  = img.resize((px, px),
+                              Image.LANCZOS if styled else Image.NEAREST)
+            if not UI._qr_readable(img):
+                logger.warning(
+                    "QR-Code für %s ist bei %d px nicht decodierbar — "
+                    "QR-Card vergrössern oder Theme-Farben prüfen", url, px)
+
+            surf = pygame.image.frombuffer(
                 img.tobytes("raw", "RGB"), (px, px), "RGB").copy()
-            logger.info("QR-Code erstellt für %s (%d Module → %dx%d px)",
-                        url, total, px, px)
+            logger.info("QR-Code erstellt für %s (%d Module → %dx%d px, %s)",
+                        url, total, px, px, "gestaltet" if styled else "eckig")
             return surf
         except ImportError as exc:
             logger.warning("qrcode/pillow fehlt: %s — QR deaktiviert", exc)

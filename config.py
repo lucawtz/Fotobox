@@ -99,6 +99,11 @@ _DEFAULTS: dict = {
     # 16:9 — passt zum HDMI-Output der Kamera, sodass kein Letterbox entsteht.
     "live_view_rect": [510, 540, 800, 450],
     "instagram_url": "https://www.instagram.com/lucawtz",
+    # Instagrams eigener QR-Code, in der App im eigenen Profil exportierbar.
+    # Leer = ui.py zeichnet stattdessen das Instagram-Glyph.
+    # Das Bild darf so bleiben wie die App es ausspuckt: ui.py schneidet
+    # Rand und Handle-Schriftzug selbst weg und macht das Weiss transparent.
+    "instagram_qr_path": "Layout/instagram_qr.png",
     "booking_url":   "https://bytebots.de/",
     # Erste Zeile der Booking-Reihe in der Sidebar; darunter zeigt ui.py
     # automatisch die Domain aus booking_url. "Termine buchen" allein war
@@ -153,6 +158,9 @@ def load_config() -> dict:
     # Relative Pfade → absolut
     if not os.path.isabs(data["logo_path"]):
         data["logo_path"] = os.path.join(BASE_DIR, data["logo_path"])
+    insta_qr = data.get("instagram_qr_path") or ""
+    if insta_qr and not os.path.isabs(insta_qr):
+        data["instagram_qr_path"] = os.path.join(BASE_DIR, insta_qr)
     if not os.path.isabs(data["picture_dir"]):
         data["picture_dir"] = os.path.join(BASE_DIR, data["picture_dir"])
 

@@ -110,6 +110,7 @@ Diese Tabelle wird aus `config.py` gepflegt — bei Änderungen dort bitte mitzi
 | `polaroid_photo_size` | Fotogröße innerhalb eines Polaroid-Rahmens | `[310, 295]` |
 | `live_view_rect` | Position und Größe des Live-Vorschaufensters | `[510, 540, 800, 450]` |
 | `instagram_url` | Instagram-Handle in der Sidebar + Button in der Galerie | `"https://www.instagram.com/lucawtz"` |
+| `instagram_qr_path` | Instagrams eigener QR-Code (in der App exportiert). Leer = Glyph statt Code | `"Layout/instagram_qr.png"` |
 | `booking_url` | Buchungs-Link in der Sidebar + Button in der Galerie | `"https://bytebots.de/"` |
 | `booking_label` | Erste Zeile der Buchungs-Reihe (Domain kommt automatisch darunter) | `"Fotobox mieten"` |
 | `disk_warn_mb` | Speicherwarnung ab X MB frei | `500` |
@@ -210,8 +211,25 @@ kommt und leitet dann selbst weiter. Klappt das nicht, erklärt sie stattdessen
 den Weg (WLAN trennen / mobile Daten an), statt den Gast im Fehler stehen zu
 lassen.
 
-Am Boxbildschirm gibt es aus demselben Grund **nur einen** QR-Code, den der
-Galerie. Wer den Buchungs-Link scannen würde, hängt ohnehin schon im
+### Instagram-QR
+
+`instagram_qr_path` nimmt den Code, den Instagram im eigenen Profil zum Export
+anbietet — direkt so, wie die App ihn ausgibt. `ui.py` schneidet den Rand und
+den Handle-Schriftzug darunter selbst weg und macht das Weiss transparent,
+damit der Code auf der Cremekachel der Sidebar sitzt statt in einem weissen
+Rechteck darauf. Das Weiss wird bewusst durch die *helle* Kachel ersetzt und
+nicht durch das Sidebar-Braun: ein QR-Code braucht dunkle Module auf hellem
+Grund, invertiert scheitern viele Scanner.
+
+Instagrams Code hat 41 Module gegenüber 25 beim Galerie-Code, ist also
+deutlich dichter. Er wird deshalb mit 130 px gerendert (~3,2 px pro Modul) —
+kleiner als der Galerie-Code, aber gross genug zum Scannen. Ohne hinterlegte
+Datei zeichnet die Sidebar wie vorher das Instagram-Glyph.
+
+### Nur ein selbst erzeugter Code
+
+Am Boxbildschirm gibt es aus demselben Grund **nur einen** selbst erzeugten
+QR-Code, den der Galerie. Wer den Buchungs-Link scannen würde, hängt ohnehin schon im
 Fotobox-WLAN und damit in der Galerie, wo der Button steht — ein zweiter Code
 gewinnt dort nichts und nimmt dem Galerie-Code die Führung. Instagram und
 Buchung stehen deshalb als Text darunter, die Buchung mit ihrer Domain als
