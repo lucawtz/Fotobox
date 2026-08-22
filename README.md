@@ -55,28 +55,71 @@ tail -f logs/fotobox.log         # Logs live anzeigen
 
 ---
 
-## Konfiguration (config.json)
+## Konfiguration
+
+Die Konfiguration ist zweigeteilt — das ist wichtig zu verstehen, bevor man
+etwas ändert:
+
+* **`config.json`** (nicht in git) enthält nur die Felder aus den ersten beiden
+  Tabellen. Alles andere daraus wird beim Speichern **verworfen**.
+* **`config.py`** (`_DEFAULTS`, in git) enthält alle übrigen Werte. Die kommen
+  per `git pull` aufs Pi und lassen sich nicht über das Admin-Panel ändern.
+
+Diese Tabelle wird aus `config.py` gepflegt — bei Änderungen dort bitte mitziehen.
+
+### Mieter-Felder (Admin-Panel, landen in `config.json`)
 
 | Feld | Beschreibung | Standard |
 |---|---|---|
-| `event_name` | Name des Events (auf Screen + Galerie) | `"Fotobox"` |
-| `countdown_duration` | Countdown-Dauer in Sekunden | `3` |
-| `max_photos` | Max. Anzahl gespeicherter Fotos (älteste werden gelöscht) | `500` |
-| `idle_timeout` | Sekunden bis Slideshow startet | `60` |
-| `admin_pin` | PIN für Admin-Interface und Foto-Löschen | `"1234"` |
-| `logo_path` | Pfad zum Logo (wird auf Homescreen angezeigt) | `"Layout/logo.png"` |
-| `picture_dir` | Verzeichnis für Fotos | `"Picture_Box"` |
-| `hotspot_enabled` | WLAN-Hotspot aktivieren | `false` |
 | `wifi_ssid` | Hotspot-Name | `"Fotobox"` |
-| `wifi_password` | Hotspot-Passwort | `"fotobox123"` |
-| `hotspot_ip` | IP-Adresse des Pi im Hotspot | `"192.168.4.1"` |
-| `hotspot_interface` | WLAN-Interface für den Hotspot (eingebauter Chip = `wlan0`) | `"wlan0"` |
+| `wifi_password` | Hotspot-Passwort (WPA2: 8–63 Zeichen) | `"fotobox123"` |
+| `event_name` | Name des Events (Boxschirm + Galerie) | `"Fotobox"` |
+| `subtitle` | Untertitel unter dem Event-Namen | `"Drück einen Knopf"` |
+| `countdown_duration` | Countdown-Dauer in Sekunden | `3` |
+| `logo_path` | Pfad zum Logo auf dem Homescreen | `"Layout/logo.png"` |
+| `admin_pin` | PIN für das Admin-Interface (volle Rechte) | `"1234"` |
+| `host_pin` | PIN für den Gastgeber (eingeschränkt; leer = deaktiviert) | `"0000"` |
+| `theme` | Farbschema (8 Presets im Admin-Panel wählbar) | `{"bg_top": "#D5BB99", "bg_bottom": "#B…` |
+
+### Box-Felder (Admin-Panel, gerätespezifisch, landen in `config.json`)
+
+| Feld | Beschreibung | Standard |
+|---|---|---|
+| `print_enabled` | Drucken grundsätzlich erlauben | `true` |
+| `printer_name` | CUPS-Druckername (leer = Standarddrucker) | `` |
+| `print_copies` | Kopien pro Druckauftrag (1–9) | `1` |
+| `print_mode` | `auto` / `cover` (randlos) / `fit` (mit weißem Rand) | `"auto"` |
+
+### Owner-Defaults (nur in `config.py`, per `git pull` aktualisiert)
+
+| Feld | Beschreibung | Standard |
+|---|---|---|
+| `max_photos` | Max. Fotos **pro Event** (älteste werden gelöscht) | `500` |
+| `gpio_pins` | GPIO-Pins der drei Buttons | `{"left": 17, "trigger": 27, "right": 22}` |
+| `idle_timeout` | Sekunden bis zur Slideshow (`0` = aus) | `0` |
+| `slide_duration_ms` | Anzeigedauer je Slideshow-Bild | `5000` |
 | `gallery_port` | Port des Galerie-Webservers | `80` |
-| `gpio_pins.left` | GPIO-Pin für Links-Button | `17` |
-| `gpio_pins.trigger` | GPIO-Pin für Auslöser-Button | `27` |
-| `gpio_pins.right` | GPIO-Pin für Rechts-Button | `22` |
+| `hotspot_enabled` | Box als WLAN-Access-Point betreiben | `true` |
+| `hotspot_ip` | IP des Pi im Hotspot | `"192.168.4.1"` |
+| `hotspot_interface` | WLAN-Interface für den Hotspot | `"wlan0"` |
+| `event_session_hours` | Dauer einer Event-Session, bevor ein neuer Ordner beginnt | `18` |
+| `picture_dir` | Verzeichnis für Fotos | `"Picture_Box"` |
 | `capture_device` | OpenCV-Index der Capture-Card (Live-Vorschau) | `0` |
+| `actions` | Buttons auf dem Homescreen | `[{"id": "foto", "label": "Foto", "key"…` |
+| `polaroid_frames` | Position/Drehung der drei Polaroid-Rahmen | `[[567, 255, -5], [1098, 256, 5], [1633…` |
+| `polaroid_photo_size` | Fotogröße innerhalb eines Polaroid-Rahmens | `[310, 295]` |
+| `live_view_rect` | Position und Größe des Live-Vorschaufensters | `[510, 540, 800, 450]` |
+| `instagram_url` | Instagram-Link in der Sidebar | `"https://www.instagram.com/lucawtz"` |
+| `booking_url` | Buchungs-Link in der Sidebar | `"https://bytebots.de/"` |
 | `disk_warn_mb` | Speicherwarnung ab X MB frei | `500` |
+| `thumbnail_max_age_days` | Thumbnails älter als X Tage aufräumen | `30` |
+| `photo_max_age_days` | Fotos nach X Tagen automatisch löschen | `7` |
+| `print_media` | CUPS-Medium (`lpoptions -p <drucker> -l`) | `"Postcard"` |
+| `print_size_mm` | Papierformat in mm (Querformat, Breite × Höhe) | `[148, 100]` |
+| `print_dpi` | Auflösung für die Druckaufbereitung | `300` |
+| `print_options` | Zusätzliche rohe `lp -o`-Optionen | `[]` |
+| `camera_keepalive_s` | Intervall des Kamera-Watchdogs | `25` |
+| `camera_output_mode` | gphoto2-Ausgabemodus der Kamera | `"3"` |
 
 ---
 
@@ -118,7 +161,20 @@ http://<pi-ip>/admin             (bei LAN/WLAN-Verbindung)
 
 ## Hotspot einrichten
 
-Der Hotspot wird über NetworkManager (`nmcli`) gestartet. `hotspot_enabled: true` in config.json setzen und sicherstellen, dass `nmcli` verfügbar ist:
+Der Hotspot wird über NetworkManager (`nmcli`) gestartet und ist **standardmäßig
+aktiv** — die Box ist der Access-Point, sonst erreicht kein Gast die Galerie.
+`hotspot_enabled` ist ein Owner-Default in `config.py`; ein Eintrag in der
+`config.json` hat **keine** Wirkung (er wird beim Speichern verworfen).
+
+Zum Einrichten per VNC über das Heim-WLAN die Box mit `--no-hotspot` starten —
+dann bindet auch der Galerie-Server nur auf `127.0.0.1`:
+
+```bash
+sudo systemctl stop fotobox
+venv/bin/python main.py --no-hotspot
+```
+
+`nmcli` muss verfügbar sein:
 
 ```bash
 sudo apt install network-manager
@@ -130,7 +186,63 @@ Standardmäßig wird der **eingebaute Pi-WLAN-Chip** (`wlan0`) verwendet — auc
 nmcli device
 ```
 
-Nach Änderung des WLAN-Namens oder Passworts: `sudo systemctl restart fotobox`.
+WLAN-Name und Passwort lassen sich im Admin-Panel unter **WLAN** ändern. Die Box
+startet den Hotspot danach automatisch neu — alle verbundenen Geräte fliegen
+dabei kurz raus, auch das Gerät, von dem aus man die Änderung vornimmt. Am
+besten vor dem Event erledigen, nicht mittendrin.
+
+---
+
+## Drucker einrichten (Canon Selphy)
+
+`install.sh` installiert CUPS und nimmt den Service-User in die Gruppe
+`lpadmin` auf, richtet aber **keinen Drucker ein** — das ist geräteabhängig und
+muss einmalig von Hand passieren.
+
+```bash
+# 1. Selphy per USB anschliessen und einschalten, dann suchen lassen:
+lpinfo -v                      # zeigt z.B. usb://Canon/SELPHY%20CP1500?serial=...
+
+# 2. Passenden Treiber finden (Gutenprint deckt die CP-Serie ab):
+sudo apt install printer-driver-gutenprint
+lpinfo -m | grep -i selphy
+
+# 3. Drucker anlegen (Name frei waehlbar, hier "Selphy"):
+sudo lpadmin -p Selphy \
+     -v "usb://Canon/SELPHY%20CP1500?serial=XXXX" \
+     -m "gutenprint.5.3://canon-selphy-cp1500/expert" \
+     -o media=Postcard -E
+
+# 4. Als Standard setzen und pruefen:
+sudo lpoptions -d Selphy
+lpstat -p                      # muss "is idle. enabled" melden
+```
+
+Danach im Admin-Panel unter **Drucken** das Zielgerät auswählen. Solange CUPS
+keinen bereiten Drucker meldet, blendet die Box den „Drucken"-Knopf aus.
+
+**Welche Optionen der Treiber akzeptiert**, zeigt:
+
+```bash
+lpoptions -p Selphy -l
+```
+
+Passende Werte dann in `config.py` unter `print_media`, `print_size_mm` und
+`print_options` eintragen (z.&nbsp;B. `print_options: ["StpBorderless=True"]`
+für randlosen Druck).
+
+**Testdruck ohne die Box:**
+
+```bash
+lp -d Selphy -o media=Postcard /pfad/zum/foto.jpg
+lpstat -o                      # Warteschlange ansehen
+cancel -a Selphy               # Warteschlange leeren
+```
+
+Die Box rechnet das Foto vor dem Druck selbst auf das Papierformat
+(`printing.prepare`): Einzelfotos randlos, die 2×2-Collage vollständig mit
+weißem Rand — ein quadratisches Bild randlos auf Postkarte gedruckt würde die
+obere und untere Fotoreihe abschneiden.
 
 ---
 

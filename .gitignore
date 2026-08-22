@@ -24,3 +24,8 @@ scripts/preview_*.png
 # Lokales Python-venv (Entwicklung auf macOS)
 venv/
 .venv/
+
+# Vom Admin-Panel hochgeladenes Logo (gallery_server.py schreibt nach
+# Layout/logo.png). Das ist Mieter-Data und gehoert nicht ins Repo.
+# Layout/logo_default.png (Box-Besitzer-Standard) bleibt bewusst trackbar.
+Layout/logo.png
