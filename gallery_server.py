@@ -3,6 +3,7 @@ import json
 import logging
 from logging.handlers import RotatingFileHandler
 import os
+import re
 import secrets
 import shutil
 import threading
@@ -11,6 +12,7 @@ from collections import deque
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Optional
+from urllib.parse import quote
 from zipfile import ZIP_STORED, ZipFile, ZipInfo
 
 from flask import (Flask, Response, abort, jsonify, redirect, request,
@@ -361,53 +363,228 @@ _GO_LINKS = {
     "instagram": ("instagram_url", None,            "Instagram"),
 }
 
+# Instagram lieber in der App oeffnen als im Handy-Browser: dort ist der Gast
+# schon eingeloggt und folgt mit einem Tap, waehrend die Web-Ansicht ihn erst
+# hinter eine Login-Wand schiebt. Ein normaler https-Link genuegt dafuer
+# nicht — iOS oeffnet die App nur bei einem echten Fingertipp auf einen Link,
+# nicht bei einem Redirect aus JS heraus, und Android braucht intent://.
+# Beide Varianten baut der Server, das Handy sucht sich in _GO_PAGE_TMPL die
+# passende aus.
+_INSTAGRAM_HANDLE_RE = re.compile(
+    r"^https?://(?:www\.)?instagram\.com/(@?[A-Za-z0-9._]{1,30})(?:[/?#]|$)")
+
+
+def _app_targets(slug: str, target: str) -> dict:
+    """App-Sprungziele fuer die /go/-Seite. Leer = nur die Web-URL."""
+    if slug != "instagram":
+        return {}
+    match = _INSTAGRAM_HANDLE_RE.match(target)
+    if not match:
+        return {}
+    handle = match.group(1).lstrip("@")
+    # Reserviert von Instagram selbst — /explore/ ist kein Profil, und ein
+    # App-Sprung darauf landet im Nichts.
+    if handle in {"explore", "reels", "p", "accounts", "direct"}:
+        return {}
+    return {
+        # iOS: eigenes Schema. Fehlt die App, zeigt Safari einen Fehler-
+        # dialog — deshalb faellt die Seite nach kurzer Zeit selbst auf die
+        # Web-URL zurueck (siehe Timer in _GO_PAGE_TMPL).
+        "ios": "instagram://user?username=" + handle,
+        # Android: Chrome kennt den Fallback selbst, wenn die App fehlt.
+        "android": ("intent://instagram.com/_u/" + handle
+                    + "#Intent;package=com.instagram.android;scheme=https;"
+                    + "S.browser_fallback_url=" + quote(target, safe="")
+                    + ";end"),
+    }
+
+
 # Wie lange die Erreichbarkeitspruefung im Browser laufen darf, bevor die
 # Seite auf den Erklaertext zurueckfaellt. Kurz halten — auf einem
 # hijackten DNS scheitert der Request meist sofort, und laenger als ~2,5 s
 # wartet niemand auf einen Redirect.
 _GO_PROBE_MS = 2500
 
+# Wie lange die Seite dem App-Sprung auf iOS Zeit gibt, bevor sie doch die
+# Web-URL nimmt. Ist die App da, ist sie in deutlich unter einer Sekunde
+# vorn; laenger zu warten heisst nur, dass ein Gast ohne App laenger auf
+# eine tote Seite guckt.
+_GO_APP_MS = 1200
+
+# Icon + Farbflaeche pro Ziel. Inline-SVG statt einer Datei aus dist/: die
+# Seite muss auch dann vollstaendig aussehen, wenn das Handy gerade gar
+# nicht nach draussen kommt — und ein zweiter Request waere genau der
+# Moment, in dem der Captive-DNS wieder dazwischenfunkt.
+_GO_ICON_INSTAGRAM = (
+    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+    '<path d="M12 2.2c3.2 0 3.58.01 4.85.07 1.17.05 1.8.25 2.23.41.56.22.96.48'
+    ' 1.38.9.42.42.68.82.9 1.38.16.42.36 1.06.41 2.23.06 1.27.07 1.65.07'
+    ' 4.85s-.01 3.58-.07 4.85c-.05 1.17-.25 1.8-.41 2.23-.22.56-.48.96-.9'
+    ' 1.38-.42.42-.82.68-1.38.9-.42.16-1.06.36-2.23.41-1.27.06-1.65.07-4.85'
+    '.07s-3.58-.01-4.85-.07c-1.17-.05-1.8-.25-2.23-.41a3.8 3.8 0 0'
+    ' 1-1.38-.9 3.8 3.8 0 0 1-.9-1.38c-.16-.42-.36-1.06-.41-2.23-.06-1.27'
+    '-.07-1.65-.07-4.85s.01-3.58.07-4.85c.05-1.17.25-1.8.41-2.23.22-.56.48'
+    '-.96.9-1.38.42-.42.82-.68 1.38-.9.42-.16 1.06-.36 2.23-.41C8.42 2.21'
+    ' 8.8 2.2 12 2.2Zm0 3.17A6.63 6.63 0 1 0 18.63 12 6.63 6.63 0 0 0 12'
+    ' 5.37Zm0 10.94A4.31 4.31 0 1 1 16.31 12 4.31 4.31 0 0 1 12 16.31Zm6.89'
+    '-11.15a1.55 1.55 0 1 1-1.55-1.55 1.55 1.55 0 0 1 1.55 1.55Z"/></svg>')
+
+_GO_ICON_CALENDAR = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    ' stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"'
+    ' aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3.5"/>'
+    '<path d="M3 10h18M8 3v3.5M16 3v3.5"/><path d="m9 15.2 2.1 2.1 3.9-3.9"/>'
+    '</svg>')
+
+_GO_ICON_LINK = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+    ' stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"'
+    ' aria-hidden="true"><path d="M10.5 13.5a4 4 0 0 0 5.66 0l2.83-2.83a4 4 0'
+    ' 0 0-5.66-5.66l-1.4 1.42"/><path d="M13.5 10.5a4 4 0 0 0-5.66 0l-2.83'
+    ' 2.83a4 4 0 0 0 5.66 5.66l1.4-1.42"/></svg>')
+
+# slug → (Icon, Hintergrund der Icon-Kachel). Die Instagram-Kachel traegt
+# bewusst den Verlauf der Marke: der Gast erkennt in der halben Sekunde,
+# die die Seite steht, woran er ist — ohne ein Wort zu lesen.
+_GO_ICONS = {
+    "instagram": (_GO_ICON_INSTAGRAM,
+                  "linear-gradient(135deg,#f9ce34,#ee2a7b 52%,#6228d7)"),
+    "termin":    (_GO_ICON_CALENDAR,
+                  "linear-gradient(135deg,#4285f4,#1a73e8)"),
+}
+_GO_ICON_DEFAULT = (_GO_ICON_LINK,
+                    "linear-gradient(135deg,#4285f4,#1a73e8)")
+
+# Platzhalter im Template: __NAME__. Ein Zwischenschritt setzt keinen neuen
+# Platzhalter frei — alle Werte werden in einem Durchgang eingesetzt, sonst
+# koennte ein Label, das zufaellig "__SHOWN__" enthaelt, den naechsten
+# replace()-Aufruf kapern.
+_GO_SLOT_RE = re.compile(r"__([A-Z]+)__")
+
 _GO_PAGE_TMPL = """<!doctype html>
 <html lang="de"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#f8f9fa">
 <title>__LABEL__</title>
 <style>
-:root{color-scheme:light}
+/* Bewusst dieselbe Palette und Typografie wie die Galerie (frontend/src/
+   theme.ts): der Gast kommt von dort und soll nicht das Gefuehl haben,
+   auf einer fremden Zwischenseite gelandet zu sein. */
+:root{
+  color-scheme:light;
+  --blue:#1a73e8; --blue-dark:#1557b0; --blue-tint:#f0f4f9;
+  --ink:#1f1f1f; --ink-soft:#5f6368;
+  --line:#e8eaed; --card:#fff; --bg:#f8f9fa;
+}
 *{box-sizing:border-box}
-body{margin:0;padding:2rem 1.25rem;font:16px/1.5 system-ui,-apple-system,sans-serif;
-color:#202124;background:#f8f9fa;display:flex;justify-content:center}
-main{width:100%;max-width:26rem}
-h1{font-size:1.5rem;line-height:1.25;margin:0 0 .5rem}
-p{margin:0 0 1rem;color:#5f6368}
-a.btn{display:block;padding:.95rem 1.25rem;border-radius:.6rem;background:#1a73e8;
-color:#fff;text-decoration:none;font-weight:600;text-align:center;
-word-break:break-word}
-a.btn:active{background:#1557b0}
-.card{margin-top:1.25rem;padding:1rem;border:1px solid #dadce0;border-radius:.6rem;
-background:#fff}
-.card h2{font-size:.95rem;margin:0 0 .5rem}
-.card ol{margin:0;padding-left:1.15rem;color:#5f6368;font-size:.9rem}
-.url{margin-top:1rem;font-size:.8rem;color:#5f6368;word-break:break-all;
--webkit-user-select:all;user-select:all}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;min-height:100dvh;
+  padding:calc(env(safe-area-inset-top,0px) + 2rem) 1.25rem
+          calc(env(safe-area-inset-bottom,0px) + 2rem);
+  display:flex;align-items:center;justify-content:center;
+  font:16px/1.55 "Inter Variable","Inter",system-ui,-apple-system,"Segoe UI",
+       Roboto,sans-serif;
+  color:var(--ink);background:var(--bg);
+  background-image:radial-gradient(115% 55% at 50% 0,
+                   rgba(26,115,232,.10),rgba(26,115,232,0) 72%);
+  background-repeat:no-repeat;
+  -webkit-tap-highlight-color:transparent;
+  -webkit-font-smoothing:antialiased;
+}
+main{width:100%;max-width:24rem}
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:20px;
+  padding:1.75rem 1.5rem 1.5rem;text-align:center;
+  box-shadow:0 1px 2px rgba(60,64,67,.06),0 8px 24px rgba(60,64,67,.12);
+}
+.icon{
+  width:56px;height:56px;margin:0 auto 1rem;border-radius:17px;
+  display:flex;align-items:center;justify-content:center;
+  background:__ACCENT__;color:#fff;
+  box-shadow:0 2px 8px rgba(60,64,67,.18);
+}
+.icon svg{width:29px;height:29px;display:block}
+h1{margin:0;font-size:1.375rem;font-weight:600;letter-spacing:-.015em;
+   line-height:1.25;word-break:break-word}
+.host{margin:.3rem 0 0;font-size:.875rem;color:var(--ink-soft);
+      word-break:break-all}
+.status{
+  display:flex;align-items:center;justify-content:center;gap:.5rem;
+  margin:1.1rem 0 0;font-size:.875rem;color:var(--ink-soft);
+}
+.spin{
+  width:15px;height:15px;flex:none;border-radius:50%;
+  border:2px solid rgba(26,115,232,.25);border-top-color:var(--blue);
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation-duration:2.4s}}
+.btn{
+  display:flex;align-items:center;justify-content:center;gap:.5rem;
+  min-height:48px;margin-top:1.15rem;padding:.8rem 1.25rem;
+  border-radius:999px;background:var(--blue);color:#fff;
+  text-decoration:none;font-weight:600;font-size:1rem;letter-spacing:-.005em;
+  word-break:break-word;
+  box-shadow:0 1px 2px rgba(26,115,232,.35);
+  transition:background .15s,transform .1s;
+}
+.btn:active{background:var(--blue-dark);transform:scale(.985)}
+.btn svg{width:17px;height:17px;flex:none}
+.hint{margin-top:1.35rem;padding-top:1.35rem;border-top:1px solid var(--line);
+      text-align:left}
+.hint h2{margin:0 0 .9rem;font-size:.9375rem;font-weight:600}
+.steps{list-style:none;margin:0;padding:0;counter-reset:step}
+.steps li{
+  counter-increment:step;position:relative;padding-left:2.1rem;
+  margin-bottom:.7rem;font-size:.9rem;color:var(--ink-soft);
+}
+.steps li:last-child{margin-bottom:0}
+.steps li::before{
+  content:counter(step);position:absolute;left:0;top:.05rem;
+  width:1.45rem;height:1.45rem;border-radius:50%;
+  background:var(--blue-tint);color:var(--blue);
+  font-size:.75rem;font-weight:600;
+  display:flex;align-items:center;justify-content:center;
+}
+.ssid{color:var(--ink);font-weight:600;background:var(--blue-tint);
+      border-radius:6px;padding:.05rem .35rem}
+.url{
+  margin:1.1rem 0 0;padding:.6rem .7rem;border-radius:10px;
+  background:var(--bg);border:1px solid var(--line);
+  font:.75rem/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+  color:var(--ink-soft);word-break:break-all;
+  -webkit-user-select:all;user-select:all;
+}
 [hidden]{display:none!important}
 </style></head>
 <body><main>
+<div class="card">
+<div class="icon">__ICON__</div>
 <h1>__LABEL__</h1>
-<p id="status" hidden>Einen Moment — wir leiten dich weiter&nbsp;…</p>
-<a class="btn" id="go" href="__HREF__">Weiter zu __DOMAIN__</a>
-<div class="card" id="hint">
+<p class="host">__DOMAIN__</p>
+<p class="status" id="status" hidden>
+<span class="spin" aria-hidden="true"></span>Einen Moment&nbsp;… wir leiten dich weiter</p>
+<a class="btn" id="go" href="__HREF__">Weiter zu __DOMAIN__
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<path d="M5 12h13m-5.5-6 6 6-6 6"/></svg></a>
+<div class="hint" id="hint">
 <h2>Seite l&auml;dt nicht?</h2>
-<ol>
-<li>Du bist im WLAN <b>__SSID__</b> — das hat kein Internet.</li>
+<ol class="steps">
+<li>Du bist im WLAN <span class="ssid">__SSID__</span> — das hat kein Internet.</li>
 <li>WLAN kurz trennen oder mobile Daten einschalten.</li>
 <li>Dann oben auf den Button tippen.</li>
 </ol>
 <p class="url">__SHOWN__</p>
 </div>
+</div>
 </main>
 <script>
 (function () {
   var target = __JSON__;
+  var app = __APPS__;
   var hint = document.getElementById("hint");
   var status = document.getElementById("status");
   // Ohne JS bleibt der Erklaertext stehen — er wird erst hier eingeklappt.
@@ -420,6 +597,39 @@ background:#fff}
     status.hidden = true;
     hint.hidden = false;
   }
+  // Mit Internet geht es auf dem Handy bevorzugt in die App: dort ist der
+  // Gast eingeloggt und folgt mit einem Tap. Ohne App-Ziel (Desktop,
+  // Buchungslink) bleibt es beim normalen Redirect.
+  function leave() {
+    var ua = navigator.userAgent || "";
+    var deep = /Android/i.test(ua) ? app.android
+             : /iPad|iPhone|iPod/i.test(ua) ? app.ios
+             : "";
+    if (!deep) { location.replace(target); return; }
+    if (deep === app.android) {
+      // intent:// traegt seine Web-Fallback-URL selbst — Chrome springt
+      // dorthin, wenn die App fehlt.
+      location.replace(deep);
+      return;
+    }
+    // iOS: ein unbekanntes Schema laeuft still ins Leere (bzw. zeigt einen
+    // Fehlerdialog), es gibt kein Signal dafuer. Also selbst nachfassen —
+    // ausser die Seite ist inzwischen im Hintergrund, dann ist die App
+    // aufgegangen und ein Redirect wuerde dem Gast nur den Browser
+    // wieder vor die Nase setzen.
+    var back = setTimeout(function () {
+      if (!document.hidden) { location.replace(target); }
+    }, __APPWAIT__);
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) { return; }
+      clearTimeout(back);
+      // Sonst steht in dem Tab, zu dem der Gast spaeter zurueckkommt, fuer
+      // immer "wir leiten dich weiter …". textContent raeumt den Spinner
+      // gleich mit weg.
+      status.textContent = "In der App geöffnet.";
+    });
+    location.href = deep;
+  }
   // no-cors reicht: uns interessiert nur, ob ueberhaupt eine Verbindung
   // zustande kommt. Im Fotobox-WLAN zeigt der Captive-DNS die Ziel-Domain
   // auf die Box, deren Port 443 zu ist — der Request scheitert also sofort.
@@ -430,7 +640,7 @@ background:#fff}
       clearTimeout(timer);
       if (done) { return; }
       done = true;
-      location.replace(target);
+      leave();
     })
     .catch(function () { clearTimeout(timer); fallback(); });
 })();
@@ -438,7 +648,7 @@ background:#fff}
 </body></html>"""
 
 
-def _js_string(value: str) -> str:
+def _js_literal(value) -> str:
     r"""JS-Literal fuer den Einbau in einen <script>-Block.
 
     json.dumps allein reicht nicht: es escaped zwar Anfuehrungszeichen, laesst
@@ -453,20 +663,28 @@ def _js_string(value: str) -> str:
             .replace("&", "\\u0026"))
 
 
-def _go_page(target: str, label: str) -> str:
+def _go_page(target: str, label: str, apps: Optional[dict] = None,
+             slug: str = "") -> str:
     domain = target.split("://", 1)[-1].split("/", 1)[0] or target
     # Den echten Netznamen nennen statt "Fotobox-WLAN": der Mieter darf die
     # SSID im Admin-Panel aendern, und der Gast sucht im WLAN-Menue genau
     # den Namen, der dort steht.
     ssid = (config.cfg.get("wifi_ssid") or "").strip() or "der Fotobox"
-    return (_GO_PAGE_TMPL
-            .replace("__SSID__",   html.escape(ssid))
-            .replace("__LABEL__",  html.escape(label))
-            .replace("__HREF__",   html.escape(target, quote=True))
-            .replace("__DOMAIN__", html.escape(domain))
-            .replace("__SHOWN__",  html.escape(target))
-            .replace("__JSON__",   _js_string(target))
-            .replace("__PROBE__",  str(_GO_PROBE_MS)))
+    icon, accent = _GO_ICONS.get(slug, _GO_ICON_DEFAULT)
+    slots = {
+        "SSID":    html.escape(ssid),
+        "LABEL":   html.escape(label),
+        "HREF":    html.escape(target, quote=True),
+        "DOMAIN":  html.escape(domain),
+        "SHOWN":   html.escape(target),
+        "ICON":    icon,
+        "ACCENT":  accent,
+        "JSON":    _js_literal(target),
+        "APPS":    _js_literal(apps or {}),
+        "APPWAIT": str(_GO_APP_MS),
+        "PROBE":   str(_GO_PROBE_MS),
+    }
+    return _GO_SLOT_RE.sub(lambda m: slots[m.group(1)], _GO_PAGE_TMPL)
 
 
 @app.route("/go/<slug>")
@@ -487,8 +705,11 @@ def go_link(slug: str):
         return redirect("/")
 
     label = (config.cfg.get(label_key) or "").strip() if label_key else ""
-    response = Response(_go_page(target, label or fallback_label),
-                        mimetype="text/html; charset=utf-8")
+    # mimetype (nicht content_type): Flask haengt das charset selbst an —
+    # steht es hier schon drin, geht es doppelt raus.
+    response = Response(_go_page(target, label or fallback_label,
+                                 _app_targets(slug, target), slug),
+                        mimetype="text/html")
     # Nicht cachen: sonst zeigt das Handy nach einer Config-Aenderung noch
     # tagelang die alte Ziel-URL.
     response.headers["Cache-Control"] = "no-store"

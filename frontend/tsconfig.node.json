@@ -5,7 +5,14 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
-    "strict": true
+    "strict": true,
+    // Emit aus dem Quellordner heraushalten: `tsc -b` legte sonst neben
+    // vite.config.ts ein vite.config.js ab — und Vite laedt .js VOR .ts
+    // (DEFAULT_CONFIG_FILES). Aenderungen am Proxy landeten dann in einer
+    // Datei, die nie geladen wird. "noEmit" geht hier nicht: ein
+    // referenziertes composite-Projekt darf den Emit nicht abschalten.
+    "outDir": "./node_modules/.tmp",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo"
   },
   "include": ["vite.config.ts"]
 }

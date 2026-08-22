@@ -52,6 +52,12 @@ export default function OwnerLinks({ links }: { links: Links | null }) {
             variant="contained"
             disableElevation
             href={api.goUrl("termin")}
+            // Neuer Tab (beide Buttons): der Gast ist zum Fotos-Holen
+            // hier und soll die Galerie nicht verlieren, nur weil er kurz
+            // rausspringt. rel schneidet den window.opener-Zugriff der
+            // fremden Seite ab.
+            target="_blank"
+            rel="noopener noreferrer"
             startIcon={<EventAvailableRoundedIcon />}
             sx={{ borderRadius: 2, textTransform: "none", fontWeight: 600, px: 2.5 }}
           >
@@ -62,6 +68,8 @@ export default function OwnerLinks({ links }: { links: Links | null }) {
           <Button
             variant="outlined"
             href={api.goUrl("instagram")}
+            target="_blank"
+            rel="noopener noreferrer"
             startIcon={<InstagramIcon />}
             sx={{ borderRadius: 2, textTransform: "none", fontWeight: 500, px: 2.5 }}
           >

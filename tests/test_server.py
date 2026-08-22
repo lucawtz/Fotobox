@@ -251,6 +251,35 @@ def test_go_instagram_uses_fallback_label(app, links):
     assert "<title>Instagram</title>" in body
 
 
+def test_go_instagram_offers_app_links(app, links):
+    """Der Follow-Tap passiert in der App, nicht auf der Login-Wand von
+    instagram.com — also muss die Seite beide App-Schemata mitliefern."""
+    body = app.get("/go/instagram").data.decode()
+    assert "instagram://user?username=foo" in body
+    assert "intent://instagram.com/_u/foo" in body
+    assert "package=com.instagram.android" in body
+    # Ohne App muss Chrome von selbst auf die Web-URL zurueckfallen koennen.
+    assert "S.browser_fallback_url=https%3A%2F%2Finstagram.com%2Ffoo" in body
+
+
+def test_go_termin_has_no_app_link(app, links):
+    """Fuer eine beliebige Buchungsseite gibt es keine App — die Seite darf
+    dann nicht in den iOS-Zweig laufen und auf ein totes Schema warten."""
+    assert "var app = {};" in app.get("/go/termin").data.decode()
+
+
+@pytest.mark.parametrize("url", [
+    "https://instagram.com/explore/tags/fotobox",   # kein Profil
+    "https://instagram.com/",                       # ohne Handle
+    "https://example.com/instagram.com/foo",        # fremde Domain
+])
+def test_go_instagram_app_link_only_for_profiles(app, monkeypatch, url):
+    monkeypatch.setitem(config.cfg, "instagram_url", url)
+    body = app.get("/go/instagram").data.decode()
+    assert "instagram://" not in body
+    assert "var app = {};" in body
+
+
 def test_go_is_not_cached(app, links):
     # Sonst zeigt das Handy nach einer Config-Aenderung noch die alte URL.
     assert app.get("/go/termin").headers["Cache-Control"] == "no-store"
