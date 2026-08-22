@@ -17,9 +17,10 @@ import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import DownloadForOfflineRoundedIcon from "@mui/icons-material/DownloadForOfflineRounded";
 import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
-import { api, Photo, formatDate } from "../api";
+import { api, OwnerLinks as Links, Photo, formatDate } from "../api";
 import PhotoTile from "../components/PhotoTile";
 import ViewToggle, { useGalleryView } from "../components/ViewToggle";
+import OwnerLinks from "../components/OwnerLinks";
 
 const POLL_MS = 8000;
 
@@ -33,6 +34,7 @@ export default function EventGallery() {
   const [active, setActive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [links, setLinks] = useState<Links | null>(null);
   const knownCount = useRef(0);
 
   const load = useCallback(async () => {
@@ -43,6 +45,7 @@ export default function EventGallery() {
         api.events(),
       ]);
       setPhotos(list.photos);
+      setLinks(list);
       knownCount.current = list.count;
       const meta = evRes.events.find((e) => e.folder === folder);
       if (meta) {
@@ -286,6 +289,13 @@ export default function EventGallery() {
               />
             ))}
           </Paper>
+        )}
+
+        {!loading && (
+          // Container laeuft hier mit disableGutters — Padding deshalb hier.
+          <Box sx={{ px: { xs: 1.25, sm: 3 } }}>
+            <OwnerLinks links={links} />
+          </Box>
         )}
       </Container>
     </>

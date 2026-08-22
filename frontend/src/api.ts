@@ -5,7 +5,15 @@ export interface Photo {
   size: number;
 }
 
-export interface PhotosResponse {
+/** Instagram-/Booking-Link des Box-Besitzers. Leerer String = nicht
+ *  konfiguriert, dann blendet <OwnerLinks> den jeweiligen Button aus. */
+export interface OwnerLinks {
+  instagram_url: string;
+  booking_url: string;
+  booking_label: string;
+}
+
+export interface PhotosResponse extends OwnerLinks {
   event_name: string;
   active_event: string;
   filter: string | null;
@@ -25,7 +33,7 @@ export interface EventInfo {
   active:  boolean;
 }
 
-export interface EventsResponse {
+export interface EventsResponse extends OwnerLinks {
   active: string;
   event_name: string;
   events: EventInfo[];
@@ -161,6 +169,11 @@ export const api = {
   zipUrl:      (event?: string | null) =>
     "/api/download-zip" + (event ? `?event=${encodeURIComponent(event)}` : ""),
   logoUrl:     () => `/api/admin/logo/preview?t=${Date.now()}`,
+  // Nie direkt auf instagram_url/booking_url verlinken: der Gast steckt beim
+  // Betrachten der Galerie per Definition im Fotobox-WLAN, und dort biegt der
+  // Captive-DNS jede Domain auf die Box um. /go/ liegt lokal, prueft die
+  // Erreichbarkeit und leitet erst dann weiter (gallery_server.go_link).
+  goUrl:       (slug: "termin" | "instagram") => `/go/${slug}`,
 
   delete: async (p: Pick<Photo, "event" | "filename">, pin: string): Promise<DeleteResult> => {
     const fd = new FormData();

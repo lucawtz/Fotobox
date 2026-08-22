@@ -13,9 +13,10 @@ import {
 import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
 import FolderRoundedIcon from "@mui/icons-material/FolderRounded";
 import FiberManualRecordRoundedIcon from "@mui/icons-material/FiberManualRecordRounded";
-import { api, EventInfo, formatDate } from "../api";
+import { api, EventInfo, OwnerLinks as Links, formatDate } from "../api";
 import TopBar from "../components/TopBar";
 import ViewToggle, { useGalleryView } from "../components/ViewToggle";
+import OwnerLinks from "../components/OwnerLinks";
 
 const POLL_MS = 8000;
 
@@ -23,6 +24,7 @@ export default function Gallery() {
   const [items, setItems] = useState<EventInfo[]>([]);
   const [eventName, setEventName] = useState("Fotobox");
   const [maxAgeDays, setMaxAgeDays] = useState(0);
+  const [links, setLinks] = useState<Links | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,6 +34,7 @@ export default function Gallery() {
       setItems(r.events);
       setEventName(r.event_name);
       setMaxAgeDays(r.photo_max_age_days || 0);
+      setLinks(r);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -161,6 +164,8 @@ export default function Gallery() {
             ))}
           </Paper>
         )}
+
+        {!loading && <OwnerLinks links={links} />}
       </Container>
     </>
   );
