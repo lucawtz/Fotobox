@@ -8,7 +8,7 @@ import shutil
 import threading
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from typing import Optional
 from zipfile import ZIP_STORED, ZipFile, ZipInfo
@@ -53,6 +53,11 @@ app.secret_key = _load_or_create_secret_key()
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
+    # Ohne das ist der Cookie ein reiner Browser-Session-Cookie: einmal Safari
+    # weggewischt und der Owner tippt die PIN erneut, nur um ein Foto zu
+    # loeschen. 30 Tage decken eine Vermietungssaison ab; /api/admin/logout
+    # bleibt der Weg raus.
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
     # 16 MB für Logo-Uploads — alles drüber wird von Flask abgewiesen,
     # ohne dass der Request gelesen wird.
     MAX_CONTENT_LENGTH=16 * 1024 * 1024,
@@ -508,15 +513,17 @@ def _public_links() -> dict:
 # ── Sichtbarkeit: Gaeste nur im laufenden Event ────────────────────────────────
 
 def _may_see_all_events() -> bool:
-    """Admin und Host sehen jedes Event, Gaeste nur das laufende.
+    """Nur der Admin sieht jedes Event — Gastgeber und Gaeste das laufende.
 
     Ohne diese Trennung sieht jeder im Fotobox-WLAN die Fotos der letzten Feier:
-    `is_safe_event` prueft nur Pfad-Traversal, nicht Zugehoerigkeit. Der Owner
+    `is_safe_event` prueft nur Pfad-Traversal, nicht Zugehoerigkeit. Der
+    Gastgeber ist bewusst *nicht* ausgenommen: er mietet die Box fuer seine
+    eigene Feier, das Archiv der vorigen Mieter geht ihn nichts an. Der Owner
     kann die Galerie per `gallery_guests_see_all` bewusst als Archiv oeffnen.
     """
     if config.cfg.get("gallery_guests_see_all"):
         return True
-    return _session_role() is not None
+    return _session_role() == "admin"
 
 
 def _may_see_event(event: str) -> bool:
@@ -741,11 +748,12 @@ def api_photos():
 
 @app.route("/api/delete/<event>/<filename>", methods=["POST"])
 def api_delete(event: str, filename: str):
-    # Eingeloggte Admins dürfen ohne PIN-Abfrage löschen, normale Gäste
-    # müssen den PIN mitschicken — beides geschützt durch das Login-Lockout
-    # (selber Bucket wie /api/admin/login).
+    # Wer eingeloggt ist, löscht ohne PIN-Abfrage; alle anderen müssen den PIN
+    # mitschicken — beides geschützt durch das Login-Lockout (selber Bucket wie
+    # /api/admin/login).
     ip = _client_ip()
-    if not session.get("admin_logged_in"):
+    role = _session_role()
+    if role is None:
         locked = _login_check_locked(ip)
         if locked is not None:
             return jsonify(ok=False,
@@ -755,14 +763,20 @@ def api_delete(event: str, filename: str):
         host_pin  = config.cfg.get("host_pin", "")
         # Foto-Einzellöschung: Admin- ODER Host-PIN reicht. Bulk-Reset bleibt
         # in /api/admin/reset und ist weiterhin admin-only.
-        ok = bool(pin) and (
-            secrets.compare_digest(pin, admin_pin) or
-            (bool(host_pin) and secrets.compare_digest(pin, host_pin))
-        )
-        if not ok:
+        if pin and secrets.compare_digest(pin, admin_pin):
+            role = "admin"
+        elif pin and host_pin and secrets.compare_digest(pin, host_pin):
+            role = "host"
+        else:
             _login_record_failure(ip)
             return jsonify(ok=False, error="Falscher PIN"), 403
         _login_record_success(ip)
+    # Der Gastgeber räumt nur im laufenden Event auf. Ohne diese Zeile reicht
+    # seine PIN, um Fotos vergangener Vermietungen zu löschen — Ordner, die er
+    # laut _may_see_all_events nicht einmal sehen darf. 404 statt 403, damit
+    # die Antwort nichts über die Existenz fremder Events verrät.
+    if role != "admin" and event != events.current_event_folder(config.cfg):
+        abort(404)
     path = _safe_path(event, filename)
     if path is None:
         return jsonify(ok=False, error="Datei nicht gefunden"), 404
@@ -915,6 +929,11 @@ def api_admin_login():
         role = "host"
 
     if role:
+        # Nur der Owner bekommt die lange Laufzeit (PERMANENT_SESSION_LIFETIME
+        # statt "bis Browser zu") — er meldet sich einmal an und loescht danach
+        # ohne PIN. Der Gastgeber-Cookie stirbt mit dem Browser: die Box wird
+        # weitervermietet, sein Zugang soll nicht 30 Tage nachwirken.
+        session.permanent = (role == "admin")
         session["admin_logged_in"] = True
         session["role"] = role
         _login_record_success(ip)
@@ -953,7 +972,9 @@ def api_admin_status():
         "free_gb":     round(free_mb / 1024, 1),
         "total_mb":    total_mb,
         "total_gb":    round(total_mb / 1024, 1),
-        "photo_count": len(_photo_list()),
+        # Sichtbarkeitsgefiltert: sonst verrät die Zahl dem Gastgeber, dass
+        # auf der Box noch Fotos fremder Vermietungen liegen.
+        "photo_count": len(_visible_photo_list()),
         "event_name":  config.cfg.get("event_name", "Fotobox"),
     })
 
@@ -1243,6 +1264,78 @@ def api_admin_logo_preview():
     if not logo_path or not os.path.isfile(logo_path):
         abort(404)
     return send_file(logo_path)
+
+
+@app.route("/api/admin/event/new", methods=["POST"])
+@_api_admin_required
+def api_admin_new_event():
+    """Das laufende Event abschliessen und einen frischen Ordner festnageln.
+
+    Deckt die Faelle ab, die `event_session_hours` (18 h) nicht loest: eine
+    Vermietung ueber zwei Tage landet sonst je nach Pause in einem oder in
+    zwei Ordnern, und zwei Feiern am selben Tag mit gleichem Namen immer im
+    selben. Ein geaenderter `event_name` trennt zwar ebenfalls — aber eben nur,
+    wenn der Name sich wirklich aendert.
+
+    Loescht nichts, die bisherigen Fotos bleiben in ihrem Ordner. Gaeste und
+    Gastgeber sehen danach aber nur noch das neue Event (_may_see_all_events),
+    darum ist das eine Admin- und keine Gastgeber-Aktion.
+    """
+    previous = events.current_event_folder(config.cfg)
+    folder = events.start_new_event(config.cfg)
+    return jsonify(ok=True, folder=folder, previous=previous)
+
+
+def _purge_event(event: str) -> int:
+    """Loescht alle Fotos eines Events samt Thumbnails, Previews und Ordner.
+
+    Rueckgabe: Anzahl entfernter Fotos.
+    """
+    pic_dir = _pic_dir()
+    removed = 0
+    for ev, fname in list(_photo_list(event)):
+        try:
+            os.remove(os.path.join(pic_dir, ev, fname))
+            removed += 1
+        except OSError as exc:
+            logger.warning("Foto '%s/%s' nicht geloescht: %s", ev, fname, exc)
+    # Ohne die abgeleiteten Dateien liefert /thumb bzw. /preview das geloeschte
+    # Bild weiter aus — dieselbe Falle wie in api_delete.
+    for derived in (os.path.join(_thumb_dir(), event),
+                    os.path.join(_preview_dir(), event)):
+        shutil.rmtree(derived, ignore_errors=True)
+    # Den Ordner selbst nur weg, wenn wirklich nichts mehr drin liegt: eine
+    # fremde Datei soll nicht stillschweigend mit verschwinden.
+    ev_dir = os.path.join(pic_dir, event)
+    try:
+        if os.path.isdir(ev_dir) and not os.listdir(ev_dir):
+            os.rmdir(ev_dir)
+    except OSError:
+        pass
+    return removed
+
+
+@app.route("/api/admin/event/<event>/delete", methods=["POST"])
+@_api_admin_required
+def api_admin_delete_event(event: str):
+    """Ein komplettes Event wegraeumen. Admin-Session genuegt, kein PIN.
+
+    Bewusst ohne den "LOESCHEN"-Tippzwang aus /api/admin/reset: der trifft
+    *alle* Events und ist die Stufe darueber. Hier steht der Ordner in der URL,
+    das Frontend fragt einmal mit Foto-Anzahl nach, und SameSite=Lax deckt den
+    CSRF-Fall ab.
+
+    Trifft es das laufende Event, legt die naechste Aufnahme den Ordner ueber
+    events.current_event_dir() neu an — der Pin in .active_event.json bleibt
+    absichtlich stehen, damit die Feier nicht mitten drin den Ordner wechselt.
+    """
+    if not events.is_safe_event(event):
+        return jsonify(ok=False, error="Ungueltiger Event-Ordner"), 400
+    if not os.path.isdir(os.path.join(_pic_dir(), event)):
+        return jsonify(ok=False, error="Event nicht gefunden"), 404
+    removed = _purge_event(event)
+    logger.info("Event geloescht: %s (%d Fotos)", event, removed)
+    return jsonify(ok=True, removed=removed)
 
 
 @app.route("/api/admin/reset", methods=["POST"])

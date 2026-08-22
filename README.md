@@ -78,7 +78,7 @@ Diese Tabelle wird aus `config.py` gepflegt — bei Änderungen dort bitte mitzi
 | `countdown_duration` | Countdown-Dauer in Sekunden | `3` |
 | `logo_path` | Pfad zum Logo auf dem Homescreen | `"Layout/logo.png"` |
 | `admin_pin` | PIN für das Admin-Interface (volle Rechte) | `"1234"` |
-| `host_pin` | PIN für den Gastgeber (eingeschränkt; leer = deaktiviert) | `"0000"` |
+| `host_pin` | PIN für den Gastgeber (nur laufendes Event; leer = deaktiviert) | `"0000"` |
 | `theme` | Farbschema (8 Presets im Admin-Panel wählbar) | `{"bg_top": "#D5BB99", "bg_bottom": "#B…` |
 
 ### Box-Felder (Admin-Panel, gerätespezifisch, landen in `config.json`)
@@ -152,6 +152,7 @@ http://<pi-ip>/admin             (bei LAN/WLAN-Verbindung)
 **Funktionen:**
 - System-Status (Kamera, Speicher, Foto-Anzahl)
 - Event-Name, WLAN-Einstellungen, Countdown-Dauer ändern
+- Neues Event starten (trennt Fotos in einen frischen Ordner, löscht nichts)
 - Logo hochladen
 - Admin-PIN ändern
 - Alle Fotos löschen (mit Bestätigung)

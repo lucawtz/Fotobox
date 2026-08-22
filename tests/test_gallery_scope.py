@@ -107,19 +107,147 @@ def test_served_photos_are_not_publicly_cacheable(app, two_events):
 
 # ── Angemeldete Rollen ─────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("role", ["admin", "host"])
-def test_logged_in_roles_see_every_event(app, two_events, role):
+def test_admin_sees_every_event(app, two_events):
     active, old = two_events
-    _login(app, role)
+    _login(app, "admin")
     seen = {p["event"] for p in app.get("/api/photos").get_json()["photos"]}
     assert seen == {active, old}
 
 
-@pytest.mark.parametrize("role", ["admin", "host"])
-def test_logged_in_roles_reach_old_photos(app, two_events, role):
+def test_admin_reaches_old_photos(app, two_events):
     active, old = two_events
-    _login(app, role)
+    _login(app, "admin")
     assert app.get(f"/img/{old}/damals.jpg").status_code == 200
+
+
+def test_host_sees_only_the_active_event(app, two_events):
+    """Der Gastgeber mietet die Box fuer seine eigene Feier — das Archiv der
+    vorigen Mieter geht ihn nichts an. Vorher zaehlte jede Session als 'darf
+    alles sehen', der Host-PIN war damit ein Generalschluessel."""
+    active, old = two_events
+    _login(app, "host")
+    seen = {p["event"] for p in app.get("/api/photos").get_json()["photos"]}
+    assert seen == {active}
+
+
+def test_host_direct_link_into_old_event_is_404(app, two_events):
+    active, old = two_events
+    _login(app, "host")
+    assert app.get(f"/img/{old}/damals.jpg").status_code == 404
+
+
+def test_host_event_list_hides_past_parties(app, two_events):
+    active, old = two_events
+    _login(app, "host")
+    folders = [e["folder"] for e in app.get("/api/events").get_json()["events"]]
+    assert folders == [active]
+
+
+def test_host_status_count_is_scoped(app, two_events):
+    """Sonst verraet die Zahl im Admin-Panel, dass da noch mehr liegt."""
+    _login(app, "host")
+    assert app.get("/api/admin/status").get_json()["photo_count"] == 1
+
+
+def test_admin_status_counts_everything(app, two_events):
+    _login(app, "admin")
+    assert app.get("/api/admin/status").get_json()["photo_count"] == 2
+
+
+# ── Loeschen: Rollen-Grenze ────────────────────────────────────────────────────
+
+def test_admin_session_deletes_without_pin(app, two_events):
+    """Einmal anmelden statt bei jedem Foto die PIN tippen."""
+    active, old = two_events
+    _login(app, "admin")
+    r = app.post(f"/api/delete/{old}/damals.jpg")
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    assert not os.path.exists(
+        os.path.join(config.cfg["picture_dir"], old, "damals.jpg"))
+
+
+def test_host_session_cannot_delete_in_old_event(app, two_events):
+    active, old = two_events
+    _login(app, "host")
+    assert app.post(f"/api/delete/{old}/damals.jpg").status_code == 404
+    assert os.path.exists(
+        os.path.join(config.cfg["picture_dir"], old, "damals.jpg"))
+
+
+def test_host_session_deletes_in_the_active_event(app, two_events):
+    active, old = two_events
+    _login(app, "host")
+    assert app.post(f"/api/delete/{active}/jetzt.jpg").status_code == 200
+
+
+def test_host_pin_cannot_delete_in_old_event(app, two_events):
+    """Auch ohne Session: der blosse Host-PIN oeffnet keine fremde Feier."""
+    active, old = two_events
+    r = app.post(f"/api/delete/{old}/damals.jpg",
+                 data={"pin": config.cfg["host_pin"]})
+    assert r.status_code == 404
+    assert os.path.exists(
+        os.path.join(config.cfg["picture_dir"], old, "damals.jpg"))
+
+
+def test_admin_pin_still_deletes_in_old_event(app, two_events):
+    active, old = two_events
+    r = app.post(f"/api/delete/{old}/damals.jpg",
+                 data={"pin": config.cfg["admin_pin"]})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+
+
+# ── Ganzes Event loeschen ──────────────────────────────────────────────────────
+
+def test_admin_purges_a_whole_event(app, two_events):
+    active, old = two_events
+    _login(app, "admin")
+    # Thumbnail und Preview anlegen, damit der Aufraeum-Pfad wirklich greift.
+    assert app.get(f"/thumb/{old}/damals.jpg").status_code == 200
+    assert app.get(f"/preview/{old}/damals.jpg").status_code == 200
+
+    r = app.post(f"/api/admin/event/{old}/delete")
+    assert r.status_code == 200
+    assert r.get_json() == {"ok": True, "removed": 1}
+
+    assert not os.path.isdir(os.path.join(config.cfg["picture_dir"], old))
+    assert not os.path.isdir(os.path.join(gallery_server._thumb_dir(), old))
+    assert not os.path.isdir(os.path.join(gallery_server._preview_dir(), old))
+    # Das laufende Event bleibt unberuehrt.
+    assert os.path.exists(
+        os.path.join(config.cfg["picture_dir"], active, "jetzt.jpg"))
+
+
+def test_purged_active_event_keeps_running(app, two_events):
+    """Der Pin in .active_event.json bleibt stehen — sonst wechselt die Feier
+    mitten drin den Ordner."""
+    active, old = two_events
+    _login(app, "admin")
+    assert app.post(f"/api/admin/event/{active}/delete").status_code == 200
+    assert events.current_event_folder(config.cfg) == active
+
+
+def test_host_cannot_purge_an_event(app, two_events):
+    active, old = two_events
+    _login(app, "host")
+    assert app.post(f"/api/admin/event/{old}/delete").status_code == 403
+    assert os.path.exists(
+        os.path.join(config.cfg["picture_dir"], old, "damals.jpg"))
+
+
+def test_guest_cannot_purge_an_event(app, two_events):
+    active, old = two_events
+    assert app.post(f"/api/admin/event/{old}/delete").status_code == 401
+
+
+def test_purge_rejects_path_traversal(app, two_events):
+    _login(app, "admin")
+    assert app.post("/api/admin/event/..%2F..%2Fetc/delete").status_code in (400, 404)
+
+
+def test_purge_of_unknown_event_is_404(app, two_events):
+    _login(app, "admin")
+    assert app.post("/api/admin/event/2019-01-01_gibts-nicht/delete").status_code == 404
 
 
 # ── Owner-Schalter ─────────────────────────────────────────────────────────────
@@ -140,3 +268,20 @@ def test_internal_photo_list_still_sees_everything(app, two_events):
     active, old = two_events
     seen = {ev for ev, _ in gallery_server._photo_list()}
     assert seen == {active, old}
+
+
+# ── Login-Laufzeit ─────────────────────────────────────────────────────────────
+
+def test_admin_login_cookie_survives_the_browser(app):
+    """Einmal anmelden, dann monatelang ohne PIN loeschen."""
+    cookie = app.post("/api/admin/login",
+                      json={"pin": config.cfg["admin_pin"]}).headers["Set-Cookie"]
+    assert "Expires=" in cookie or "Max-Age=" in cookie
+
+
+def test_host_login_cookie_dies_with_the_browser(app):
+    """Die Box wird weitervermietet — der Gastgeber-Zugang darf nicht
+    wochenlang nachwirken."""
+    cookie = app.post("/api/admin/login",
+                      json={"pin": config.cfg["host_pin"]}).headers["Set-Cookie"]
+    assert "Expires=" not in cookie and "Max-Age=" not in cookie

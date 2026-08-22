@@ -11,6 +11,11 @@ import {
   Snackbar,
   Alert,
   Skeleton,
+  Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from "@mui/material";
 import EventRoundedIcon from "@mui/icons-material/EventRounded";
 import SubtitlesRoundedIcon from "@mui/icons-material/SubtitlesRounded";
@@ -18,7 +23,8 @@ import TimerRoundedIcon from "@mui/icons-material/TimerRounded";
 import LockRoundedIcon from "@mui/icons-material/LockRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
 import VisibilityOffRoundedIcon from "@mui/icons-material/VisibilityOffRounded";
-import { api, AdminConfig } from "../../api";
+import EventRepeatRoundedIcon from "@mui/icons-material/EventRepeatRounded";
+import { api, AdminConfig, EventsResponse } from "../../api";
 import SettingsCard from "./SettingsCard";
 import { useAuth } from "./authContext";
 
@@ -35,6 +41,22 @@ export default function AdminEvent() {
   const [showHostPin,  setShowHostPin]  = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ severity: "success" | "error"; msg: string } | null>(null);
+  // Nur fuer die Karte "Neues Event": zeigt, was gerade laeuft.
+  const [evs, setEvs] = useState<EventsResponse | null>(null);
+  const [evsErr, setEvsErr] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
+  const [newBusy, setNewBusy] = useState(false);
+
+  const loadEvents = () =>
+    api.events()
+      .then((r) => { setEvs(r); setEvsErr(false); })
+      // Die Info ist Beiwerk — faellt sie aus, bleibt der Button trotzdem
+      // bedienbar. Ueber die Berechtigung entscheidet ohnehin der Server.
+      .catch(() => setEvsErr(true));
+
+  useEffect(() => {
+    if (isAdmin) loadEvents();
+  }, [isAdmin]);
 
   useEffect(() => {
     api.admin.config.get().then((c) => {
@@ -67,6 +89,27 @@ export default function AdminEvent() {
       setBusy(false);
     }
   };
+
+  const startNewEvent = async () => {
+    setNewBusy(true);
+    try {
+      const r = await api.admin.newEvent();
+      if (!r.ok) throw new Error(r.error ?? "Event konnte nicht gestartet werden");
+      setToast({ severity: "success", msg: `Neues Event: ${r.folder}` });
+      setNewOpen(false);
+      await loadEvents();
+    } catch (e) {
+      setToast({ severity: "error", msg: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setNewBusy(false);
+    }
+  };
+
+  const activeEvent = evs?.events.find((e) => e.active) ?? null;
+  // list_events() liefert nur Ordner mit Fotos: kein Treffer heisst, im
+  // laufenden Event wurde noch nichts aufgenommen — dann gibt es nichts zu
+  // trennen und der Ordnername bliebe derselbe.
+  const activeEmpty = !!evs && !activeEvent;
 
   const dirty = !!cfg && (
     eventName !== cfg.event_name ||
@@ -195,7 +238,7 @@ export default function AdminEvent() {
             <SettingsCard
               icon={<LockRoundedIcon />}
               title="Gastgeber-PIN"
-              description="Eingeschränkter Zugang: nur Event-Name, Countdown und Logo. Leer lassen, um Gastgeber-Login zu deaktivieren."
+              description="Eingeschränkter Zugang: nur Event-Name, Countdown und Logo — und nur das laufende Event, nie das Archiv. Leer lassen, um Gastgeber-Login zu deaktivieren."
             >
               {cfg ? (
                 <TextField
@@ -257,7 +300,106 @@ export default function AdminEvent() {
             {busy ? "Speichere…" : "Speichern"}
           </Button>
         </Box>
+
+        {isAdmin && (
+          <>
+            <Divider />
+
+            <SettingsCard
+              icon={<EventRepeatRoundedIcon />}
+              title="Neues Event starten"
+              description="Fotos landen ab sofort in einem frischen Ordner — für Vermietungen über mehrere Tage oder zwei Feiern am selben Tag."
+            >
+              {evs === null && !evsErr ? (
+                <Skeleton variant="rounded" height={92} />
+              ) : (
+                <Box
+                  sx={{
+                    p: 2.5,
+                    borderRadius: 2.5,
+                    bgcolor: "grey.50",
+                    border: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  {activeEvent ? (
+                    <>
+                      <Typography variant="body2" color="text.secondary">
+                        Läuft gerade
+                      </Typography>
+                      <Typography variant="body2" sx={{ fontWeight: 600, mt: 0.25 }}>
+                        {activeEvent.display}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                        {activeEvent.count} Foto{activeEvent.count === 1 ? "" : "s"} in{" "}
+                        {activeEvent.folder}
+                      </Typography>
+                    </>
+                  ) : activeEmpty ? (
+                    <Typography variant="body2" color="text.secondary">
+                      Im laufenden Event liegen noch keine Fotos — es gibt nichts
+                      zu trennen.
+                    </Typography>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      Laufendes Event nicht abrufbar.
+                    </Typography>
+                  )}
+                </Box>
+              )}
+
+              <Box sx={{ mt: 2, display: "flex", justifyContent: "flex-end" }}>
+                <Button
+                  variant="outlined"
+                  startIcon={<EventRepeatRoundedIcon />}
+                  disabled={activeEmpty || newBusy}
+                  onClick={() => setNewOpen(true)}
+                >
+                  Neues Event starten
+                </Button>
+              </Box>
+            </SettingsCard>
+          </>
+        )}
       </Stack>
+
+      <Dialog
+        open={newOpen}
+        onClose={newBusy ? undefined : () => setNewOpen(false)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1.25 }}>
+          <EventRepeatRoundedIcon color="primary" />
+          Neues Event starten?
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            {activeEvent
+              ? `„${activeEvent.display}" wird abgeschlossen — die ${activeEvent.count} Foto${
+                  activeEvent.count === 1 ? "" : "s"
+                } bleiben erhalten und sind für dich weiter sichtbar.`
+              : "Das laufende Event wird abgeschlossen. Es wird nichts gelöscht."}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+            Gäste und Gastgeber sehen ab dann nur noch das neue Event. Der
+            Event-Name bleibt unverändert.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, gap: 1 }}>
+          <Button onClick={() => setNewOpen(false)} disabled={newBusy} color="inherit" sx={{ flex: 1 }}>
+            Abbrechen
+          </Button>
+          <Button
+            variant="contained"
+            disabled={newBusy}
+            onClick={startNewEvent}
+            sx={{ flex: 1 }}
+          >
+            {newBusy ? "Starte…" : "Starten"}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={!!toast}

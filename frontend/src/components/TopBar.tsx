@@ -1,12 +1,13 @@
 import { ReactNode, useState } from "react";
 import { AppBar, Toolbar, Box, IconButton, Typography, Tooltip } from "@mui/material";
-import AdminPanelSettingsRoundedIcon from "@mui/icons-material/AdminPanelSettingsRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
+import RoleBadge from "./RoleBadge";
 
 interface Props {
   title: string;
   subtitle?: string;
   onRefresh?: () => void;
+  /** Rollen-Anzeige + Einstieg ins Admin-Panel. */
   showAdmin?: boolean;
   actions?: ReactNode;
 }
@@ -100,17 +101,7 @@ export default function TopBar({ title, subtitle, onRefresh, showAdmin = true, a
           </Tooltip>
         )}
 
-        {showAdmin && (
-          <Tooltip title="Admin">
-            <IconButton
-              onClick={() => { window.location.href = "/admin"; }}
-              size="medium"
-              aria-label="Admin"
-            >
-              <AdminPanelSettingsRoundedIcon />
-            </IconButton>
-          </Tooltip>
-        )}
+        {showAdmin && <RoleBadge />}
       </Toolbar>
     </AppBar>
   );

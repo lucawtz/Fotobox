@@ -226,6 +226,13 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       `event_session_hours` (18 h) oder bei geändertem Event-Namen. Rückwärts
       gestellte Uhr ist abgefangen — der Pi hat keine RTC und korrigiert per NTP
       oft erst Minuten nach dem Boot.
+      *Nachtrag (22.08.):* `start_new_event()` hing bis dahin ohne Aufrufer in
+      `events.py`. Jetzt verdrahtet als `POST /api/admin/event/new` samt Karte
+      „Neues Event starten" unter Admin → Event. Admin-only: der Gastgeber
+      sieht nur das laufende Event und würde sich sonst selbst von seinen
+      eigenen Fotos aussperren. Deckt die zwei Fälle ab, die
+      `event_session_hours` offen lässt — Vermietung über mehrere Tage und
+      zwei Feiern am selben Tag mit gleichem Namen.
 
 - [~] **12. WLAN-Änderung im Admin greift nicht** — `frontend/src/pages/admin/AdminWifi.tsx:40`, `gallery_server.py:753-757`
       Das Speichern schreibt SSID/Passwort in die Config, startet den Hotspot aber
@@ -278,12 +285,13 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       `/api/download-zip` zippt jedes fremde Event — die einzige Prüfung ist
       `is_safe_event` (Traversal), nicht Zugehörigkeit. Bei eigenen Events
       entschärft, aber Gäste sehen trotzdem die Fotos der letzten Feier.
-      *Erledigt:* `_may_see_event()` / `_visible_photo_list()`. Gäste sehen
-      nur das laufende Event, Admin und Gastgeber weiterhin alles; der Owner
-      kann per `gallery_guests_see_all` bewusst ein Archiv daraus machen.
-      Betrifft `/api/photos`, `/api/events`, `/api/count`, `/api/download-zip`
-      und die Direktlinks `/img`, `/thumb`, `/preview`, `/download`.
-      13 Tests in `tests/test_gallery_scope.py`.
+      *Erledigt:* `_may_see_event()` / `_visible_photo_list()`. Gäste **und
+      Gastgeber** sehen nur das laufende Event, das Archiv bleibt dem Admin;
+      der Owner kann per `gallery_guests_see_all` bewusst ein Archiv daraus
+      machen. Betrifft `/api/photos`, `/api/events`, `/api/count`,
+      `/api/download-zip`, `/api/admin/status` (Foto-Zahl), das Löschen in
+      `/api/delete` und die Direktlinks `/img`, `/thumb`, `/preview`,
+      `/download`. 35 Tests in `tests/test_gallery_scope.py`.
 
 - [x] **18. Disk-Full-Handling** — `config.py:77`, `ui.py:695`
       `disk_warn_mb` färbt nur Text gelb. Keine Aufnahme-Verweigerung, kein Alarm.

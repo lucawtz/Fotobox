@@ -17,7 +17,6 @@ import {
   Tooltip,
   Menu,
   MenuItem,
-  Avatar,
   alpha,
 } from "@mui/material";
 import MenuRoundedIcon from "@mui/icons-material/MenuRounded";
@@ -31,6 +30,8 @@ import LogoutRoundedIcon from "@mui/icons-material/LogoutRounded";
 import PhotoLibraryRoundedIcon from "@mui/icons-material/PhotoLibraryRounded";
 import { api } from "../../api";
 import { useAuth } from "./authContext";
+import { clearSessionRole } from "../../sessionRole";
+import RoleAvatar from "../../components/RoleAvatar";
 
 const NAV_WIDTH = 256;
 
@@ -69,6 +70,7 @@ export default function AdminLayout() {
 
   const logout = async () => {
     try { await api.admin.logout(); } catch { /* ignore */ }
+    clearSessionRole();
     navigate("/admin/login", { replace: true });
   };
 
@@ -236,17 +238,7 @@ export default function AdminLayout() {
 
             <Tooltip title="Konto">
               <IconButton onClick={(e) => setMenuEl(e.currentTarget)}>
-                <Avatar
-                  sx={{
-                    width: 34, height: 34,
-                    fontSize: ".95rem",
-                    bgcolor: isAdmin ? "primary.main" : "secondary.main",
-                    color: "primary.contrastText",
-                    fontWeight: 600,
-                  }}
-                >
-                  {isAdmin ? "A" : "G"}
-                </Avatar>
+                <RoleAvatar role={role} />
               </IconButton>
             </Tooltip>
             <Menu

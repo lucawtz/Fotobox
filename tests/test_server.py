@@ -115,6 +115,31 @@ def test_delete_rejects_traversal(app):
     assert r.status_code in (403, 404)
 
 
+# ── Neues Event starten ────────────────────────────────────────────────────────
+
+def test_new_event_is_admin_only(app):
+    """Der Gastgeber sieht nur das laufende Event — er darf es nicht wechseln,
+    sonst sperrt er sich selbst von seinen eigenen Fotos aus."""
+    assert app.post("/api/admin/event/new").status_code == 401
+    assert _login(app, "host").post("/api/admin/event/new").status_code == 403
+    assert _login(app, "admin").post("/api/admin/event/new").status_code == 200
+
+
+def test_new_event_starts_fresh_folder_without_touching_photos(app, cfg, photo_factory):
+    """Trennt eine Vermietung ueber mehrere Tage, die `event_session_hours`
+    sonst je nach Pause im selben Ordner laesst."""
+    import events
+    first = events.current_event_folder(config.cfg)
+    foto = photo_factory(os.path.join(cfg["picture_dir"], first, "foto.jpg"))
+
+    body = _login(app).post("/api/admin/event/new").get_json()
+
+    assert body["previous"] == first
+    assert body["folder"] != first, "Ordner blieb derselbe — Aktion wirkungslos"
+    assert events.current_event_folder(config.cfg) == body["folder"]
+    assert os.path.isfile(foto), "Fotos des alten Events wurden angefasst"
+
+
 # ── WLAN-Validierung (P1-12) ───────────────────────────────────────────────────
 
 @pytest.mark.parametrize("pw,ok", [

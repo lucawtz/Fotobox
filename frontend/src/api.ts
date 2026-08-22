@@ -175,9 +175,10 @@ export const api = {
   // Erreichbarkeit und leitet erst dann weiter (gallery_server.go_link).
   goUrl:       (slug: "termin" | "instagram") => `/go/${slug}`,
 
-  delete: async (p: Pick<Photo, "event" | "filename">, pin: string): Promise<DeleteResult> => {
+  // pin entfaellt fuer eingeloggte Nutzer — die Session reicht dem Server.
+  delete: async (p: Pick<Photo, "event" | "filename">, pin?: string): Promise<DeleteResult> => {
     const fd = new FormData();
-    fd.set("pin", pin);
+    if (pin) fd.set("pin", pin);
     const res = await xfetch(`/api/delete/${evPath(p)}`, {
       method: "POST",
       body: fd,
@@ -206,5 +207,13 @@ export const api = {
     },
     reset: (confirm: string) =>
       postJson("/api/admin/reset", { confirm }).then(json<DeleteResult>),
+    deleteEvent: (folder: string) =>
+      xfetch(`/api/admin/event/${encodeURIComponent(folder)}/delete`, { method: "POST" })
+        .then(json<DeleteResult>),
+    // Trennt das laufende Event, ohne etwas zu loeschen — fuer Vermietungen
+    // ueber mehrere Tage und zwei Feiern am selben Tag.
+    newEvent: () =>
+      xfetch("/api/admin/event/new", { method: "POST" })
+        .then(json<{ ok: boolean; error?: string; folder: string; previous: string }>),
   },
 };

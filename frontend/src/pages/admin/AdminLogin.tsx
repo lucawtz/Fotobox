@@ -13,6 +13,7 @@ import {
 } from "@mui/material";
 import LockRoundedIcon from "@mui/icons-material/LockRounded";
 import { api } from "../../api";
+import { clearSessionRole } from "../../sessionRole";
 
 export default function AdminLogin() {
   const [pin, setPin] = useState("");
@@ -28,7 +29,9 @@ export default function AdminLogin() {
     setBusy(true); setError(null);
     try {
       const r = await api.admin.login(pin);
-      if (r.ok) navigate(from, { replace: true });
+      // Der Rollen-Cache stammt noch vom ausgeloggten Seitenaufruf — ohne das
+      // fragt der Loesch-Dialog in der Galerie weiter nach der PIN.
+      if (r.ok) { clearSessionRole(); navigate(from, { replace: true }); }
       else setError(r.error ?? "Falscher PIN");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
