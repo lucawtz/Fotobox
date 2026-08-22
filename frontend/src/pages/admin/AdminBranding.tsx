@@ -68,7 +68,9 @@ export default function AdminBranding() {
   const [theme, setTheme] = useState<Record<string, string>>(DEFAULT_THEME);
   const [savedTheme, setSavedTheme] = useState<Record<string, string>>(DEFAULT_THEME);
   const [themeBusy, setThemeBusy] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(true);
+  // Zugeklappt starten — die Karte bleibt kurz, wer die Vorschau will
+  // klappt sie einmal auf.
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const [toast, setToast] = useState<{ severity: "success" | "error"; msg: string } | null>(null);
 
