@@ -13,24 +13,37 @@ Nächster Schritt ist der Hardware-Smoke-Test, sobald die Hardware da ist.
 **Rahmen:** Nur eigene Events bis Oktober (keine Vermietung an Dritte) · Drucker
 Canon Selphy, 10×15 · Hardware ab Ende August wieder verfügbar · harter Termin.
 
-**Fortschritt:** 19 / 22 umgesetzt — davon **13 getestet**, 6 warten auf die
-Hardware-Gegenprüfung. (P0: 4/4 · P1: 9/11 · P2: 6/7; P3 zählt nicht mit.)
+**Fortschritt:** 21 / 22 umgesetzt — davon **14 durch Tests abgesichert**,
+7 warten auf die Hardware-Gegenprüfung. Offen ist nur noch P1-15.
+(P0: 4/4 · P1: 10/11 · P2: 7/7; P3 zählt nicht mit.)
 
 **Legende:** `[x]` fertig und geprüft · `[~]` Code fertig, Wirkung erst auf dem
 Pi nachweisbar · `[ ]` offen.
 
-Stand 22.08.2026: alles umgesetzt, was ohne angeschlossene Hardware möglich ist.
-**136 Tests, alle grün** — `venv/bin/python -m pytest`.
+**Alle `[~]`-Punkte auf einmal prüfen** — auf dem Pi:
 
-**Offen und warum:**
-* **P1-5** (Wayland/X11) — lässt sich nur auf dem Pi feststellen.
-* **P1-15** (exakte Pins) — `pip freeze` muss auf dem Pi laufen, nicht auf macOS.
-* **P2-17** (Galerie aufs aktive Event beschränken) — bewusst zurückgestellt,
-  bei eigenen Events kein Risiko; Entscheidung siehe Punkt selbst.
-* **P1-6/P1-7** sind abgehakt, aber nur der Code — dass Autologin und
-  Bildschirmschoner-Aus tatsächlich greifen, zeigt erst der Hardware-Test.
-* **P1-9** ist fertig gebaut und getestet, der Selphy war aber nie
-  angeschlossen: `lpadmin`-Einrichtung und echte Drucke stehen noch aus.
+```bash
+cd ~/Fotobox && git pull && ./install.sh
+sudo systemctl stop fotobox          # für Kamera-, Display- und GPIO-Prüfung
+venv/bin/python scripts/smoke_test.py
+```
+
+Das Skript geht Display-Stack, systemd, Bildschirmschoner, Log-Rotation,
+Drucker, Hotspot, Kamera, Capture-Card, GPIO, Speicher und Abhängigkeiten
+durch und sagt zu jedem Fehler, was zu tun ist. Exit-Code 0 = keine Fehler.
+Es ändert nichts und fasst belegte Geräte nicht an.
+
+Stand 22.08.2026: alles umgesetzt, was ohne angeschlossene Hardware möglich
+ist. **205 Tests, alle grün** — `venv/bin/python -m pytest`.
+
+**Was noch fehlt:**
+* **P1-15** — `venv/bin/pip freeze > requirements.pi.txt` muss auf dem Pi
+  laufen, nicht auf macOS: die Wheels unterscheiden sich. Erst danach ist der
+  Event-Tag wirklich reproduzierbar.
+* Die sieben `[~]`-Punkte brauchen einen Durchlauf von `scripts/smoke_test.py`
+  auf der echten Hardware. Der Code steht, nur der Nachweis fehlt.
+* Danach bleibt die **Generalprobe** (5.–11. Okt) — sie ist durch nichts zu
+  ersetzen, was sich am Schreibtisch prüfen lässt.
 
 ---
 
@@ -93,7 +106,7 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
 
 ## P1 — Muss vor dem Event
 
-- [ ] **5. Display-Stack klären: X11 oder Wayland** — `fotobox.service:11`, `install.sh`
+- [~] **5. Display-Stack klären: X11 oder Wayland** — `fotobox.service:11`, `install.sh`
       Die Unit setzt `DISPLAY=:0`. Bookworm startet auf Pi 4/5 je nach Version einen
       Wayland-Compositor — dann findet SDL kein X11 und die Box bleibt schwarz.
       **Muss auf der echten Hardware verifiziert werden**, ggf. `SDL_VIDEODRIVER`
@@ -103,6 +116,14 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       *Stand 22.08.:* `install.sh` deckt inzwischen beide Display-Stacks ab
       (Abschnitt 10), die Unit ist aber weiterhin X11-fest (`DISPLAY=:0`,
       `XAUTHORITY`). Der eigentliche Punkt bleibt damit unverändert offen.
+      *Gelöst am 22.08.:* `display_env.py` erkennt zur Laufzeit, ob eine
+      Wayland- oder X11-Session läuft, ergänzt `WAYLAND_DISPLAY` /
+      `XDG_RUNTIME_DIR` / `DISPLAY` und liefert eine Treiber-Reihenfolge,
+      die `ui.py` der Reihe nach durchprobiert. Die Box hängt damit nicht
+      mehr an dem fest gesetzten `DISPLAY=:0`. 15 Tests decken die
+      Pi-Szenarien ab (Wayland-Socket, nur Lock-Datei, XWayland-Rückfall,
+      erzwungener Treiber). *Offen: dass wirklich ein Vollbild aufgeht,
+      zeigt nur der Pi — `scripts/smoke_test.py` prüft genau das.*
 
 - [~] **6. Bildschirmschoner / DPMS deaktivieren** — `install.sh`
       Nichts im Repo verhindert, dass der Monitor nach ~10 Minuten mitten im Event
@@ -169,7 +190,7 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       lesbar, sonst `unknown` = bereit (lieber ein echter `lp`-Fehler als ein
       stumm verstecktes Feature). Regressionstests in
       `tests/test_printing_locale.py` — bewusst eigene Datei, weil die
-      `cups`-Fixture in `test_printing.py` nur englische Ausgaben stubbt und den
+      `cups`-Fixture in `tests/test_printing.py` nur englische Ausgaben stubbt und den
       Fehler dort strukturell nicht sehen kann.
       *Auf dem Pi einmal `locale` prüfen — bei `en_GB` war der Bug ohnehin
       unsichtbar, bei `de_DE` hätte er den Druck am Eventabend gekostet.*
@@ -252,11 +273,17 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       (genau dort sitzt P0-1) · `disk_monitor.enforce_photo_max_age` und
       `enforce_max_photos` (löschen Nutzerdaten) · `collage.make_collage`.
 
-- [ ] **17. Galerie auf aktives Event beschränken** — `gallery_server.py:474,485,440`
+- [x] **17. Galerie auf aktives Event beschränken** — `gallery_server.py:474,485,440`
       `/api/events` und `/api/photos` liefern alles auf der Platte, und
       `/api/download-zip` zippt jedes fremde Event — die einzige Prüfung ist
       `is_safe_event` (Traversal), nicht Zugehörigkeit. Bei eigenen Events
       entschärft, aber Gäste sehen trotzdem die Fotos der letzten Feier.
+      *Erledigt:* `_may_see_event()` / `_visible_photo_list()`. Gäste sehen
+      nur das laufende Event, Admin und Gastgeber weiterhin alles; der Owner
+      kann per `gallery_guests_see_all` bewusst ein Archiv daraus machen.
+      Betrifft `/api/photos`, `/api/events`, `/api/count`, `/api/download-zip`
+      und die Direktlinks `/img`, `/thumb`, `/preview`, `/download`.
+      13 Tests in `tests/test_gallery_scope.py`.
 
 - [x] **18. Disk-Full-Handling** — `config.py:77`, `ui.py:695`
       `disk_warn_mb` färbt nur Text gelb. Keine Aufnahme-Verweigerung, kein Alarm.

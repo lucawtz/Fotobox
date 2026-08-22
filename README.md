@@ -109,8 +109,10 @@ Diese Tabelle wird aus `config.py` gepflegt — bei Änderungen dort bitte mitzi
 | `polaroid_frames` | Position/Drehung der drei Polaroid-Rahmen | `[[567, 255, -5], [1098, 256, 5], [1633…` |
 | `polaroid_photo_size` | Fotogröße innerhalb eines Polaroid-Rahmens | `[310, 295]` |
 | `live_view_rect` | Position und Größe des Live-Vorschaufensters | `[510, 540, 800, 450]` |
-| `instagram_url` | Instagram-Link in der Sidebar | `"https://www.instagram.com/lucawtz"` |
-| `booking_url` | Buchungs-Link in der Sidebar | `"https://bytebots.de/"` |
+| `instagram_url` | Instagram-Link (Mini-QR in der Sidebar + Galerie) | `"https://www.instagram.com/lucawtz"` |
+| `booking_url` | Buchungs-Link (Mini-QR in der Sidebar + Galerie) | `"https://bytebots.de/"` |
+| `booking_label` | Beschriftung unter dem Buchungs-QR | `"Fotobox mieten"` |
+| `qr_link_mode` | `"local"` = QR zeigt auf `/go/<slug>`, `"direct"` = auf die Ziel-URL | `"local"` |
 | `disk_warn_mb` | Speicherwarnung ab X MB frei | `500` |
 | `thumbnail_max_age_days` | Thumbnails älter als X Tage aufräumen | `30` |
 | `photo_max_age_days` | Fotos nach X Tagen automatisch löschen | `7` |
@@ -190,6 +192,27 @@ WLAN-Name und Passwort lassen sich im Admin-Panel unter **WLAN** ändern. Die Bo
 startet den Hotspot danach automatisch neu — alle verbundenen Geräte fliegen
 dabei kurz raus, auch das Gerät, von dem aus man die Änderung vornimmt. Am
 besten vor dem Event erledigen, nicht mittendrin.
+
+### Warum externe Links über `/go/` laufen
+
+`hotspot.py` schreibt `address=/#/<hotspot_ip>` in die dnsmasq-Config — ein
+Captive-Portal-Hijack, der **jede** DNS-Anfrage auf die Box umbiegt. Nur
+deshalb landet ein Gast, der irgendeine Adresse eintippt, in der Galerie.
+
+Der Preis: für jeden Gast im Fotobox-WLAN ist damit auch jede externe Seite
+unerreichbar. Ein QR-Code mit `https://…` löst auf die Box auf, deren Port 443
+niemand bedient — der Gast sieht nur einen Verbindungsfehler.
+
+Deshalb zeigen die Mini-QRs in der Sidebar und die Buttons in der Galerie auf
+`http://<hotspot_ip>/go/termin` bzw. `/go/instagram`. Diese Route liegt lokal,
+ist ohne DNS und ohne Internet erreichbar, prüft im Browser ob das Handy
+überhaupt nach draußen kommt und leitet dann selbst weiter. Klappt das nicht,
+erklärt sie stattdessen den Weg (WLAN trennen / mobile Daten an), statt den
+Gast im Fehler stehen zu lassen.
+
+Wer die nackte Ziel-URL im QR haben will — sinnvoll nur, wenn die Gäste
+typischerweise *nicht* im Fotobox-WLAN hängen — setzt `qr_link_mode` in
+`config.py` auf `"direct"`.
 
 ---
 
