@@ -472,3 +472,6 @@ Voller Aufbau wie am Event-Tag. Erst wenn hier alles hakt, gilt die Box als fert
 - Nummern bleiben stabil, damit Commit-Messages darauf verweisen können (`P1-9`).
 - Den Fortschrittszähler oben beim Abhaken mitziehen.
 - Ab dem 12. Oktober gilt Feature-Freeze: alles Neue wandert nach P3, egal wie klein.
+- **Nur Entschiedenes steht hier.** Unbewertete Einfälle gehören in `IDEAS.md` und
+  kommen erst herüber, wenn sie *was*, *wo* und *warum* tragen — sonst verwässert P3
+  zur Wunschliste und die Roadmap verliert ihren Zweck.

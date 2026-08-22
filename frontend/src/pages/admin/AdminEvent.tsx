@@ -37,6 +37,7 @@ export default function AdminEvent() {
   const { role } = useAuth();
   const isAdmin = role === "admin";
   const [cfg, setCfg] = useState<AdminConfig | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [eventName, setEventName] = useState("");
   const [subtitle,  setSubtitle]  = useState("");
   const [countdown, setCountdown] = useState(3);
@@ -63,15 +64,24 @@ export default function AdminEvent() {
     if (isAdmin) loadEvents();
   }, [isAdmin]);
 
+  // Aus der geladenen Config in die Formularfelder. Wird beim Oeffnen, beim
+  // Verwerfen UND nach dem Speichern gebraucht.
+  const applyCfg = (c: AdminConfig) => {
+    setCfg(c);
+    setEventName(c.event_name);
+    setSubtitle(c.subtitle ?? "");
+    setCountdown(c.countdown_duration);
+    setAdminPin(c.admin_pin ?? "");
+    setHostPin(c.host_pin ?? "");
+  };
+
   useEffect(() => {
-    api.admin.config.get().then((c) => {
-      setCfg(c);
-      setEventName(c.event_name);
-      setSubtitle(c.subtitle ?? "");
-      setCountdown(c.countdown_duration);
-      setAdminPin(c.admin_pin ?? "");
-      setHostPin(c.host_pin ?? "");
-    });
+    // Ohne .catch() blieb die Seite bei abgelaufener Session oder ueberlastetem
+    // Hotspot stumm auf Skeletons stehen — kein Spinner, kein Fehler, nichts.
+    api.admin.config.get()
+      .then(applyCfg)
+      .catch((e) =>
+        setLoadErr(e instanceof Error ? e.message : String(e)));
   }, []);
 
   const save = async () => {
@@ -87,6 +97,13 @@ export default function AdminEvent() {
         payload.host_pin  = hostPin;
       }
       await api.admin.config.save(payload);
+      // Gespeicherten Stand als neuen Referenzstand uebernehmen. Fehlte das,
+      // blieb `dirty` true: Speichern/Verwerfen blieben aktiv, und ein Klick
+      // auf "Verwerfen" holte die Werte von VOR dem Speichern zurueck — sah
+      // aus, als waere der Speichervorgang rueckgaengig gemacht worden.
+      // Der Server kuerzt event_name/subtitle, deshalb seine Fassung lesen
+      // statt der eigenen: sonst zeigt das Feld 45 Zeichen, gespeichert sind 40.
+      applyCfg(await api.admin.config.get());
       setToast({ severity: "success", msg: "Einstellungen gespeichert" });
     } catch (e) {
       setToast({ severity: "error", msg: e instanceof Error ? e.message : String(e) });
@@ -124,6 +141,11 @@ export default function AdminEvent() {
     (isAdmin && hostPin  !== (cfg.host_pin  ?? ""))
   );
 
+  // Grenzen kommen vom Server (config.py), damit sie nicht ein zweites Mal
+  // verdrahtet sind. Fallback nur fuer die Millisekunde vor dem ersten Laden.
+  const nameMax = cfg?.event_name_max ?? 40;
+  const subMax  = cfg?.subtitle_max   ?? 60;
+
   const adminPinValid = !isAdmin || (adminPin.length >= PIN_MIN && adminPin.length <= PIN_MAX);
   const hostPinValid  = !isAdmin || hostPin === ""
     || (hostPin.length >= PIN_MIN && hostPin.length <= PIN_MAX);
@@ -131,6 +153,11 @@ export default function AdminEvent() {
   return (
     <>
       <Stack spacing={3}>
+        {loadErr && (
+          <Alert severity="error" variant="outlined">
+            Einstellungen konnten nicht geladen werden: {loadErr}
+          </Alert>
+        )}
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 500 }}>
             Event
@@ -151,7 +178,14 @@ export default function AdminEvent() {
               onChange={(e) => setEventName(e.target.value)}
               placeholder="z.B. Lisa & Tom Hochzeit"
               fullWidth
-              inputProps={{ maxLength: 60 }}
+              // Auf dem Homescreen steht der Name in einer 290 px schmalen
+              // Sidebar. Bis hierher schrumpft die Schrift mit; laenger wuerde
+              // die Box mitten im Wort umbrechen und mit "…" abschneiden.
+              inputProps={{ maxLength: nameMax }}
+              helperText={`${eventName.length}/${nameMax} Zeichen — mehr passt nicht auf den Box-Bildschirm`}
+              FormHelperTextProps={{
+                sx: { color: eventName.length >= nameMax ? "warning.main" : "text.secondary" },
+              }}
             />
           ) : (
             <Skeleton variant="rounded" height={56} />
@@ -169,7 +203,11 @@ export default function AdminEvent() {
               onChange={(e) => setSubtitle(e.target.value)}
               placeholder="z.B. 30. April 2026"
               fullWidth
-              inputProps={{ maxLength: 80 }}
+              inputProps={{ maxLength: subMax }}
+              helperText={`${subtitle.length}/${subMax} Zeichen — mehr passt nicht auf den Box-Bildschirm`}
+              FormHelperTextProps={{
+                sx: { color: subtitle.length >= subMax ? "warning.main" : "text.secondary" },
+              }}
             />
           ) : (
             <Skeleton variant="rounded" height={56} />
@@ -285,15 +323,7 @@ export default function AdminEvent() {
         >
           <Button
             disabled={!dirty || busy}
-            onClick={() => {
-              if (cfg) {
-                setEventName(cfg.event_name);
-                setSubtitle(cfg.subtitle ?? "");
-                setCountdown(cfg.countdown_duration);
-                setAdminPin(cfg.admin_pin ?? "");
-                setHostPin(cfg.host_pin ?? "");
-              }
-            }}
+            onClick={() => { if (cfg) applyCfg(cfg); }}
             color="inherit"
             sx={{ flex: { xs: 1, sm: "0 0 auto" } }}
           >

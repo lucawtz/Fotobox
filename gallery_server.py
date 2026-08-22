@@ -27,6 +27,7 @@ import events
 logger = logging.getLogger(__name__)
 
 
+
 def _load_or_create_secret_key() -> bytes:
     """Persistenter Flask-Secret-Key. Sonst werden alle Admin-Sessions
     invalidiert wenn der Service neu startet."""
@@ -1298,6 +1299,14 @@ def api_admin_config():
             "theme":              dict(config.cfg.get("theme") or {}),
             "instagram_url":      config.cfg.get("instagram_url", ""),
             "booking_url":        config.cfg.get("booking_url", ""),
+            # Fuer die Theme-Vorschau: sie zeichnet die Sidebar so, wie die
+            # Box sie zeichnet, und dort haengt an instagram_qr_path /
+            # booking_qr_path, ob eine Reihe einen eigenen Code traegt oder
+            # nur Glyph und Text. Nur das Ja/Nein — die Pfade selbst gehen
+            # den Mieter nichts an.
+            "booking_label":      config.cfg.get("booking_label", ""),
+            "has_instagram_qr":   os.path.isfile(config.cfg.get("instagram_qr_path", "")),
+            "has_booking_qr":     os.path.isfile(config.cfg.get("booking_qr_path", "")),
             # Warnung, solange Auslieferungs-PINs aktiv sind. Der Admin-PIN
             # gibt "alle Fotos loeschen" frei — auf einem offenen Gaeste-WLAN
             # ist "1234" faktisch kein Schutz.
@@ -1307,6 +1316,10 @@ def api_admin_config():
             "print_copies":       int(config.cfg.get("print_copies", 1)),
             "print_mode":         config.cfg.get("print_mode", "auto"),
             "role":               role,
+            # Damit das Admin-Panel dieselben Grenzen anzeigt, die hier
+            # abgeschnitten wird — statt sie ein zweites Mal zu verdrahten.
+            "event_name_max":     config.EVENT_NAME_MAX_CHARS,
+            "subtitle_max":       config.SUBTITLE_MAX_CHARS,
         }
         if is_admin:
             out.update({
@@ -1344,8 +1357,14 @@ def api_admin_config():
     # Box-Besitzer direkt in config.json gepflegt und nie über die Admin-API
     # geschrieben, damit Mieter sie nicht überschreiben können.
     config.cfg.update({
-        "event_name":         (data.get("event_name") or config.cfg["event_name"]).strip(),
-        "subtitle":           str(data.get("subtitle", config.cfg.get("subtitle", ""))).strip()[:80],
+        # Laengen hart begrenzen. Der Homescreen hat fuer beide zusammen eine
+        # 290 px schmale Spalte; laenger heisst nicht "kleiner", sondern seit
+        # ui._hard_wrap "mitten im Wort umgebrochen und mit … abgeschnitten".
+        # Die Grenzen sind in config.py gegen die Lesbarkeitsuntergrenze
+        # ausgemessen; hier greifen sie auch fuer einen direkten POST am
+        # Admin-Panel vorbei.
+        "event_name":         (data.get("event_name") or config.cfg["event_name"]).strip()[:config.EVENT_NAME_MAX_CHARS],
+        "subtitle":           str(data.get("subtitle", config.cfg.get("subtitle", ""))).strip()[:config.SUBTITLE_MAX_CHARS],
         "countdown_duration": countdown,
         "wifi_ssid":          new_ssid,
         "wifi_password":      new_pw,

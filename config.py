@@ -48,6 +48,24 @@ _PERSISTED_FIELDS = _MIETER_FIELDS | _BOX_FIELDS
 PIN_MIN_LEN = 6
 PIN_MAX_LEN = 12
 
+# Zeichengrenzen fuer event_name / subtitle.
+#
+# Gemessen in ui.py gegen die Sidebar-Breite (SIDEBAR_W - 30 = 290 px) und die
+# Lesbarkeitsuntergrenzen EVENT_MIN_PT / SUB_MIN_PT — unter denen liest der
+# Gast aus 2 m Abstand nichts mehr:
+#
+#   Event-Name  22 pt fett, 2 Zeilen -> 51 Zeichen gemischt, 43 in Versalien
+#   Untertitel  16 pt,      3 Zeilen -> 65 Zeichen gemischt, 62 in Versalien
+#
+# Genommen ist jeweils der Versalien-Fall, abgerundet. Laenger heisst seit
+# ui._hard_wrap nicht mehr "kleiner", sondern "mitten im Wort umgebrochen und
+# mit … abgeschnitten" — deshalb wird hier begrenzt statt geschrumpft.
+#
+# Hier und nicht in ui.py, damit der Galerie-Server sie lesen kann, ohne
+# pygame zu importieren.
+EVENT_NAME_MAX_CHARS = 40
+SUBTITLE_MAX_CHARS   = 60
+
 # Was eine Vermietung "einfaerbt" und bei der Uebergabe an den naechsten
 # Gastgeber zurueck auf Auslieferungszustand kann. Bewusst OHNE wifi_* und
 # *_pin: die vergibt der Box-Besitzer, und ein Reset auf "1234"/"fotobox123"

@@ -20,24 +20,36 @@ import SettingsCard from "./SettingsCard";
 
 export default function AdminWifi() {
   const [cfg, setCfg] = useState<AdminConfig | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [ssid, setSsid] = useState("");
   const [pwd, setPwd] = useState("");
   const [showPwd, setShowPwd] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ severity: "success" | "error" | "info"; msg: string } | null>(null);
 
+  const applyCfg = (c: AdminConfig) => {
+    setCfg(c);
+    setSsid(c.wifi_ssid ?? "");
+    setPwd(c.wifi_password ?? "");
+  };
+
   useEffect(() => {
-    api.admin.config.get().then((c) => {
-      setCfg(c);
-      setSsid(c.wifi_ssid ?? "");
-      setPwd(c.wifi_password ?? "");
-    });
+    // Ohne .catch() blieb die Seite bei abgelaufener Session stumm auf
+    // Skeletons stehen — kein Spinner, kein Fehler.
+    api.admin.config.get()
+      .then(applyCfg)
+      .catch((e) => setLoadErr(e instanceof Error ? e.message : String(e)));
   }, []);
 
   const save = async () => {
     setBusy(true);
     try {
       const r = await api.admin.config.save({ wifi_ssid: ssid, wifi_password: pwd });
+      // Gespeicherten Stand uebernehmen. Fehlte das, blieb `dirty` true: die
+      // Warnung "WLAN startet neu" blieb stehen, Speichern blieb aktiv — es
+      // sah aus, als waere nichts passiert, also drueckt man plausibel ein
+      // zweites Mal und startet den Hotspot ein zweites Mal neu.
+      setCfg({ ...(cfg as AdminConfig), wifi_ssid: ssid, wifi_password: pwd });
       // Der Server startet den Hotspot mit den neuen Daten neu. Wer das hier
       // gerade bedient, haengt fast immer AN diesem Hotspot — der Abbruch
       // gleich ist erwartet und darf nicht wie ein Fehler aussehen.
@@ -55,6 +67,11 @@ export default function AdminWifi() {
   return (
     <>
       <Stack spacing={3}>
+        {loadErr && (
+          <Alert severity="error" variant="outlined">
+            Einstellungen konnten nicht geladen werden: {loadErr}
+          </Alert>
+        )}
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 500 }}>
             WLAN
@@ -126,9 +143,7 @@ export default function AdminWifi() {
           <Button
             disabled={!dirty || busy}
             color="inherit"
-            onClick={() => {
-              if (cfg) { setSsid(cfg.wifi_ssid ?? ""); setPwd(cfg.wifi_password ?? ""); }
-            }}
+            onClick={() => { if (cfg) applyCfg(cfg); }}
             sx={{ flex: { xs: 1, sm: "0 0 auto" } }}
           >
             Verwerfen

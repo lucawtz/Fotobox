@@ -41,6 +41,15 @@ const COLOR_FIELDS: { key: string; label: string; hint: string }[] = [
   { key: "polaroid_pin", label: "Polaroid-Pin",       hint: "Stecknadel oben" },
 ];
 
+// Was der Server wirklich annimmt — gallery_server._ALLOWED_LOGO_FORMATS.
+// PIL kann SVG grundsaetzlich nicht oeffnen, deshalb steht es hier NICHT
+// drin. Frueher lief ein per Drag&Drop abgelegtes SVG durch den laschen
+// `type.startsWith("image/")`-Test und scheiterte erst am Server mit
+// "Ungueltige Bilddatei".
+const ACCEPTED_TYPES = [
+  "image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp",
+];
+
 const normalizeHex = (raw: unknown, fallback: string): string => {
   if (typeof raw !== "string") return fallback;
   const v = raw.trim();
@@ -61,7 +70,8 @@ export default function AdminBranding() {
   const [preview, setPreview] = useState({
     eventName: "", subtitle: "",
     wifiSsid: "", wifiPassword: "",
-    instagramUrl: "", bookingUrl: "",
+    instagramUrl: "", bookingUrl: "", bookingLabel: "",
+    hasInstagramQr: false, hasBookingQr: false,
   });
 
   // Theme-Section
@@ -73,6 +83,7 @@ export default function AdminBranding() {
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const [toast, setToast] = useState<{ severity: "success" | "error"; msg: string } | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   useEffect(() => {
     api.admin.config.get().then((c) => {
@@ -86,6 +97,9 @@ export default function AdminBranding() {
         wifiPassword: c.wifi_password ?? "",
         instagramUrl: c.instagram_url ?? "",
         bookingUrl:   c.booking_url ?? "",
+        bookingLabel: c.booking_label ?? "",
+        hasInstagramQr: !!c.has_instagram_qr,
+        hasBookingQr:   !!c.has_booking_qr,
       });
 
       // Wir laden ALLE bekannten Theme-Felder (nicht nur die 6 UI-Picker),
@@ -98,12 +112,20 @@ export default function AdminBranding() {
       }
       setTheme(incoming);
       setSavedTheme(incoming);
+    }).catch((e) => {
+      // Ohne .catch() zeigte die Seite bei abgelaufener Session stumm das
+      // Default-Theme, als waere es das aktive. Ein Preset-Klick plus
+      // Speichern haette damit das echte Farbschema ueberschrieben.
+      setLoadErr(e instanceof Error ? e.message : String(e));
     });
   }, []);
 
   const upload = async (file: File) => {
-    if (!file.type.startsWith("image/")) {
-      setToast({ severity: "error", msg: "Nur Bilddateien werden akzeptiert" });
+    if (!ACCEPTED_TYPES.includes(file.type)) {
+      setToast({
+        severity: "error",
+        msg: "Nur PNG, JPG, WebP, GIF oder BMP — SVG kann die Box nicht lesen",
+      });
       return;
     }
     if (file.size > 8 * 1024 * 1024) {
@@ -131,7 +153,9 @@ export default function AdminBranding() {
     if (file) upload(file);
   };
 
-  const themeDirty = Object.keys(DEFAULT_THEME).some(
+  // Bei Ladefehler bleibt Speichern gesperrt: `theme` ist dann der Standard,
+  // nicht das echte Schema — ein Klick wuerde es ueberschreiben.
+  const themeDirty = !loadErr && Object.keys(DEFAULT_THEME).some(
     (k) => theme[k] !== savedTheme[k],
   );
 
@@ -159,6 +183,13 @@ export default function AdminBranding() {
   return (
     <>
       <Stack spacing={3}>
+        {loadErr && (
+          <Alert severity="error" variant="outlined">
+            Einstellungen konnten nicht geladen werden: {loadErr}. Die Farben
+            unten sind der Standard, nicht dein aktuelles Schema — bitte neu
+            laden, bevor du speicherst.
+          </Alert>
+        )}
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 500 }}>
             Erscheinungsbild
@@ -197,7 +228,7 @@ export default function AdminBranding() {
             <input
               ref={inputRef}
               type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
+              accept={ACCEPTED_TYPES.join(",")}
               hidden
               onChange={(e) => {
                 const f = e.target.files?.[0];
@@ -238,7 +269,7 @@ export default function AdminBranding() {
                 {hasLogo ? "Klicken oder Datei hier ablegen, um zu ersetzen" : "Klicken oder Datei hier ablegen"}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                PNG, JPG, WebP oder SVG · max. 8 MB
+                PNG, JPG, WebP, GIF oder BMP · max. 8 MB
               </Typography>
             </Box>
 
@@ -416,6 +447,9 @@ export default function AdminBranding() {
                     wifiPassword={preview.wifiPassword}
                     instagramUrl={preview.instagramUrl}
                     bookingUrl={preview.bookingUrl}
+                    bookingLabel={preview.bookingLabel}
+                    hasInstagramQr={preview.hasInstagramQr}
+                    hasBookingQr={preview.hasBookingQr}
                   />
                 </Box>
               </Box>

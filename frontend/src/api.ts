@@ -108,12 +108,25 @@ export interface AdminConfig {
   theme: ThemeColors;
   instagram_url: string;
   booking_url: string;
+  /** Beschriftung der Buchungs-Reihe auf dem Homescreen (Owner-Setting). */
+  booking_label: string;
+  /** Ob fuer Instagram / Buchung ein fertiger Code hinterlegt ist. Die Box
+   *  zeigt sonst nur Glyph und Text — die Vorschau muss das nachbilden. */
+  has_instagram_qr: boolean;
+  has_booking_qr: boolean;
   insecure_defaults?: string[];
   print_enabled: boolean;
   printer_name: string;
   print_copies: number;
   print_mode: "auto" | "cover" | "fit";
-  // Nur Admin sieht diese Felder — Gastgeber bekommt sie nicht vom Server.
+  /** Zeichengrenzen fuer event_name / subtitle, ausgemessen gegen die
+   *  Sidebar-Breite der Box (config.py: EVENT_NAME_MAX_CHARS / SUBTITLE_MAX_CHARS).
+   *  Kommen vom Server, damit das Panel sie nicht ein zweites Mal verdrahtet. */
+  event_name_max: number;
+  subtitle_max: number;
+  // WLAN sehen beide Rollen — der Gastgeber soll fuer seine Veranstaltung
+  // SSID/Passwort anpassen koennen. Nur die PINs bleiben admin-only, sonst
+  // koennte der Host den Admin-PIN auslesen und sich selbst hochstufen.
   wifi_ssid?: string;
   wifi_password?: string;
   admin_pin?: string;

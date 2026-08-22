@@ -21,7 +21,7 @@ import type { Swiper as SwiperType } from "swiper";
 import "swiper/css";
 import "swiper/css/zoom";
 
-import { api, Photo, photoKey } from "../api";
+import { api, matchesFilter, Photo, photoKey } from "../api";
 import DeleteDialog from "../components/DeleteDialog";
 
 export default function PhotoView() {
@@ -36,7 +36,12 @@ export default function PhotoView() {
 
   useEffect(() => {
     api.list(event ?? null).then((r) => {
-      setPhotos(r.photos);
+      // Dieselbe Faltung wie in der Galerie. Ungefiltert enthielt die Liste
+      // auch die vier Einzelaufnahmen jeder Collage (kind === "member"), die
+      // die Uebersicht bewusst in die Collage hineinfaltet: der Zaehler sagte
+      // dann "7 / 42", wo im Grid "3 / 12" stand, und beim Wischen tauchten
+      // Rohbilder auf, die der Gast nie angetippt hatte.
+      setPhotos(r.photos.filter((p) => matchesFilter(p, "alle")));
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [event]);

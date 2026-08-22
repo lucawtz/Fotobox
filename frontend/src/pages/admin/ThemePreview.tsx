@@ -31,13 +31,17 @@ const ACTION_GAP    = 24;
 const ACTION_RADIUS = 28;
 const LIVE_OUTER_W  = 12;
 const LIVE_INNER_W  = 3;
-const SOCIAL_QR     = 85;   // _make_qr rundet 80 auf ganze Module auf
-const SOCIAL_QR_PAD = 7;
-const SOCIAL_ROW_GAP = 10;
-const SOCIAL_ICON   = 18;
-const QR_CARD_PAD   = 14;
-const QR_SIZE       = 160;
-const STATUS_H      = 28;
+const SOCIAL_QR      = 130;  // ui.py: SOCIAL_QR_SIZE
+const SOCIAL_ROW_GAP = 18;
+const SOCIAL_ICON    = 22;
+const SOCIAL_QR_MIN  = 104;  // ui.py: Untergrenze, unter der Codes unscannbar werden
+// ui.py: UI.QR_SIZE = SOCIAL_QR_SIZE — der Galerie-Code ist bewusst genauso
+// gross wie die Codes darunter (deshalb keine eigene Konstante mehr, die Card
+// haengt an socialQr), und seit UI._qr_pad haben alle drei Kacheln
+// denselben Cremerand. Der echte Rand haengt am Modulraster des
+// Galerie-Codes (max(SOCIAL_QR_PAD, 4 * px/Modul)); die Vorschau kennt die
+// URL nicht und nimmt deshalb den typischen Wert eines 25-Modul-Codes.
+const SOCIAL_QR_PAD  = 20;
 
 const POLAROID_PAD_TOP = 18;
 const POLAROID_PAD_LR  = 18;
@@ -63,16 +67,32 @@ const ACTIONS = [
   { label: "Collage", color: "#A66BB5", filled: false },
 ];
 
-// Zeilenhöhen der pygame-SysFonts (Größe x ~1.17). Nur für die vertikale
-// Sidebar-Rechnung nötig, damit QR-Card und WLAN-Box da landen wo sie auf
-// der Box landen — siehe ui.py:_sidebar_qr_y.
-const F_EVENT_H  = 42;   // SysFont 36 bold
-const F_SUB_H    = 26;   // SysFont 22
-const F_NORMAL_H = 47;   // SysFont 40 bold
-const F_LABEL_H  = 21;   // SysFont 18 bold
+// Zeilenhöhen der Box-Schrift, gemessen mit ui._font() in DejaVu Sans. Die
+// früheren Zahlen stammten aus der Zeit des pygame-Fallbacks (freesansbold)
+// und lagen rund ein Drittel zu niedrig — damit sass die ganze
+// Sidebar-Rechnung daneben.
+const F_EVENT_PT = 38, F_EVENT_H  = 43;   // ui.py: _f_event
+const F_SUB_PT   = 24, F_SUB_H    = 27;   // ui.py: _f_sub
+const F_NORMAL_PT = 38, F_NORMAL_H = 43;  // ui.py: _f_normal
+const F_LABEL_PT  = 19, F_LABEL_H  = 22;  // ui.py: _f_label
+const F_SMALL_H   = 27;                   // ui.py: _f_small
 
-// pygame nutzt SysFont("sans-serif") — im Browser die nächstbeste Entsprechung.
-const FONT = "Arial, Helvetica, sans-serif";
+// ui.py: _status_bar_height() = _f_small.get_height() + 10
+const STATUS_H = F_SMALL_H + 10;
+
+// Untergrenzen aus ui.py, unter die der Header nicht schrumpft.
+const EVENT_MIN_PT = 22;
+const SUB_MIN_PT   = 16;
+
+// ui.py: SIDEBAR_W - 30
+const HEADER_W = SIDEBAR_W - 30;
+const HEADER_LINE_GAP  = 2;
+const HEADER_BLOCK_GAP = 8;
+
+// ui.py waehlt per match_font die erste echte Schrift — auf dem Pi ist das
+// DejaVu Sans. Im Browser dieselbe zuerst, damit die Umbrueche der Vorschau
+// denen der Box moeglichst nahe kommen.
+const FONT = '"DejaVu Sans", "Noto Sans", "Liberation Sans", Arial, sans-serif';
 
 export interface PreviewProps {
   theme: Record<string, string>;
@@ -84,6 +104,11 @@ export interface PreviewProps {
   wifiPassword: string;
   instagramUrl: string;
   bookingUrl: string;
+  /** Beschriftung der Buchungs-Reihe (Owner-Setting booking_label). */
+  bookingLabel: string;
+  /** Ob ein fertiger Code hinterlegt ist. Ohne zeichnet die Box Glyph+Text. */
+  hasInstagramQr: boolean;
+  hasBookingQr: boolean;
 }
 
 /** ui.py: _event_initials */
@@ -155,9 +180,132 @@ function QrArt({ size, modules }: { size: number; modules: number }) {
   );
 }
 
+/** ui.py: _domain_of — "https://bytebots.de/termine" -> "bytebots.de". */
+const domainOf = (url: string): string => {
+  const rest = url.split("://").pop()!.split("/")[0];
+  return rest.startsWith("www.") ? rest.slice(4) : rest;
+};
+
+// ── Textmessung ───────────────────────────────────────────────────────────
+// Ein einzelnes Canvas fuer alle Messungen. Ohne echte Breiten laesst sich
+// _fit_text nicht nachbilden, und genau daran haben sich die frueheren
+// Ein-Zeile-pro-Block-Annahmen aufgehaengt.
+let _ctx: CanvasRenderingContext2D | null = null;
+const measure = (text: string, pt: number, bold: boolean): number => {
+  if (!_ctx) _ctx = document.createElement("canvas").getContext("2d");
+  if (!_ctx) return text.length * pt * 0.55;      // Canvas gesperrt: schaetzen
+  _ctx.font = `${bold ? "700 " : ""}${pt}px ${FONT}`;
+  return _ctx.measureText(text).width;
+};
+
+/** ui.py: UI._wrap */
+const wrap = (text: string, pt: number, bold: boolean,
+              maxW: number, maxLines: number): string[] | null => {
+  const lines: string[] = [];
+  let cur = "";
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (measure(word, pt, bold) > maxW) return null;
+    const probe = cur ? `${cur} ${word}` : word;
+    if (measure(probe, pt, bold) <= maxW) { cur = probe; continue; }
+    lines.push(cur);
+    cur = word;
+    if (lines.length === maxLines) return null;
+  }
+  if (cur) lines.push(cur);
+  return lines.length > 0 && lines.length <= maxLines ? lines : null;
+};
+
+/** ui.py: UI._hard_wrap — bricht notfalls im Wort und kuerzt mit "…". */
+const hardWrap = (text: string, pt: number, bold: boolean,
+                  maxW: number, maxLines: number): string[] => {
+  const lines: string[] = [];
+  let cur = "";
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    for (const ch of (cur ? ` ${word}` : word)) {
+      if (measure(cur + ch, pt, bold) <= maxW) { cur += ch; continue; }
+      lines.push(cur);
+      if (lines.length === maxLines) {
+        let last = lines[lines.length - 1];
+        while (last && measure(`${last}…`, pt, bold) > maxW) last = last.slice(0, -1);
+        lines[lines.length - 1] = `${last}…`;
+        return lines;
+      }
+      cur = ch.trimStart();
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines.length ? lines : [""];
+};
+
+interface HeaderBlock { pt: number; lineH: number; bold: boolean; lines: string[]; dim: boolean }
+
+/** ui.py: UI._fit_text + UI._header_blocks. */
+const headerBlocks = (name: string, sub: string): HeaderBlock[] => {
+  const out: HeaderBlock[] = [];
+  const specs: [string, number, number, number, boolean, boolean][] = [
+    // Text, Start-pt, Referenz-Zeilenhoehe, Untergrenze, fett, gedimmt
+    [name.trim(), F_EVENT_PT, F_EVENT_H, EVENT_MIN_PT, true,  false],
+    [sub.trim(),  F_SUB_PT,   F_SUB_H,   SUB_MIN_PT,   false, true ],
+  ];
+  const maxLines = [2, 3];
+  specs.forEach(([text, startPt, refH, minPt, bold, dim], i) => {
+    if (!text) return;
+    let pt = startPt;
+    let lines: string[] | null = null;
+    while (pt > minPt) {
+      lines = wrap(text, pt, bold, HEADER_W, maxLines[i]);
+      if (lines) break;
+      pt -= 1;
+    }
+    if (!lines) { pt = minPt; lines = hardWrap(text, pt, bold, HEADER_W, maxLines[i]); }
+    // Zeilenhoehe skaliert mit der Punktgroesse — refH gilt fuer startPt.
+    out.push({ pt, lineH: Math.round((refH / startPt) * pt), bold, lines, dim });
+  });
+  return out;
+};
+
+// ── Social-Reihen ─────────────────────────────────────────────────────────
+interface SocialRow {
+  kind: "instagram" | "calendar";
+  line1: string;
+  line2: string | null;
+  qr: boolean;
+}
+
+/** ui.py: UI._social_row_height. */
+const rowHeight = (row: SocialRow, qrSize: number): number => {
+  let textH = F_SUB_H;
+  if (row.line2) textH += F_LABEL_H + 2;
+  return row.qr
+    ? qrSize + SOCIAL_QR_PAD * 2 + 6 + textH + SOCIAL_ROW_GAP
+    : Math.max(textH, SOCIAL_ICON) + SOCIAL_ROW_GAP;
+};
+
+// ui.py:_group_height — die Card zaehlt mit der Kantenlaenge, die gerade
+// getestet wird, nicht mit einer festen. Sonst rechnet die Pruefung mit einer
+// Karte, die es hinterher nicht gibt.
+const groupHeight = (rows: SocialRow[], qrSize: number, captionH: number): number =>
+  (qrSize + SOCIAL_QR_PAD * 2) + captionH +
+  (rows.length ? 16 + rows.reduce((h, r) => h + rowHeight(r, qrSize), 0) : 0);
+
+/** ui.py: UI._social_layout — erst schrumpfen, dann Codes abgeben. */
+const socialLayout = (input: SocialRow[], room: number, captionH: number) => {
+  const rows = input.map((r) => ({ ...r }));
+  for (;;) {
+    let size = SOCIAL_QR;
+    while (size > SOCIAL_QR_MIN && groupHeight(rows, size, captionH) > room) {
+      size -= 2;
+    }
+    if (groupHeight(rows, size, captionH) <= room) return { rows, size };
+    const idx = rows.map((r, i) => (r.qr ? i : -1)).filter((i) => i >= 0).pop();
+    if (idx === undefined) return { rows, size };
+    rows[idx].qr = false;
+  }
+};
+
 /** ui.py: _draw_instagram_icon / _draw_calendar_icon — beide in accent. */
 function SocialIcon({ kind, color }: { kind: "instagram" | "calendar"; color: string }) {
-  const s = SOCIAL_ICON;
+  const s = SOCIAL_ICON;   // viewBox bleibt 18, das SVG skaliert mit
   if (kind === "instagram") {
     return (
       <svg width={s} height={s} viewBox="0 0 18 18" aria-hidden style={{ display: "block" }}>
@@ -179,7 +327,8 @@ function SocialIcon({ kind, color }: { kind: "instagram" | "calendar"; color: st
 
 export default function ThemePreview(props: PreviewProps) {
   const { theme, eventName, subtitle, logoUrl,
-          wifiSsid, wifiPassword, instagramUrl, bookingUrl } = props;
+          wifiSsid, wifiPassword, instagramUrl, bookingUrl,
+          bookingLabel, hasInstagramQr, hasBookingQr } = props;
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0);
@@ -198,30 +347,60 @@ export default function ThemePreview(props: PreviewProps) {
 
   const c = (key: string, fallback = "#000000") => theme[key] ?? fallback;
 
-  // ── Sidebar-Vertikalrechnung (ui.py:_sidebar_qr_y) ──────────────────────
-  const hasEvent = !!eventName.trim();
-  const hasSub   = !!subtitle.trim();
+  // ── Header umbrechen wie ui.py:_fit_text ────────────────────────────────
+  const header = useMemo(
+    () => headerBlocks(eventName, subtitle),
+    [eventName, subtitle],
+  );
   const headerBottom =
     SIDEBAR_PAD + LOGO_CIRCLE_R * 2 + 24 +
-    (hasEvent ? F_EVENT_H + 8 : 0) +
-    (hasSub ? F_SUB_H + 8 : 0);
+    header.reduce(
+      (h, b) => h + b.lines.length * b.lineH
+              + (b.lines.length - 1) * HEADER_LINE_GAP + HEADER_BLOCK_GAP,
+      0,
+    );
 
+  // ── WLAN-Box (ui.py:_wifi_box_metrics) ──────────────────────────────────
   const wifiRows = (wifiSsid.trim() ? 1 : 0) + (wifiPassword.trim() ? 1 : 0);
   const wifiBoxH = wifiRows ? 22 + wifiRows * (F_LABEL_H + 4 + F_NORMAL_H + 14) : 0;
-  const wifiTop  = wifiRows ? H - 56 - wifiBoxH : H;
+  // ui.py rechnet den Rand aus der Status-Bar statt ihn zu verdrahten.
+  const wifiTop  = wifiRows ? H - (STATUS_H + 12) - wifiBoxH : H;
 
-  const socialRows: { kind: "instagram" | "calendar"; label: string }[] = [];
-  if (instagramUrl.trim()) socialRows.push({ kind: "instagram", label: instaHandle(instagramUrl) });
-  if (bookingUrl.trim())   socialRows.push({ kind: "calendar",  label: "Fotobox mieten" });
+  // ── Social-Reihen (ui.py:_social_rows / _social_layout) ─────────────────
+  // Eine Reihe traegt nur dann einen eigenen Code, wenn er auch hinterlegt
+  // ist — sonst zeichnet die Box Glyph und Text. Und Glyphen gibt es nur,
+  // solange KEINE Reihe einen Code traegt.
+  const allRows: SocialRow[] = [];
+  if (instagramUrl.trim()) {
+    allRows.push({ kind: "instagram", line1: instaHandle(instagramUrl),
+                   line2: null, qr: hasInstagramQr });
+  }
+  if (bookingUrl.trim()) {
+    allRows.push({ kind: "calendar", line1: bookingLabel.trim() || "Termin buchen",
+                   line2: domainOf(bookingUrl), qr: hasBookingQr });
+  }
 
-  const cardSize   = QR_SIZE + QR_CARD_PAD * 2;
-  const socialRowH = SOCIAL_QR + SOCIAL_QR_PAD * 2 + SOCIAL_ROW_GAP;
-  const socialH    = socialRows.length ? 16 + socialRows.length * socialRowH : 0;
-  const groupH     = cardSize + (F_SUB_H + 12) + socialH;
+  // ui.py:_draw_qr_card bringt den Galerie-Code auf dieselbe Kantenlaenge wie
+  // die Kacheln darunter — die Card haengt damit an socialQr, nicht an QR_SIZE.
+  const captionH  = F_SUB_H + 12;
+  const qrTop     = headerBottom + 20;
+  const qrBottom  = wifiTop - 20;          // ui.py: _qr_group_bounds
 
-  const qrTop    = headerBottom + 20;
-  const qrBottom = wifiTop - 30;
-  const qrY      = Math.max(qrTop, qrTop + Math.floor((qrBottom - qrTop - groupH) / 2));
+  // Zwei Stufen wie ui.py:_social_layout — erst Kacheln schrumpfen, dann der
+  // untersten Reihe den Code nehmen.
+  const { rows: socialRows, size: socialQr } = useMemo(
+    () => socialLayout(allRows, qrBottom - qrTop, captionH),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify(allRows), qrBottom - qrTop, captionH],
+  );
+  const cardSize = socialQr + SOCIAL_QR_PAD * 2;
+  const glyphs = !socialRows.some((r) => r.qr);
+
+  const socialH = socialRows.length
+    ? 16 + socialRows.reduce((h, r) => h + rowHeight(r, socialQr), 0)
+    : 0;
+  const groupH  = cardSize + captionH + socialH;
+  const qrY     = Math.max(qrTop, qrTop + Math.floor((qrBottom - qrTop - groupH) / 2));
 
   const captionY = qrY + cardSize + 12;
   const socialY  = captionY + F_SUB_H + 16;
@@ -446,36 +625,24 @@ export default function ThemePreview(props: PreviewProps) {
               textAlign: "center",
             }}
           >
-            {hasEvent && (
-              <Box
-                sx={{
-                  fontSize: 36,
-                  fontWeight: 700,
-                  lineHeight: `${F_EVENT_H}px`,
-                  color: c("sidebar_text"),
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {eventName}
+            {header.map((b, bi) => (
+              <Box key={bi} sx={{ mt: bi ? `${HEADER_BLOCK_GAP}px` : 0 }}>
+                {b.lines.map((line, li) => (
+                  <Box
+                    key={li}
+                    sx={{
+                      fontSize: b.pt,
+                      fontWeight: b.bold ? 700 : 400,
+                      lineHeight: `${b.lineH + HEADER_LINE_GAP}px`,
+                      color: b.dim ? c("sidebar_dim") : c("sidebar_text"),
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {line}
+                  </Box>
+                ))}
               </Box>
-            )}
-            {hasSub && (
-              <Box
-                sx={{
-                  mt: hasEvent ? "8px" : 0,
-                  fontSize: 22,
-                  lineHeight: `${F_SUB_H}px`,
-                  color: c("sidebar_dim"),
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {subtitle}
-              </Box>
-            )}
+            ))}
           </Box>
 
           {/* Galerie-QR-Card */}
@@ -492,7 +659,7 @@ export default function ThemePreview(props: PreviewProps) {
               placeItems: "center",
             }}
           >
-            <QrArt size={QR_SIZE} modules={29} />
+            <QrArt size={socialQr} modules={25} />
           </Box>
           <Box
             sx={{
@@ -501,7 +668,7 @@ export default function ThemePreview(props: PreviewProps) {
               top: captionY,
               width: SIDEBAR_W,
               textAlign: "center",
-              fontSize: 22,
+              fontSize: F_SUB_PT,
               lineHeight: `${F_SUB_H}px`,
               color: c("sidebar_text"),
             }}
@@ -509,7 +676,11 @@ export default function ThemePreview(props: PreviewProps) {
             Fotos auf&apos;s Handy
           </Box>
 
-          {/* Mini-QRs für Instagram / Terminbuchung */}
+          {/* Instagram / Terminbuchung — gestapelt wie ui.py:_draw_social_links.
+              Frueher standen Code, Glyph und Text hier nebeneinander; die Box
+              setzt sie bewusst untereinander, weil in 320 px Breite sonst fuer
+              den Text nichts uebrig bleibt. Und Code UND Glyph gab es nie: das
+              eine ersetzt das andere. */}
           {socialRows.length > 0 && (
             <Box
               sx={{
@@ -517,41 +688,66 @@ export default function ThemePreview(props: PreviewProps) {
                 left: 0,
                 top: socialY,
                 width: SIDEBAR_W,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
               }}
             >
-              <Box sx={{ display: "flex", flexDirection: "column", gap: `${SOCIAL_ROW_GAP}px` }}>
-                {socialRows.map((row) => (
-                  <Box key={row.kind} sx={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                    <Box
-                      sx={{
-                        width: SOCIAL_QR + SOCIAL_QR_PAD * 2,
-                        height: SOCIAL_QR + SOCIAL_QR_PAD * 2,
-                        borderRadius: "6px",
-                        bgcolor: c("logo_circle"),
-                        display: "grid",
-                        placeItems: "center",
-                        flexShrink: 0,
-                      }}
-                    >
-                      <QrArt size={SOCIAL_QR} modules={21} />
-                    </Box>
-                    <SocialIcon kind={row.kind} color={c("accent")} />
-                    <Box
-                      sx={{
-                        fontSize: 22,
-                        color: c("sidebar_text"),
-                        whiteSpace: "nowrap",
-                        ml: "-4px",
-                      }}
-                    >
-                      {row.label}
-                    </Box>
+              {socialRows.map((row, i) => {
+                const top = socialRows
+                  .slice(0, i)
+                  .reduce((h, r) => h + rowHeight(r, socialQr), 0);
+                return (
+                  <Box
+                    key={row.kind}
+                    sx={{ position: "absolute", top, left: 0, width: SIDEBAR_W }}
+                  >
+                    {row.qr ? (
+                      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                        <Box
+                          sx={{
+                            width: socialQr + SOCIAL_QR_PAD * 2,
+                            height: socialQr + SOCIAL_QR_PAD * 2,
+                            borderRadius: "8px",
+                            bgcolor: c("logo_circle"),
+                            display: "grid",
+                            placeItems: "center",
+                          }}
+                        >
+                          <QrArt size={socialQr} modules={row.kind === "instagram" ? 41 : 33} />
+                        </Box>
+                        <Box sx={{ height: "6px" }} />
+                        <Box sx={{ fontSize: F_SUB_PT, lineHeight: `${F_SUB_H}px`,
+                                   color: c("sidebar_text"), whiteSpace: "nowrap" }}>
+                          {row.line1}
+                        </Box>
+                        {row.line2 && (
+                          <Box sx={{ fontSize: F_LABEL_PT, fontWeight: 700,
+                                     lineHeight: `${F_LABEL_H + 2}px`,
+                                     color: c("accent"), whiteSpace: "nowrap" }}>
+                            {row.line2}
+                          </Box>
+                        )}
+                      </Box>
+                    ) : (
+                      <Box sx={{ display: "flex", justifyContent: "center",
+                                 alignItems: "center", gap: glyphs ? "10px" : 0 }}>
+                        {glyphs && <SocialIcon kind={row.kind} color={c("accent")} />}
+                        <Box>
+                          <Box sx={{ fontSize: F_SUB_PT, lineHeight: `${F_SUB_H}px`,
+                                     color: c("sidebar_text"), whiteSpace: "nowrap" }}>
+                            {row.line1}
+                          </Box>
+                          {row.line2 && (
+                            <Box sx={{ fontSize: F_LABEL_PT, fontWeight: 700,
+                                       lineHeight: `${F_LABEL_H + 2}px`,
+                                       color: c("accent"), whiteSpace: "nowrap" }}>
+                              {row.line2}
+                            </Box>
+                          )}
+                        </Box>
+                      </Box>
+                    )}
                   </Box>
-                ))}
-              </Box>
+                );
+              })}
             </Box>
           )}
 
@@ -578,7 +774,7 @@ export default function ThemePreview(props: PreviewProps) {
                   <Box key={label} sx={{ mb: "12px" }}>
                     <Box
                       sx={{
-                        fontSize: 18,
+                        fontSize: F_LABEL_PT,
                         fontWeight: 700,
                         lineHeight: `${F_LABEL_H}px`,
                         color: c("sidebar_dim"),
@@ -589,7 +785,7 @@ export default function ThemePreview(props: PreviewProps) {
                     </Box>
                     <Box
                       sx={{
-                        fontSize: 40,
+                        fontSize: F_NORMAL_PT,
                         fontWeight: 700,
                         lineHeight: `${F_NORMAL_H}px`,
                         color: c("sidebar_text"),
