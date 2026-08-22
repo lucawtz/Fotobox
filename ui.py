@@ -99,7 +99,7 @@ SOCIAL_QR_SIZE  = 130
 # Module. Bei 130 px sind das im groebsten Fall (33 Module, 3,9 px/Modul)
 # knapp 16 px — der frueher hier stehende Wert 10 ergab nur 2,5 Module.
 SOCIAL_QR_PAD   = 16
-# Untergrenze, auf die _social_qr_size herunterregeln darf. Darunter wird
+# Untergrenze, auf die _social_layout herunterregeln darf. Darunter wird
 # Instagrams 41-Modul-Code mit unter 2,6 px/Modul unscannbar — dann lieber
 # eine Warnung im Log als ein huebscher, toter Code.
 SOCIAL_QR_MIN   = 104
@@ -125,6 +125,45 @@ _ACTION_KEYS = {
     "right":   pygame.K_e,
     "left":    pygame.K_q,
 }
+
+
+# Schriftfamilien in Reihenfolge der Bevorzugung. pygame.font.match_font
+# kennt 'sans-serif' NICHT — weder in Sysfonts noch in Sysalias, dort waere
+# nur 'sans' ein Alias. SysFont("sans-serif", ...) faellt deshalb still auf
+# das gebundelte freesansbold.ttf zurueck, und zwar auf dem Pi genauso wie
+# auf der Dev-Maschine, weil die Datei im pygame-Paket liegt.
+#
+# Das kostete dreifach: die Schrift ist grob gerastert, ihr fehlen Glyphen
+# (deshalb sind die Pfeile im Result-Screen von Hand gezeichnet), und sie
+# rendert rund ein Drittel kleiner als angefordert — "22 px" ergaben 15 px
+# Zeilenhoehe. Aus 2 m Abstand war der Untertitel damit nicht mehr lesbar.
+_FONT_FAMILIES = ("dejavusans", "notosans", "liberationsans",
+                  "helveticaneue", "arial", "helvetica", "freesans")
+
+
+@functools.lru_cache(maxsize=None)
+def _font_path(bold: bool) -> Optional[str]:
+    """Datei der ersten gefundenen echten Schrift, sonst None.
+
+    None heisst: pygame-Default. Dann sieht es aus wie frueher — lieber
+    das als eine UI ohne Text, wenn ein System keine der Familien hat.
+    """
+    for family in _FONT_FAMILIES:
+        path = pygame.font.match_font(family, bold=bold)
+        if path:
+            return path
+    return None
+
+
+def _font(size: int, bold: bool = False) -> pygame.font.Font:
+    """Schrift in Punktgroesse `size`."""
+    path = _font_path(bold)
+    font = pygame.font.Font(path, size)
+    # Kein eigener Fett-Schnitt gefunden: synthetisch fetten, sonst faellt
+    # der Unterschied zwischen Ueberschrift und Fliesstext weg.
+    if bold and (path is None or path == _font_path(False)):
+        font.set_bold(True)
+    return font
 
 
 def _hex_to_rgb(s: str, default=(0, 0, 0)) -> tuple:
@@ -343,15 +382,23 @@ class UI:
         pygame.mouse.set_visible(False)
 
         # Fonts
-        self._f_big      = pygame.font.SysFont("sans-serif", 200, bold=True)
-        self._f_large    = pygame.font.SysFont("sans-serif", 110, bold=True)
-        self._f_medium   = pygame.font.SysFont("sans-serif", 60,  bold=True)
-        self._f_normal   = pygame.font.SysFont("sans-serif", 40,  bold=True)
-        self._f_small    = pygame.font.SysFont("sans-serif", 26)
-        self._f_event    = pygame.font.SysFont("sans-serif", 36,  bold=True)
-        self._f_sub      = pygame.font.SysFont("sans-serif", 22)
-        self._f_initials = pygame.font.SysFont("sans-serif", 72,  bold=True)
-        self._f_label    = pygame.font.SysFont("sans-serif", 18,  bold=True)
+        # Groessen sind Punktgroessen der echten Schrift (siehe _font). Sie
+        # sind kleiner als die frueheren SysFont-Zahlen und ergeben trotzdem
+        # groesseren Text, weil der Fallback rund ein Drittel unter der
+        # angeforderten Groesse blieb.
+        self._f_big      = _font(150, bold=True)
+        self._f_large    = _font(84,  bold=True)
+        self._f_medium   = _font(46,  bold=True)
+        self._f_normal   = _font(38,  bold=True)
+        self._f_small    = _font(24)
+        self._f_event    = _font(38,  bold=True)
+        self._f_sub      = _font(24)
+
+        self._f_initials = _font(56,  bold=True)
+        self._f_label    = _font(19,  bold=True)
+        logger.info("Schrift: %s (fett: %s)",
+                    _font_path(False) or "pygame-Default",
+                    _font_path(True) or "synthetisch")
 
         # Theme + Background-Gradient. _apply_theme baut self._bg neu —
         # läuft auch im Live-Reload, wenn der Mieter die Farben ändert.
@@ -854,29 +901,98 @@ class UI:
             return words[0][:2].upper()
         return (words[0][0] + words[1][0]).upper()
 
-    def _draw_event_header(self):
-        """Event-Name + Subtitle (z.B. Datum) in der Sidebar unter dem Logo."""
-        cx = SIDEBAR_W // 2
-        y  = SIDEBAR_PAD + LOGO_CIRCLE_R * 2 + 24
+    @staticmethod
+    def _wrap(text: str, font: pygame.font.Font, max_w: int,
+              max_lines: int) -> Optional[list]:
+        """Woerter auf hoechstens `max_lines` Zeilen umbrechen, die alle in
+        `max_w` passen. None, wenn das mit dieser Schrift nicht aufgeht."""
+        lines, cur = [], ""
+        for word in text.split():
+            probe = f"{cur} {word}".strip()
+            if font.size(probe)[0] <= max_w:
+                cur = probe
+                continue
+            if not cur:
+                return None                  # ein einzelnes Wort ist zu breit
+            lines.append(cur)
+            cur = word
+            if len(lines) == max_lines:
+                return None
+        if cur:
+            lines.append(cur)
+        return lines if 0 < len(lines) <= max_lines else None
 
-        event_name = (self._cfg.get("event_name") or "").strip()
-        subtitle   = (self._cfg.get("subtitle")   or "").strip()
-        max_w      = SIDEBAR_W - 30
+    def _fit_text(self, text: str, pt: int, bold: bool, max_w: int,
+                  max_lines: int = 2, min_pt: int = 13) -> tuple:
+        """(Schrift, Zeilen), sodass jede Zeile in `max_w` passt.
 
-        for text, font, color in (
-            (event_name, self._f_event, self._theme["sidebar_text"]),
-            (subtitle,   self._f_sub,   self._theme["sidebar_dim"]),
-        ):
+        Erst umbrechen, dann die Punktgroesse senken und NEU rendern.
+        Bewusst nicht die fertige Grafik skalieren: genau das tat der
+        Header frueher, und weil der Text ohnehin schon klein gerastert
+        war, wurde er dabei matschig statt nur kleiner.
+        """
+        while pt > min_pt:
+            font  = _font(pt, bold)
+            lines = self._wrap(text, font, max_w, max_lines)
+            if lines:
+                return font, lines
+            pt -= 1
+        font = _font(min_pt, bold)
+        # Untergrenze erreicht: lieber eine zu breite Zeile als kein Text.
+        return font, self._wrap(text, font, max_w, max_lines) or [text]
+
+    def _header_blocks(self) -> list:
+        """[(Schrift, Zeilen, Farbe)] fuer Event-Name und Untertitel.
+
+        Eine Quelle fuer Zeichnung UND Hoehenrechnung — sonst sitzt die
+        QR-Gruppe auf einer Header-Hoehe, die es gar nicht gibt. Das
+        Ergebnis wird gecacht, weil _fit_text pro Aufruf mehrere Schriften
+        baut und die Sidebar jeden Frame neu gezeichnet wird.
+        """
+        name = (self._cfg.get("event_name") or "").strip()
+        sub  = (self._cfg.get("subtitle")   or "").strip()
+        key  = (name, sub, self._theme["sidebar_text"], self._theme["sidebar_dim"])
+        if self._header_cache and self._header_cache[0] == key:
+            return self._header_cache[1]
+
+        max_w  = SIDEBAR_W - 30
+        blocks = []
+        for text, pt, bold, color, max_lines in (
+                (name, self._f_event_pt, True,  self._theme["sidebar_text"], 2),
+                (sub,  self._f_sub_pt,   False, self._theme["sidebar_dim"],  3)):
             if not text:
                 continue
-            lbl = font.render(text, True, color)
-            if lbl.get_width() > max_w:
-                scale = max_w / lbl.get_width()
-                lbl = pygame.transform.smoothscale(
-                    lbl, (int(lbl.get_width() * scale),
-                          int(lbl.get_height() * scale)))
-            self._screen.blit(lbl, lbl.get_rect(centerx=cx, top=y))
-            y += lbl.get_height() + 8
+            font, lines = self._fit_text(text, pt, bold, max_w, max_lines)
+            blocks.append((font, lines, color))
+        self._header_cache = (key, blocks)
+        return blocks
+
+    # Ausgangs-Punktgroessen des Headers, die _fit_text bei Bedarf senkt.
+    # Klassenattribute, damit auch Instanzen ohne __init__ sie haben.
+    _f_event_pt       = 38
+    _f_sub_pt         = 24
+    _header_cache     = None
+    _HEADER_LINE_GAP  = 2     # zwischen umgebrochenen Zeilen eines Blocks
+    _HEADER_BLOCK_GAP = 8     # zwischen Event-Name und Untertitel
+
+    def _header_height(self) -> int:
+        h = 0
+        for font, lines, _ in self._header_blocks():
+            h += (len(lines) * font.get_height()
+                  + (len(lines) - 1) * self._HEADER_LINE_GAP
+                  + self._HEADER_BLOCK_GAP)
+        return h
+
+    def _draw_event_header(self):
+        """Event-Name + Untertitel in der Sidebar unter dem Logo."""
+        cx = SIDEBAR_W // 2
+        y  = SIDEBAR_PAD + LOGO_CIRCLE_R * 2 + 24
+        for font, lines, color in self._header_blocks():
+            for line in lines:
+                lbl = font.render(line, True, color)
+                self._screen.blit(lbl, lbl.get_rect(centerx=cx, top=y))
+                y += lbl.get_height() + self._HEADER_LINE_GAP
+            y += self._HEADER_BLOCK_GAP - self._HEADER_LINE_GAP
 
     def _draw_live_frame_outer(self):
         """Brauner Aussenrahmen + dunkler Backing-Block. Wird VOR dem
@@ -900,10 +1016,20 @@ class UI:
                          pygame.Rect(x, y, w, h),
                          width=LIVE_INNER_W, border_radius=6)
 
+    def _status_bar_height(self) -> int:
+        """Höhe der Status-Bar, aus der Schrift statt fest verdrahtet.
+
+        Die frühere Konstante 28 stammte aus der Zeit des pygame-Fallbacks,
+        in der _f_small nur 17 px hoch war. Mit einer echten Schrift sind
+        es 27 px, und die Unterlängen wurden unten abgeschnitten.
+        """
+        return self._f_small.get_height() + 10
+
     def _draw_status_bar(self, camera_ok: bool, free_mb: int, photo_count: int):
-        bar = pygame.Surface((W, 28), pygame.SRCALPHA)
+        bar_h = self._status_bar_height()
+        bar = pygame.Surface((W, bar_h), pygame.SRCALPHA)
         bar.fill((0, 0, 0, 160))
-        self._screen.blit(bar, (0, H - 28))
+        self._screen.blit(bar, (0, H - bar_h))
 
         cam_color = C_GREEN if camera_ok else C_RED
         cam_text  = "Kamera: OK" if camera_ok else "Kamera: FEHLT"
@@ -913,10 +1039,11 @@ class UI:
             (f"Fotos: {photo_count}", C_DIM),
             ("Hotspot: aktiv" if self._cfg.get("hotspot_enabled") else "Hotspot: aus", C_DIM),
         ]
+        ty = H - bar_h + (bar_h - self._f_small.get_height()) // 2
         x = 20
         for text, color in items:
             lbl = self._f_small.render(text, True, color)
-            self._screen.blit(lbl, (x, H - 24))
+            self._screen.blit(lbl, (x, ty))
             x += lbl.get_width() + 60
 
     def _disk_label(self, free_mb: int) -> str:
@@ -1495,13 +1622,14 @@ class UI:
     # können, egal welche Inhalte konfiguriert sind.
 
     def _sidebar_header_bottom(self) -> int:
-        """y-Position direkt unterhalb des Event-Headers (Logo + Name + Sub)."""
-        y = SIDEBAR_PAD + LOGO_CIRCLE_R * 2 + 24
-        if (self._cfg.get("event_name") or "").strip():
-            y += self._f_event.get_height() + 8
-        if (self._cfg.get("subtitle") or "").strip():
-            y += self._f_sub.get_height() + 8
-        return y
+        """y-Position direkt unterhalb des Event-Headers (Logo + Name + Sub).
+
+        Rechnet ueber _header_blocks und beruecksichtigt damit sowohl
+        umgebrochene Zeilen als auch eine von _fit_text gesenkte
+        Schriftgroesse — die frueher angenommene eine Zeile je Block war
+        bei langen Untertiteln schlicht falsch.
+        """
+        return SIDEBAR_PAD + LOGO_CIRCLE_R * 2 + 24 + self._header_height()
 
     def _wifi_box_metrics(self) -> tuple:
         """Liefert (top_y, height) der WLAN-Box. Nicht-konfigurierte Box
@@ -1514,65 +1642,83 @@ class UI:
         line_h  = self._f_normal.get_height()
         label_h = self._f_label.get_height()
         box_h   = 22 + rows * (label_h + 4 + line_h + 14)
-        # 24 statt der frueheren 56: mit drei Codes in der QR-Gruppe fehlten
-        # sonst 40 px und _social_qr_size musste die Kacheln kleinrechnen.
-        # Instagram landete dabei bei 2,7 px/Modul und damit unter der
-        # Scangrenze. Der Rand nach unten ist die guenstigere Stelle zum
-        # Sparen als die Codes selbst.
-        margin_bottom = 24
+        # Knapp ueber der Status-Bar: die ist seit der echten Schrift
+        # hoeher, und ein fester Randwert liess die WLAN-Box in sie
+        # hineinlaufen. 12 px Luft dazwischen reichen optisch.
+        margin_bottom = self._status_bar_height() + 12
         return (H - margin_bottom - box_h, box_h)
 
     def _qr_group_bounds(self) -> tuple:
         """(oberste, unterste) y-Grenze für die QR-Gruppe. Eine Stelle für
-        beide Nutzer — _sidebar_qr_y positioniert damit, _social_qr_size
+        beide Nutzer — _sidebar_qr_y positioniert damit, _social_layout
         prüft damit, und sie können nicht auseinanderlaufen."""
         return (self._sidebar_header_bottom() + 20,
                 self._wifi_box_metrics()[0] - 20)
 
+    def _group_height(self, rows: list, qr_size: int) -> int:
+        """Gesamthöhe der QR-Group für eine konkrete Reihen-Fassung und
+        Kachelgrösse. Reine Rechnung, ohne Entscheidung — die trifft
+        _social_layout."""
+        caption_h = self._f_sub.get_height() + 12
+        social_h  = (16 + sum(self._social_row_height(r, qr_size) for r in rows)
+                     if rows else 0)
+        return self._qr_card_size() + caption_h + social_h
+
+    def _social_layout(self) -> tuple:
+        """(Reihen, Kachelgrösse) in der Fassung, die wirklich passt.
+
+        Zwei Stufen. Erst schrumpfen die Kacheln — sie sind das einzig
+        Elastische, denn Header und WLAN-Box sitzen fest und der
+        Galerie-Code ist der, den der Gast scannen soll. Reicht das bis
+        SOCIAL_QR_MIN nicht, verliert die unterste Reihe ihren Code und
+        fällt auf Glyph und Text zurück: der Link bleibt sichtbar, nur
+        ohne eigenen Code.
+
+        Beide Stufen werden gebraucht. Mit drei Codes und den grösseren
+        Schriften bleiben für die Gruppe 509 px, während schon drei
+        78-px-Kacheln 561 px brauchen — es gibt schlicht keine Grösse, bei
+        der drei Codes hineinpassen. Vorher lief die Gruppe in so einem
+        Fall einfach in die WLAN-Box.
+        """
+        top, bottom = self._qr_group_bounds()
+        room = bottom - top
+        rows = self._social_rows()
+        while True:
+            size = SOCIAL_QR_SIZE
+            while size > SOCIAL_QR_MIN and self._group_height(rows, size) > room:
+                size -= 2
+            if self._group_height(rows, size) <= room:
+                return rows, size
+            idx = next((i for i in range(len(rows) - 1, -1, -1)
+                        if rows[i][3] is not None), None)
+            if idx is None:
+                # Selbst ohne jeden Code zu hoch — dann ist der Header oder
+                # die WLAN-Box zu gross, daran kann die QR-Gruppe nichts
+                # aendern. Sichtbar machen statt stumm ueberlappen.
+                logger.warning(
+                    "Sidebar überfüllt: QR-Gruppe braucht %d px, verfügbar "
+                    "sind %d px, und es gibt keinen Code mehr abzugeben. "
+                    "Kürzeren Untertitel setzen oder die WLAN-Box kürzen.",
+                    self._group_height(rows, size), room)
+                return rows, size
+            logger.warning(
+                "Sidebar zu eng für %d Codes: '%s' fällt auf Glyph und Text "
+                "zurück. Die Gruppe bräuchte %d px, verfügbar sind %d px.",
+                sum(1 for r in rows if r[3] is not None) + 1,
+                rows[idx][1], self._group_height(rows, size), room)
+            rows[idx] = rows[idx][:3] + (None,)
+
     def _qr_group_height(self, qr_size: Optional[int] = None) -> int:
         """Gesamthöhe der QR-Group: Card + Caption + (optional) Code-Reihen.
 
-        `qr_size` überschreibt die Kantenlänge der Reihen-Codes — genau so
-        probiert _social_qr_size durch, welche Grösse noch passt. Ohne
-        Angabe wird die effektive Grösse benutzt.
+        `qr_size` überschreibt die Kantenlänge der Reihen-Codes; ohne
+        Angabe wird die Fassung benutzt, die _social_layout ermittelt hat.
         """
         if qr_size is None:
-            qr_size = self._social_qr_size()
-        caption_h = self._f_sub.get_height() + 12
-        rows = self._social_rows()
-        social_h = 0
-        if rows:
-            social_h = 16 + sum(self._social_row_height(row, qr_size)
-                                for row in rows)
-        return self._qr_card_size() + caption_h + social_h
-
-    def _social_qr_size(self) -> int:
-        """Effektive Kantenlänge der Codes unter der Galerie-Card.
-
-        Sie sind das einzig Elastische der Sidebar: Header und WLAN-Box
-        sitzen fest, und der Galerie-Code ist der, den der Gast scannen
-        soll — also schrumpfen diese Kacheln, wenn es eng wird, und nicht
-        der Code darüber.
-
-        Eng wird es real: mit drei Codes (Galerie + Instagram + Buchung)
-        ragt die Gruppe bei 1080 px Höhe rund 40 px in die WLAN-Box. Der
-        frühere Kommentar an den Layout-Ankern versprach, das könne nicht
-        passieren — es konnte, es fiel nur nie auf, solange höchstens zwei
-        Codes gesetzt waren.
-        """
-        top, bottom = self._qr_group_bounds()
-        room   = bottom - top
-        size   = SOCIAL_QR_SIZE
-        while size > SOCIAL_QR_MIN and self._qr_group_height(size) > room:
-            size -= 2
-        if self._qr_group_height(size) > room:
-            logger.warning(
-                "Sidebar überfüllt: QR-Gruppe braucht %d px, verfügbar sind "
-                "%d px. Codes stehen auf der Untergrenze %d px — einen Code "
-                "abschalten (booking_qr_path/instagram_qr_path leeren) oder "
-                "die WLAN-Box kürzen.",
-                self._qr_group_height(size), room, size)
-        return size
+            rows, qr_size = self._social_layout()
+        else:
+            rows = self._social_rows()
+        return self._group_height(rows, qr_size)
 
     def _sidebar_qr_y(self) -> int:
         """y-Start der QR-Card. Vertikal zentriert zwischen Header und
@@ -1672,7 +1818,7 @@ class UI:
         """Höhe einer Reihe inklusive Abstand zur nächsten.
 
         `qr_size` ist die Kantenlänge, mit der die Kachel gezeichnet wird
-        — nicht zwingend die des geladenen Surfaces, siehe _social_qr_size.
+        — nicht zwingend die des geladenen Surfaces, siehe _social_layout.
         """
         _, line1, line2, surf = row
         text_h = self._f_sub.get_height()
@@ -1721,7 +1867,7 @@ class UI:
         steht in beiden Fällen in der zweiten Zeile, weil ein Label ohne
         nennbares Ziel eine Sackgasse ist.
         """
-        rows = self._social_rows()
+        rows, qr_size = self._social_layout()
         if not rows:
             return
 
@@ -1729,7 +1875,6 @@ class UI:
         # neben einem 130-px-Code wirken nicht wie ein Symbol, sondern wie
         # ein Versehen.
         glyphs = not any(surf for _, _, _, surf in rows)
-        qr_size = self._social_qr_size()
 
         ry = y
         for row in rows:
