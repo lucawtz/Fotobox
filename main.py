@@ -291,7 +291,7 @@ def main():
         camera.set_frame_provider(ui.latest_live_frame)
 
     logger.info("Fotobox bereit. Space=Einzelfoto  E=Collage  "
-                "Q=Wake-Camera/Zurück  Esc=Beenden  "
+                "Q=Wake-Camera/Zurück  I=Status-Leiste  Esc=Beenden  "
                 "(die Buttons rechts sind auch klickbar)")
 
     # ── State-Machine ──────────────────────────────────────────────────────────

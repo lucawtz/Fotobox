@@ -321,10 +321,12 @@ class UI:
     # interessieren genau so lange, bis die Box steht. Danach ist sie nur
     # noch ein Balken im Bild, deshalb blendet sie nach einer Minute aus.
     #
-    # Zurueck holt sie eine Mausbewegung — dasselbe Signal, das ohnehin
-    # schon den Cursor einblendet. Bewusst nicht jeder Tastendruck: die
-    # Taster loest am Eventabend der Gast aus, und dann stuende die Bar den
-    # ganzen Abend. Die Maus hat nur, wer die Box aufbaut.
+    # Zurueck holt sie die Taste I. Bewusst NICHT die Maus: eine einzige
+    # MOUSEMOTION startete die volle Minute neu, und auf einem Rechner mit
+    # Maus heisst das, dass sie praktisch nie verschwindet — gemessen an
+    # der laufenden App, die Bar war nach Ablauf weg und zwei Sekunden
+    # spaeter wieder da. Ebenso wenig die Ausloeser: die drueckt am
+    # Eventabend der Gast. Eine Tastatur haengt nur beim Aufbau dran.
     _STATUS_BAR_S    = 60.0
     _STATUS_BAR_FADE = 1.0    # Sekunden Ausblendung, damit sie nicht springt
     _status_bar_until = 0.0
@@ -539,10 +541,15 @@ class UI:
                 return True
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 return True
+            if (event.type == pygame.KEYDOWN
+                    and event.key == pygame.K_i):
+                # Umschalter: nochmal I blendet sie sofort wieder aus,
+                # sonst muesste man eine Minute warten.
+                self._status_bar_until = (
+                    0.0 if self._status_bar_alpha()
+                    else time.monotonic() + self._STATUS_BAR_S)
             if event.type == pygame.MOUSEMOTION:
-                now = time.monotonic()
-                self._cursor_until = now + self._CURSOR_IDLE_S
-                self._status_bar_until = now + self._STATUS_BAR_S
+                self._cursor_until = time.monotonic() + self._CURSOR_IDLE_S
                 pygame.mouse.set_visible(True)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 self._pending_click = event.pos
