@@ -1,3 +1,5 @@
+import html
+import json
 import logging
 from logging.handlers import RotatingFileHandler
 import os
@@ -11,7 +13,7 @@ from functools import wraps
 from typing import Optional
 from zipfile import ZIP_STORED, ZipFile, ZipInfo
 
-from flask import (Flask, Response, abort, jsonify, request,
+from flask import (Flask, Response, abort, jsonify, redirect, request,
                    send_file, session)
 
 import camera as camera_mod
@@ -211,20 +213,10 @@ def _make_preview(event: str, filename: str) -> Optional[str]:
 # der Phone-Betriebssysteme bei uns. Wir schicken einen 302-Redirect auf die
 # Galerie zurück → iOS/Android öffnen automatisch das Captive-Portal-Popup
 # mit unserer Galerie. Sehr UX-freundlich für Gäste — kein "URL eintippen".
-
-_PORTAL_PATHS = {
-    "/hotspot-detect.html",         # iOS, macOS
-    "/library/test/success.html",
-    "/generate_204",                # Android, Chrome
-    "/gen_204",
-    "/ncsi.txt",                    # Windows
-    "/connecttest.txt",
-    "/redirect",
-    "/success.txt",                 # Firefox
-    "/canonical.html",
-    "/check_network_status.txt",
-}
-
+#
+# Erkannt wird das am Host-Header, nicht an einer Liste bekannter Probe-Pfade:
+# jede Anfrage, deren Host keine IP ist, kann nur ueber die DNS-Umleitung hier
+# gelandet sein. Das deckt auch Probe-URLs ab, die wir nicht kennen.
 
 def _looks_like_ip(host: str) -> bool:
     """Reine IPv4-Adresse? — IP-Aufrufe sind nie Captive-Portal-Probes."""
@@ -340,6 +332,157 @@ for _name in _TOP_LEVEL_STATIC:
         endpoint=f"static_{_name.replace('.', '_').replace('-', '_')}",
         view_func=lambda _n=_name: _serve_top_level(_n),
     )
+
+
+# ── Kurzlinks fuer die QR-Codes am Box-Screen ─────────────────────────────────
+#
+# Der Boxbildschirm ist kein Touchscreen: der einzige Weg von der Box aufs
+# Handy des Gastes ist ein QR-Code. Ein QR mit der nackten Ziel-URL bricht
+# aber genau fuer die Gaeste, die gerade im Fotobox-WLAN haengen — hotspot.py
+# schreibt 'address=/#/<ip>' in die dnsmasq-Config und biegt damit jede
+# DNS-Anfrage auf die Box um. Ein https-Aufruf landet dann auf Port 443 der
+# Box, den niemand bedient, und der Gast sieht nur einen Verbindungsfehler.
+#
+# Deshalb zeigen die Mini-QRs (ui.py: _draw_social_links) auf diese Route:
+# eine reine IP-URL ueber http, die ohne DNS und ohne Internet immer aufgeht.
+# Die Seite prueft im Browser, ob das Handy nach draussen kommt, leitet dann
+# selbst weiter — und erklaert sonst den Weg, statt den Gast im Fehler stehen
+# zu lassen.
+
+# slug → (config-Key mit der URL, config-Key mit dem Label, Fallback-Label)
+_GO_LINKS = {
+    "termin":    ("booking_url",   "booking_label", "Termin buchen"),
+    "instagram": ("instagram_url", None,            "Instagram"),
+}
+
+# Wie lange die Erreichbarkeitspruefung im Browser laufen darf, bevor die
+# Seite auf den Erklaertext zurueckfaellt. Kurz halten — auf einem
+# hijackten DNS scheitert der Request meist sofort, und laenger als ~2,5 s
+# wartet niemand auf einen Redirect.
+_GO_PROBE_MS = 2500
+
+_GO_PAGE_TMPL = """<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__LABEL__</title>
+<style>
+:root{color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;padding:2rem 1.25rem;font:16px/1.5 system-ui,-apple-system,sans-serif;
+color:#202124;background:#f8f9fa;display:flex;justify-content:center}
+main{width:100%;max-width:26rem}
+h1{font-size:1.5rem;line-height:1.25;margin:0 0 .5rem}
+p{margin:0 0 1rem;color:#5f6368}
+a.btn{display:block;padding:.95rem 1.25rem;border-radius:.6rem;background:#1a73e8;
+color:#fff;text-decoration:none;font-weight:600;text-align:center;
+word-break:break-word}
+a.btn:active{background:#1557b0}
+.card{margin-top:1.25rem;padding:1rem;border:1px solid #dadce0;border-radius:.6rem;
+background:#fff}
+.card h2{font-size:.95rem;margin:0 0 .5rem}
+.card ol{margin:0;padding-left:1.15rem;color:#5f6368;font-size:.9rem}
+.url{margin-top:1rem;font-size:.8rem;color:#5f6368;word-break:break-all;
+-webkit-user-select:all;user-select:all}
+[hidden]{display:none!important}
+</style></head>
+<body><main>
+<h1>__LABEL__</h1>
+<p id="status" hidden>Einen Moment — wir leiten dich weiter&nbsp;…</p>
+<a class="btn" id="go" href="__HREF__">Weiter zu __DOMAIN__</a>
+<div class="card" id="hint">
+<h2>Seite l&auml;dt nicht?</h2>
+<ol>
+<li>Du bist im <b>Fotobox-WLAN</b> — das hat kein Internet.</li>
+<li>WLAN kurz trennen oder mobile Daten einschalten.</li>
+<li>Dann oben auf den Button tippen.</li>
+</ol>
+<p class="url">__SHOWN__</p>
+</div>
+</main>
+<script>
+(function () {
+  var target = __JSON__;
+  var hint = document.getElementById("hint");
+  var status = document.getElementById("status");
+  // Ohne JS bleibt der Erklaertext stehen — er wird erst hier eingeklappt.
+  hint.hidden = true;
+  status.hidden = false;
+  var done = false;
+  function fallback() {
+    if (done) { return; }
+    done = true;
+    status.hidden = true;
+    hint.hidden = false;
+  }
+  // no-cors reicht: uns interessiert nur, ob ueberhaupt eine Verbindung
+  // zustande kommt. Im Fotobox-WLAN zeigt der Captive-DNS die Ziel-Domain
+  // auf die Box, deren Port 443 zu ist — der Request scheitert also sofort.
+  var ctl = new AbortController();
+  var timer = setTimeout(function () { ctl.abort(); fallback(); }, __PROBE__);
+  fetch(target, {mode: "no-cors", cache: "no-store", signal: ctl.signal})
+    .then(function () {
+      clearTimeout(timer);
+      if (done) { return; }
+      done = true;
+      location.replace(target);
+    })
+    .catch(function () { clearTimeout(timer); fallback(); });
+})();
+</script>
+</body></html>"""
+
+
+def _go_page(target: str, label: str) -> str:
+    domain = target.split("://", 1)[-1].split("/", 1)[0] or target
+    return (_GO_PAGE_TMPL
+            .replace("__LABEL__",  html.escape(label))
+            .replace("__HREF__",   html.escape(target, quote=True))
+            .replace("__DOMAIN__", html.escape(domain))
+            .replace("__SHOWN__",  html.escape(target))
+            .replace("__JSON__",   json.dumps(target))
+            .replace("__PROBE__",  str(_GO_PROBE_MS)))
+
+
+@app.route("/go/<slug>")
+def go_link(slug: str):
+    entry = _GO_LINKS.get(slug)
+    if entry is None:
+        return redirect("/")
+    url_key, label_key, fallback_label = entry
+
+    target = (config.cfg.get(url_key) or "").strip()
+    # Der Wert kommt zwar aus der Owner-Config und nicht vom Gast, landet hier
+    # aber in einem href und in einem JS-String — ein 'javascript:'-Eintrag
+    # waere ein Eigentor. Deshalb nur echte Web-Links durchlassen.
+    if not target.lower().startswith(("http://", "https://")):
+        if target:
+            logger.warning("/go/%s: '%s' ist keine http(s)-URL — ignoriert",
+                           slug, target)
+        return redirect("/")
+
+    label = (config.cfg.get(label_key) or "").strip() if label_key else ""
+    response = Response(_go_page(target, label or fallback_label),
+                        mimetype="text/html; charset=utf-8")
+    # Nicht cachen: sonst zeigt das Handy nach einer Config-Aenderung noch
+    # tagelang die alte Ziel-URL.
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _public_links() -> dict:
+    """Instagram/Booking fuer die Galerie-Seite.
+
+    Der Gast hat das Handy beim Fotos-Holen ohnehin schon in der Hand — das
+    ist die Stelle mit der geringsten Huerde, ganz ohne zweiten Scan. Die
+    Links selbst laufen wieder ueber /go/, weil der Gast in diesem Moment
+    per Definition im Fotobox-WLAN steckt.
+    """
+    return {
+        "instagram_url": (config.cfg.get("instagram_url") or "").strip(),
+        "booking_url":   (config.cfg.get("booking_url") or "").strip(),
+        "booking_label": (config.cfg.get("booking_label")
+                          or "Termin buchen").strip(),
+    }
 
 
 @app.route("/img/<event>/<filename>")
@@ -490,6 +633,7 @@ def api_events():
         "events":             events.list_events(config.cfg),
         "event_name":         config.cfg.get("event_name", "Fotobox"),
         "photo_max_age_days": int(config.cfg.get("photo_max_age_days", 0)),
+        **_public_links(),
     })
 
 
@@ -517,6 +661,7 @@ def api_photos():
         "count":              len(out),
         "photos":             out,
         "photo_max_age_days": int(config.cfg.get("photo_max_age_days", 0)),
+        **_public_links(),
     })
 
 
@@ -739,6 +884,24 @@ def api_admin_status():
     })
 
 
+# Auslieferungswerte aus config.py. Nicht importiert, sondern dupliziert:
+# aendert der Owner den Default in _DEFAULTS, soll die Warnung fuer den ALTEN
+# Wert trotzdem greifen.
+_SHIPPED_DEFAULTS = {"admin_pin": "1234", "host_pin": "0000",
+                     "wifi_password": "fotobox123"}
+
+
+def _insecure_defaults() -> list:
+    """Welche sicherheitsrelevanten Werte stehen noch auf Auslieferungszustand?"""
+    labels = {"admin_pin": "Admin-PIN", "host_pin": "Gastgeber-PIN",
+              "wifi_password": "WLAN-Passwort"}
+    out = []
+    for key, shipped in _SHIPPED_DEFAULTS.items():
+        if config.cfg.get(key) == shipped:
+            out.append(labels[key])
+    return out
+
+
 @app.route("/api/admin/config", methods=["GET", "POST"])
 @_api_login_required
 def api_admin_config():
@@ -760,6 +923,10 @@ def api_admin_config():
             "theme":              dict(config.cfg.get("theme") or {}),
             "instagram_url":      config.cfg.get("instagram_url", ""),
             "booking_url":        config.cfg.get("booking_url", ""),
+            # Warnung, solange Auslieferungs-PINs aktiv sind. Der Admin-PIN
+            # gibt "alle Fotos loeschen" frei — auf einem offenen Gaeste-WLAN
+            # ist "1234" faktisch kein Schutz.
+            "insecure_defaults":  _insecure_defaults(),
             "print_enabled":      bool(config.cfg.get("print_enabled", True)),
             "printer_name":       config.cfg.get("printer_name", ""),
             "print_copies":       int(config.cfg.get("print_copies", 1)),

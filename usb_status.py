@@ -6,7 +6,6 @@ Overlay ein, solange eine Datei vorhanden ist.
 """
 
 import json
-import os
 from typing import Optional
 
 STATE_PATH = "/run/fotobox/usb_status.json"
@@ -21,7 +20,3 @@ def read() -> Optional[dict]:
         return None
     except OSError:
         return None
-
-
-def is_active() -> bool:
-    return os.path.exists(STATE_PATH)
