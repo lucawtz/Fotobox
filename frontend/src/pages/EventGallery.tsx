@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link as RouterLink, useNavigate, useParams } from "react-router-dom";
 import {
+  Alert,
   Box,
   Button,
   Chip,
   CircularProgress,
   Container,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Fade,
   IconButton,
   Paper,
@@ -17,9 +22,13 @@ import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import DownloadForOfflineRoundedIcon from "@mui/icons-material/DownloadForOfflineRounded";
 import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
-import { api, OwnerLinks as Links, Photo, formatDate } from "../api";
+import DeleteForeverRoundedIcon from "@mui/icons-material/DeleteForeverRounded";
+import { api, matchesFilter, OwnerLinks as Links, Photo, PhotoFilter, formatDate } from "../api";
+import RoleBadge from "../components/RoleBadge";
+import { useSessionRole } from "../sessionRole";
 import PhotoTile from "../components/PhotoTile";
 import ViewToggle, { useGalleryView } from "../components/ViewToggle";
+import KindFilter from "../components/KindFilter";
 import OwnerLinks from "../components/OwnerLinks";
 
 const POLL_MS = 8000;
@@ -35,7 +44,18 @@ export default function EventGallery() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [links, setLinks] = useState<Links | null>(null);
+  // Bewusst nicht in den localStorage wie die Ansicht: ein gemerkter Filter
+  // liesse den Gast beim naechsten Besuch Bilder vermissen, ohne zu sehen
+  // warum.
+  const [kind, setKind] = useState<PhotoFilter>("alle");
   const knownCount = useRef(0);
+
+  // Nur der Admin raeumt ganze Events weg — der Gastgeber bekommt fremde
+  // Ordner ohnehin nicht zu sehen (_may_see_all_events im Galerie-Server).
+  const role = useSessionRole();
+  const [confirmPurge, setConfirmPurge] = useState(false);
+  const [purging, setPurging] = useState(false);
+  const [purgeError, setPurgeError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!folder) return;
@@ -79,13 +99,36 @@ export default function EventGallery() {
     return () => clearInterval(id);
   }, [folder, load]);
 
+  const handlePurge = async () => {
+    if (!folder) return;
+    setPurging(true); setPurgeError(null);
+    try {
+      await api.admin.deleteEvent(folder);
+      navigate("/", { replace: true });
+    } catch (e) {
+      setPurgeError(e instanceof Error ? e.message : String(e));
+      setPurging(false);
+    }
+  };
+
+  const counts: Record<PhotoFilter, number> = {
+    alle:    photos.filter((p) => matchesFilter(p, "alle")).length,
+    collage: photos.filter((p) => matchesFilter(p, "collage")).length,
+    single:  photos.filter((p) => matchesFilter(p, "single")).length,
+  };
+  const hasCollages = counts.collage > 0;
+  // Ohne Collagen im Event gibt es nichts zu filtern — dann bleibt es bei der
+  // gefalteten Standardansicht, egal was im State steht.
+  const shown = photos.filter((p) => matchesFilter(p, hasCollages ? kind : "alle"));
+
   const handleDownload = () => {
-    if (!folder || photos.length === 0) return;
-    window.location.href = api.zipUrl(folder);
+    if (!folder || shown.length === 0) return;
+    // Was gefiltert auf dem Schirm steht, kommt auch so aus dem ZIP.
+    window.location.href = api.zipUrl(folder, hasCollages ? kind : "alle");
   };
 
   const subtitle = loading ? "Lade…"
-                 : `${photos.length} Foto${photos.length === 1 ? "" : "s"}${eventDate ? ` · ${formatDate(eventDate)}` : ""}`;
+                 : `${shown.length} Bild${shown.length === 1 ? "" : "er"}${eventDate ? ` · ${formatDate(eventDate)}` : ""}`;
 
   const [view, setView] = useGalleryView("photos", "grid");
 
@@ -208,10 +251,34 @@ export default function EventGallery() {
               <RefreshRoundedIcon />
             </IconButton>
           </Tooltip>
+
+          {/* Nur fuer Angemeldete: hier steht der "Event loeschen"-Knopf, da
+              muss man sehen, mit welcher Rolle man unterwegs ist. Fuer Gaeste
+              bleibt dieser Header unveraendert. */}
+          <RoleBadge hideWhenGuest />
         </Box>
       </Box>
 
       <Container maxWidth="xl" disableGutters sx={{ pb: "calc(var(--sa-bottom) + 24px)" }}>
+        {/* Eigene Zeile statt in die Kopfleiste: dort draengeln sich schon
+            Zurueck, Ansicht, ZIP und Aktualisieren, und drei Filterknoepfe
+            mit Zahl passen auf einem Handy nicht mehr daneben. */}
+        {hasCollages && (
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: { xs: "flex-start", sm: "center" },
+              px: { xs: 1, sm: 1.5 },
+              pt: { xs: 1, sm: 1.5 },
+              overflowX: "auto",
+              "&::-webkit-scrollbar": { display: "none" },
+              scrollbarWidth: "none",
+            }}
+          >
+            <KindFilter value={kind} onChange={setKind} counts={counts} />
+          </Box>
+        )}
+
         {loading && photos.length === 0 && (
           <Stack alignItems="center" sx={{ pt: 12 }}>
             <CircularProgress size={28} />
@@ -248,7 +315,7 @@ export default function EventGallery() {
           </Stack>
         )}
 
-        {photos.length > 0 && view === "grid" && (
+        {shown.length > 0 && view === "grid" && (
           <Box
             sx={{
               display: "grid",
@@ -263,13 +330,13 @@ export default function EventGallery() {
               },
             }}
           >
-            {photos.map((p) => (
+            {shown.map((p) => (
               <PhotoTile key={`${p.event}/${p.filename}`} photo={p} />
             ))}
           </Box>
         )}
 
-        {photos.length > 0 && view === "list" && (
+        {shown.length > 0 && view === "list" && (
           <Paper
             elevation={0}
             sx={{
@@ -281,14 +348,28 @@ export default function EventGallery() {
               bgcolor: "background.paper",
             }}
           >
-            {photos.map((p, i) => (
+            {shown.map((p, i) => (
               <PhotoListRow
                 key={`${p.event}/${p.filename}`}
                 photo={p}
-                divider={i < photos.length - 1}
+                divider={i < shown.length - 1}
               />
             ))}
           </Paper>
+        )}
+
+        {role === "admin" && !loading && photos.length > 0 && (
+          <Box sx={{ px: { xs: 1.25, sm: 3 }, pt: 3, display: "flex", justifyContent: "center" }}>
+            <Button
+              onClick={() => setConfirmPurge(true)}
+              startIcon={<DeleteForeverRoundedIcon />}
+              color="error"
+              variant="outlined"
+              size="small"
+            >
+              Event löschen
+            </Button>
+          </Box>
         )}
 
         {!loading && (
@@ -298,6 +379,49 @@ export default function EventGallery() {
           </Box>
         )}
       </Container>
+
+      <Dialog
+        open={confirmPurge}
+        onClose={purging ? undefined : () => setConfirmPurge(false)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1.25, pb: 1 }}>
+          <DeleteForeverRoundedIcon color="error" />
+          Event löschen?
+        </DialogTitle>
+        <DialogContent>
+          <Stack spacing={2}>
+            <Typography variant="body2" color="text.secondary">
+              <b>{eventDisplay || folder}</b> mit {photos.length} Foto
+              {photos.length === 1 ? "" : "s"} wird endgültig gelöscht. Vorher
+              per ZIP sichern, falls du die Bilder noch brauchst.
+            </Typography>
+            {purgeError && (
+              <Alert severity="error" variant="outlined">{purgeError}</Alert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, gap: 1 }}>
+          <Button
+            onClick={() => setConfirmPurge(false)}
+            disabled={purging}
+            color="inherit"
+            sx={{ flex: 1 }}
+          >
+            Abbrechen
+          </Button>
+          <Button
+            onClick={handlePurge}
+            disabled={purging}
+            variant="contained"
+            color="error"
+            sx={{ flex: 1 }}
+          >
+            {purging ? "Lösche…" : "Löschen"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </>
   );
 }

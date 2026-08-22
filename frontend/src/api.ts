@@ -1,9 +1,29 @@
+/** Was fuer ein Bild das ist — vom Server aus dem Dateinamen abgeleitet,
+ *  siehe collage.classify(). */
+export type PhotoKind = "collage" | "member" | "single";
+
 export interface Photo {
   event: string;
   filename: string;
   mtime: number;
   size: number;
+  kind: PhotoKind;
+  /** Verbindet eine Collage mit den vier Aufnahmen, aus denen sie besteht.
+   *  null bei eigenstaendigen Einzelfotos. */
+  group: string | null;
 }
+
+/** Was die Galerie zeigt. "alle" faltet die vier Aufnahmen einer Collage in
+ *  diese hinein — sonst stuende jede Collage funffach in der Uebersicht. */
+export type PhotoFilter = "alle" | "collage" | "single";
+
+export const matchesFilter = (p: Photo, f: PhotoFilter): boolean => {
+  if (f === "collage") return p.kind === "collage";
+  // Einzelbilder schliesst die Aufnahmen einer Collage bewusst mit ein: der
+  // Gast soll auch an seine Rohbilder kommen, nicht nur an die Montage.
+  if (f === "single") return p.kind === "single" || p.kind === "member";
+  return p.kind !== "member";
+};
 
 /** Instagram-/Booking-Link des Box-Besitzers. Leerer String = nicht
  *  konfiguriert, dann blendet <OwnerLinks> den jeweiligen Button aus. */
@@ -166,8 +186,14 @@ export const api = {
   previewUrl:  (p: Pick<Photo, "event" | "filename">) => `/preview/${evPath(p)}`,
   imgUrl:      (p: Pick<Photo, "event" | "filename">) => `/img/${evPath(p)}`,
   downloadUrl: (p: Pick<Photo, "event" | "filename">) => `/download/${evPath(p)}`,
-  zipUrl:      (event?: string | null) =>
-    "/api/download-zip" + (event ? `?event=${encodeURIComponent(event)}` : ""),
+  // kind nur mitschicken, wenn wirklich gefiltert wird — ohne den Parameter
+  // packt der Server bewusst das komplette Event ein.
+  zipUrl:      (event?: string | null, kind?: PhotoFilter) => {
+    if (!event) return "/api/download-zip";
+    const q = new URLSearchParams({ event });
+    if (kind && kind !== "alle") q.set("kind", kind);
+    return `/api/download-zip?${q.toString()}`;
+  },
   logoUrl:     () => `/api/admin/logo/preview?t=${Date.now()}`,
   // Nie direkt auf instagram_url/booking_url verlinken: der Gast steckt beim
   // Betrachten der Galerie per Definition im Fotobox-WLAN, und dort biegt der

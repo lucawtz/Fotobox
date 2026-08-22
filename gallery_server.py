@@ -17,6 +17,7 @@ from flask import (Flask, Response, abort, jsonify, redirect, request,
                    send_file, session)
 
 import camera as camera_mod
+import collage as collage_mod
 import config
 import disk_monitor
 import events
@@ -545,6 +546,24 @@ def _visible_photo_list(event_filter: Optional[str] = None) -> list:
     return _photo_list(active)
 
 
+def _kind_predicate(kind: Optional[str]):
+    """Prädikat fuer den Galerie-Filter, angewandt auf collage.classify()[0].
+
+    * "collage" — nur die fertigen 2x2-Bilder
+    * "single"  — jede Einzelaufnahme, auch die vier aus einer Collage: der
+                  Gast soll an seine Rohbilder kommen, nicht nur an die
+                  Montage.
+    * sonst     — alles ausser den Collage-Mitgliedern; die sind in ihrer
+                  Collage bereits zu sehen und wuerden die Ansicht sonst
+                  verfuenffachen.
+    """
+    if kind == "collage":
+        return lambda k: k == collage_mod.KIND_COLLAGE
+    if kind == "single":
+        return lambda k: k in (collage_mod.KIND_SINGLE, collage_mod.KIND_MEMBER)
+    return lambda k: k != collage_mod.KIND_MEMBER
+
+
 @app.route("/img/<event>/<filename>")
 def img(event, filename):
     # 404 statt 403: dass es weitere Events gibt, geht einen Gast nichts an.
@@ -674,14 +693,23 @@ def api_download_zip():
     if not _may_see_event(event_filter):
         abort(404)
 
+    # Ohne kind-Parameter bleibt es beim kompletten Event — der Gast, der
+    # "ZIP" drueckt, will seine Bilder, nicht die Auswahl von irgendwem.
+    # Erst ein aktiver Galerie-Filter schickt kind mit.
+    kind = (request.args.get("kind") or "").strip().lower() or None
+    keep = _kind_predicate(kind) if kind else (lambda _k: True)
+
     pic_dir = _pic_dir()
     items: list[tuple[str, str]] = []
     for ev, f in _photo_list(event_filter):
+        if not keep(collage_mod.classify(f)[0]):
+            continue
         items.append((f"{ev}/{f}", os.path.join(pic_dir, ev, f)))
     if not items:
         abort(404)
 
-    zip_name = f"{_zip_safe_name(event_filter)}.zip"
+    suffix = {"collage": "-collagen", "single": "-einzelbilder"}.get(kind, "")
+    zip_name = f"{_zip_safe_name(event_filter)}{suffix}.zip"
 
     return Response(
         _stream_zip(items),
@@ -727,14 +755,20 @@ def api_photos():
     for ev, f in _visible_photo_list(event_filter):
         try:
             st = os.stat(os.path.join(pic_dir, ev, f))
-            out.append({
-                "event":    ev,
-                "filename": f,
-                "mtime":    st.st_mtime,
-                "size":     st.st_size,
-            })
         except OSError:
             continue
+        kind, group = collage_mod.classify(f)
+        out.append({
+            "event":    ev,
+            "filename": f,
+            "mtime":    st.st_mtime,
+            "size":     st.st_size,
+            # Gefiltert wird im Client: die Liste eines Events kommt ohnehin
+            # komplett, ein zweiter Roundtrip pro Filterklick waere ueber den
+            # Hotspot nur langsamer. Der Server liefert die Einordnung.
+            "kind":     kind,
+            "group":    group,
+        })
     return jsonify({
         "event_name":         config.cfg.get("event_name", "Fotobox"),
         "active_event":       events.current_event_folder(config.cfg),

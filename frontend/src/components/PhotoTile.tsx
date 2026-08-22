@@ -1,4 +1,5 @@
 import { Box } from "@mui/material";
+import GridViewRoundedIcon from "@mui/icons-material/GridViewRounded";
 import { Link as RouterLink } from "react-router-dom";
 import { api, Photo } from "../api";
 
@@ -49,6 +50,35 @@ export default function PhotoTile({ photo }: Props) {
           transition: "transform .3s cubic-bezier(.2,.7,.2,1)",
         }}
       />
+
+      {/* Collagen sehen als Thumbnail aus wie jedes andere Bild — im
+          Quadrat-Zuschnitt ist das 2x2-Raster kaum zu erkennen. Das Abzeichen
+          sagt, dass hinter der Kachel vier Aufnahmen stecken. */}
+      {photo.kind === "collage" && (
+        <Box
+          sx={{
+            position: "absolute",
+            top: 4,
+            right: 4,
+            display: "flex",
+            alignItems: "center",
+            gap: 0.25,
+            bgcolor: "rgba(0,0,0,0.55)",
+            color: "#fff",
+            borderRadius: 0.75,
+            px: 0.5,
+            py: 0.125,
+            fontSize: ".65rem",
+            fontWeight: 600,
+            lineHeight: 1.6,
+            backdropFilter: "blur(4px)",
+            pointerEvents: "none",
+          }}
+        >
+          <GridViewRoundedIcon sx={{ fontSize: ".8rem" }} />
+          4
+        </Box>
+      )}
     </Box>
   );
 }

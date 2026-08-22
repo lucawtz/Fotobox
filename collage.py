@@ -1,6 +1,23 @@
+"""2x2-Collage aus vier Aufnahmen — plus die Namenskonvention, an der die
+Galerie spaeter erkennt, was zusammengehoert.
+
+Auf der Platte liegen nach einer Collage fuenf Dateien im Event-Ordner:
+
+    collage_<gid>.jpg     das fertige 2x2-Bild
+    collage_<gid>_1.jpg   die vier Einzelaufnahmen, aus denen es besteht
+    collage_<gid>_2.jpg
+    ...
+
+Die gemeinsame `<gid>` ist die einzige Verbindung zwischen ihnen. Ohne sie
+liesse sich in der Galerie nicht unterscheiden, ob ein `foto_*.jpg` ein
+eigenstaendiges Bild ist oder nur ein Viertel einer Collage — und genau das
+braucht der Filter "Collagen / Einzelbilder".
+"""
 import logging
 import os
+import re
 import time
+from typing import Optional, Tuple
 
 from PIL import Image
 
@@ -9,9 +26,70 @@ logger = logging.getLogger(__name__)
 _GAP = 20
 _BG = (255, 255, 255)
 
+# ── Namenskonvention ───────────────────────────────────────────────────────────
+
+KIND_COLLAGE = "collage"   # das fertige 2x2-Bild
+KIND_MEMBER  = "member"    # eine der vier Aufnahmen, aus denen es besteht
+KIND_SINGLE  = "single"    # ein normal ausgeloestes Einzelfoto
+
+# collage_<gid>[_<n>] — die Gruppe ist immer numerisch, weil sie aus einem
+# Millisekunden-Zeitstempel kommt.
+_NAME_RE = re.compile(r"^collage_(\d+)(?:_(\d+))?$")
+
+
+def classify(filename: str) -> Tuple[str, Optional[str]]:
+    """(kind, group) fuer einen Dateinamen. group ist None bei Einzelfotos.
+
+    Robust gegenueber Altbestand: Collagen von vor dieser Konvention heissen
+    ebenfalls `collage_<ms>.jpg` und werden korrekt als KIND_COLLAGE erkannt.
+    Ihre damaligen Quellfotos heissen `foto_*.jpg` und bleiben Einzelfotos —
+    nachtraeglich zuordnen laesst sich das nicht, dafuer fehlt die Gruppe.
+    """
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    match = _NAME_RE.match(stem)
+    if not match:
+        return KIND_SINGLE, None
+    group, member = match.groups()
+    return (KIND_MEMBER if member else KIND_COLLAGE), group
+
+
+def member_name(group: str, index: int, ext: str) -> str:
+    """Dateiname der `index`-ten Aufnahme (1-basiert) einer Collage."""
+    return f"collage_{group}_{index}{ext}"
+
+
+# ── Collage bauen ──────────────────────────────────────────────────────────────
+
+def _adopt_shots(paths: list, group: str) -> list:
+    """Benennt die Quellfotos auf die Collage-Konvention um.
+
+    Laeuft bewusst NACH dem Speichern der Collage: schlaegt das Zusammenbauen
+    fehl, bleiben die Aufnahmen unter ihrem urspruenglichen Namen liegen und
+    tauchen als normale Einzelfotos in der Galerie auf, statt zu verschwinden.
+
+    Ein fehlgeschlagenes Umbenennen ist kein Grund, die fertige Collage
+    wegzuwerfen — dann steht das Foto eben als Einzelbild in der Galerie.
+    """
+    renamed = []
+    for i, src in enumerate(paths, start=1):
+        ext = os.path.splitext(src)[1]
+        dst = os.path.join(os.path.dirname(src), member_name(group, i, ext))
+        try:
+            os.rename(src, dst)
+            renamed.append(dst)
+        except OSError as exc:
+            logger.warning("Collage-Zuordnung fuer %s fehlgeschlagen: %s", src, exc)
+            renamed.append(src)
+    return renamed
+
 
 def make_collage(paths: list[str], output_dir: str) -> str:
-    """Erstellt 2×2-Collage aus genau 4 Fotos, gibt Pfad zurück."""
+    """Erstellt 2×2-Collage aus genau 4 Fotos, gibt Pfad zurück.
+
+    Nebenwirkung: die vier Quellfotos werden auf `collage_<gid>_<n>` umbenannt,
+    damit die Galerie sie der Collage zuordnen kann. Die uebergebenen Pfade
+    sind danach ungueltig.
+    """
     assert len(paths) == 4, "Genau 4 Fotos benötigt"
 
     images = [Image.open(p).convert("RGB") for p in paths]
@@ -33,7 +111,10 @@ def make_collage(paths: list[str], output_dir: str) -> str:
         canvas.paste(img, pos)
 
     os.makedirs(output_dir, exist_ok=True)
-    out_path = os.path.join(output_dir, f"collage_{int(time.time() * 1000)}.jpg")
+    group = str(int(time.time() * 1000))
+    out_path = os.path.join(output_dir, f"collage_{group}.jpg")
     canvas.save(out_path, "JPEG", quality=92)
-    logger.info("Collage gespeichert: %s", out_path)
+
+    _adopt_shots(paths, group)
+    logger.info("Collage gespeichert: %s (Gruppe %s)", out_path, group)
     return out_path
