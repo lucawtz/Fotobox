@@ -41,6 +41,13 @@ ACTION_RADIUS   = 28      # Stärker abgerundete Ecken — moderner als 18.
 LIVE_OUTER_W    = 12      # Aussenrahmen (braun) ums Live-View.
 LIVE_INNER_W    = 3       # Innerer Goldakzent.
 
+# Mini-QRs unter dem Galerie-Code (Instagram / Terminbuchung). Bewusst
+# kleiner als der Galerie-QR — der bleibt der Hauptcode der Sidebar.
+SOCIAL_QR_SIZE  = 84      # Zielgroesse; _make_qr rundet auf ganze Module auf.
+SOCIAL_QR_PAD   = 7       # Cremerand um den Code — zugleich seine Quiet-Zone.
+SOCIAL_ROW_GAP  = 10      # Luft zwischen den beiden Reihen.
+SOCIAL_ICON     = 18      # Instagram-/Kalender-Glyph neben der Beschriftung.
+
 # Polaroid-Renderer
 POLAROID_PAD_TOP = 18
 POLAROID_PAD_LR  = 18
@@ -222,10 +229,14 @@ class UI:
             if self._logo_surf is not None else None
         )
 
-        # Galerie-QR als grosse Card. Instagram/Booking sind nur Icon+Text
-        # (siehe _draw_social_links) — drei QR-Codes in der Sidebar wirken
-        # zu überladen.
+        # Galerie-QR als grosse Card — der Hauptcode. Instagram/Booking
+        # bekommen darunter je einen kleineren Code (_draw_social_links);
+        # sie sind visuell klar untergeordnet, aber genauso scannbar.
         self._qr_surf = self._make_qr(cfg.get("gallery_url", ""), size=160)
+
+        # Mini-QRs werden lazy erzeugt und ueber die Ziel-URL gecacht —
+        # aendert der Owner einen Link, rendert der naechste Frame ihn neu.
+        self._mini_qr_cache: dict = {}
 
         # Live-Reload-Tracking — gallery_server.py teilt config.cfg mit
         # dieser Instanz (siehe main.py: gallery_server.run im Thread).
@@ -702,9 +713,7 @@ class UI:
         cam_text  = "Kamera: OK" if camera_ok else "Kamera: FEHLT"
         items = [
             (cam_text, cam_color),
-            (f"Speicher: {free_mb / 1024:.1f} GB" if free_mb >= 1024
-             else f"Speicher: {free_mb} MB",
-             C_YELLOW if free_mb < self._cfg.get("disk_warn_mb", 500) else C_DIM),
+            (self._disk_label(free_mb), self._disk_color(free_mb)),
             (f"Fotos: {photo_count}", C_DIM),
             ("Hotspot: aktiv" if self._cfg.get("hotspot_enabled") else "Hotspot: aus", C_DIM),
         ]
@@ -713,6 +722,23 @@ class UI:
             lbl = self._f_small.render(text, True, color)
             self._screen.blit(lbl, (x, H - 24))
             x += lbl.get_width() + 60
+
+    def _disk_label(self, free_mb: int) -> str:
+        if free_mb < 0:
+            return "Speicher: ?"
+        return (f"Speicher: {free_mb / 1024:.1f} GB" if free_mb >= 1024
+                else f"Speicher: {free_mb} MB")
+
+    def _disk_color(self, free_mb: int):
+        """Drei Stufen statt zwei: unter disk_block_mb nimmt die Box gar keine
+        Fotos mehr auf — das muss deutlicher aussehen als eine Warnung."""
+        if free_mb < 0:
+            return C_DIM
+        if free_mb < self._cfg.get("disk_block_mb", 150):
+            return C_RED
+        if free_mb < self._cfg.get("disk_warn_mb", 500):
+            return C_YELLOW
+        return C_DIM
 
     def _draw_error_banner(self, message: str):
         banner_h = 54
@@ -1290,20 +1316,16 @@ class UI:
         return (H - margin_bottom - box_h, box_h)
 
     def _qr_group_height(self) -> int:
-        """Gesamthöhe der QR-Group: Card + Caption + (optional) Social-Reihen."""
-        QR_SIZE = 160
-        PAD     = 14
-        card_h  = QR_SIZE + PAD * 2
+        """Gesamthöhe der QR-Group: Card + Caption + (optional) Mini-QR-Reihen."""
         caption_h = self._f_sub.get_height() + 12
-
-        social_rows = 0
-        if (self._cfg.get("instagram_url") or "").strip():
-            social_rows += 1
-        if (self._cfg.get("booking_url") or "").strip():
-            social_rows += 1
-        # Pro Reihe: 32 px (icon_size 22 + Padding/Gap), siehe _draw_social_links.
-        social_h = (16 + social_rows * 32) if social_rows else 0
-        return card_h + caption_h + social_h
+        rows = self._social_rows()
+        social_h = 0
+        if rows:
+            # Reihenhöhen aus den echten Surfaces — _make_qr rundet auf ganze
+            # Module auf, die Kachel ist also nicht exakt SOCIAL_QR_SIZE hoch.
+            social_h = 16 + sum(self._social_row_height(surf)
+                                for surf, _, _ in rows)
+        return self._qr_card_size() + caption_h + social_h
 
     def _sidebar_qr_y(self) -> int:
         """y-Start der QR-Card. Vertikal zentriert zwischen Header und
@@ -1315,15 +1337,22 @@ class UI:
         y      = top + ((bottom - top) - total) // 2
         return max(top, y)
 
+    _QR_CARD_PAD = 14
+
+    def _qr_card_size(self) -> int:
+        """Kantenlänge der Galerie-QR-Card. Der Code selbst ist nicht exakt
+        160 px gross — _make_qr rundet auf ganze Module auf, damit keine
+        Modulspalte beim Skalieren ein Pixel breiter wird als die nächste."""
+        qr = self._qr_surf.get_width() if self._qr_surf is not None else 160
+        return qr + self._QR_CARD_PAD * 2
+
     def _draw_qr_card(self):
         """QR auf cremig-weißem Container in der Sidebar — vertikal mittig.
-        Caption und Social-Links werden direkt darunter gezeichnet.
+        Caption und Mini-QRs werden direkt darunter gezeichnet.
         """
         cx = SIDEBAR_W // 2
-        QR_SIZE  = 160
-        PAD      = 14
-        card_w   = QR_SIZE + PAD * 2
-        card_h   = QR_SIZE + PAD * 2
+        PAD    = self._QR_CARD_PAD
+        card_w = card_h = self._qr_card_size()
         y = self._sidebar_qr_y()
 
         card = pygame.Rect(cx - card_w // 2, y, card_w, card_h)

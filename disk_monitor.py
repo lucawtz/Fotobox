@@ -9,10 +9,16 @@ _EXTS = {".jpg", ".jpeg", ".png"}
 
 
 def get_free_mb(path: str) -> int:
+    """Freier Speicher in MB, oder -1 wenn er sich nicht ermitteln laesst.
+
+    Bewusst -1 statt 0: ein Fehler beim Lesen sah vorher aus wie eine volle
+    Platte und haette die Aufnahme blockiert, sobald es eine Sperre gibt.
+    """
     try:
         return int(shutil.disk_usage(path).free / 1024 / 1024)
-    except Exception:
-        return 0
+    except Exception as exc:
+        logger.warning("Speicherplatz nicht ermittelbar (%s): %s", path, exc)
+        return -1
 
 
 def cleanup_old_thumbnails(thumb_dir: str, max_age_days: int = 30):

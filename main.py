@@ -329,7 +329,16 @@ def main():
                         cfg.get("max_photos", 500),
                         event_dir=events.current_event_dir(cfg))
 
-                    if not camera.available:
+                    # Speicher voll: lieber sauber ablehnen als den Countdown
+                    # laufen lassen und gphoto2 still scheitern sehen.
+                    # -1 = nicht ermittelbar -> nicht blockieren.
+                    block_mb = cfg.get("disk_block_mb", 150)
+                    if 0 <= free_mb < block_mb:
+                        logger.error("Auslöser blockiert: nur noch %d MB frei", free_mb)
+                        ui.show_notice("Speicher voll",
+                                       "Bitte Fotos auf USB sichern und löschen")
+                        btns.wait_for_release()
+                    elif not camera.available:
                         logger.warning("Auslöser ignoriert: %s", camera.error_message)
                         ui.show_notice("Kamera nicht bereit",
                                        camera.error_message or "Bitte Kamera prüfen")

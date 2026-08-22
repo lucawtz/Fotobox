@@ -95,7 +95,26 @@ _DEFAULTS: dict = {
     "live_view_rect": [510, 540, 800, 450],
     "instagram_url": "https://www.instagram.com/lucawtz",
     "booking_url":   "https://bytebots.de/",
+    # Beschriftung unter dem Booking-QR. "Termine buchen" beantwortet die
+    # Frage nicht, die der Gast beim Scannen hat — naemlich was er dort
+    # ueberhaupt bekommt.
+    "booking_label": "Fotobox mieten",
+    # Wohin die Mini-QR-Codes am Box-Screen zeigen:
+    #   "local"  — auf http://<hotspot_ip>/go/<slug> (Default). Immer
+    #              erreichbar, weil hotspot.py per 'address=/#/<ip>' ohnehin
+    #              jede DNS-Anfrage auf die Box umbiegt: eine nackte
+    #              https-URL im QR laeuft fuer jeden Gast im Fotobox-WLAN
+    #              ins Leere. Die /go/-Seite erklaert stattdessen den Weg
+    #              nach draussen und leitet automatisch weiter, sobald das
+    #              Handy Internet hat.
+    #   "direct" — die nackte Ziel-URL im QR. Nur sinnvoll, wenn die Gaeste
+    #              typischerweise NICHT im Fotobox-WLAN haengen.
+    "qr_link_mode": "local",
     "disk_warn_mb": 500,
+    # Harte Grenze: darunter wird die Aufnahme verweigert, statt gphoto2
+    # ins Leere laufen zu lassen. Ein RAW+JPEG-Paar der 700D braucht ~30 MB,
+    # 150 MB lassen also noch Luft fuer Thumbnails und Logs.
+    "disk_block_mb": 150,
     "thumbnail_max_age_days": 30,
     "photo_max_age_days": 7,
     # ── Drucken ────────────────────────────────────────────────────────────
