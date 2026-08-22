@@ -1252,18 +1252,28 @@ def api_admin_status():
 # Auslieferungswerte aus config.py. Nicht importiert, sondern dupliziert:
 # aendert der Owner den Default in _DEFAULTS, soll die Warnung fuer den ALTEN
 # Wert trotzdem greifen.
-_SHIPPED_DEFAULTS = {"admin_pin": "1234", "host_pin": "0000",
-                     "wifi_password": "fotobox123"}
+# Direkt aus config._DEFAULTS abgeleitet, damit die Warnung nicht ins Leere
+# laeuft, sobald sich ein Auslieferungswert aendert.
+_SHIPPED_LABELS = {"admin_pin": "Admin-PIN", "host_pin": "Gastgeber-PIN",
+                   "wifi_password": "WLAN-Passwort"}
+_SHIPPED_DEFAULTS = {k: config.default_value(k) for k in _SHIPPED_LABELS}
 
 
 def _insecure_defaults() -> list:
-    """Welche sicherheitsrelevanten Werte stehen noch auf Auslieferungszustand?"""
-    labels = {"admin_pin": "Admin-PIN", "host_pin": "Gastgeber-PIN",
-              "wifi_password": "WLAN-Passwort"}
+    """Welche sicherheitsrelevanten Werte sind noch Auslieferungszustand?
+
+    Zusaetzlich gemeldet werden zu kurze PINs. Der Login prueft die Laenge
+    bewusst nicht nach — eine vierstellige PIN aus einer config.json von vor
+    `config.PIN_MIN_LEN` funktioniert weiter, sonst sperrt ein Update den
+    Besitzer aus. Unsicher ist sie trotzdem, also gehoert sie in die Warnung.
+    """
     out = []
-    for key, shipped in _SHIPPED_DEFAULTS.items():
-        if config.cfg.get(key) == shipped:
-            out.append(labels[key])
+    for key, label in _SHIPPED_LABELS.items():
+        value = config.cfg.get(key) or ""
+        if value == _SHIPPED_DEFAULTS[key]:
+            out.append(label)
+        elif key.endswith("_pin") and 0 < len(value) < config.PIN_MIN_LEN:
+            out.append(f"{label} (zu kurz)")
     return out
 
 
@@ -1375,9 +1385,11 @@ def api_admin_config():
             if pin_key == "host_pin" and new_pin == "":
                 config.cfg["host_pin"] = ""
                 continue
-            if len(new_pin) < 4 or len(new_pin) > 12:
-                return jsonify(ok=False,
-                               error="PIN muss 4–12 Zeichen lang sein"), 400
+            if not config.PIN_MIN_LEN <= len(new_pin) <= config.PIN_MAX_LEN:
+                return jsonify(
+                    ok=False,
+                    error=f"PIN muss {config.PIN_MIN_LEN}–{config.PIN_MAX_LEN} "
+                          "Zeichen lang sein"), 400
             config.cfg[pin_key] = new_pin
 
     # Druckeinstellungen: admin-only. Der Drucker gehoert dem Box-Besitzer,

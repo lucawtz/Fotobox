@@ -318,6 +318,13 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       `admin_pin: 1234`, `host_pin: 0000`, `wifi_password: fotobox123`. Bei eigenen
       Events kein Drama, aber ein Warnbanner im Admin-Panel solange die Defaults
       aktiv sind kostet fast nichts. Der Admin-PIN gibt „alle Fotos löschen" frei.
+      *Nachtrag (22.08.):* PINs sind jetzt mindestens sechsstellig
+      (`config.PIN_MIN_LEN`) — vier Stellen sind 10.000 Möglichkeiten, auf einem
+      offenen Gäste-WLAN auch mit Lockout dünn. Der Login prüft die Länge
+      bewusst **nicht** nach, sonst sperrt das Update jede Box mit einer alten
+      vierstelligen `config.json` aus; stattdessen meldet `_insecure_defaults()`
+      sie als „(zu kurz)". Auslieferungswerte kommen dort nicht mehr aus einer
+      zweiten Kopie, sondern aus `config.default_value()`.
 
 - [x] **22. Toter Code raus**
       `gallery_server.py:214` `_PORTAL_PATHS` (definiert, nie referenziert) ·
@@ -393,7 +400,8 @@ Nicht vergessen, nur nicht jetzt. Keiner dieser Punkte gefährdet das Event.
       gestartetes Event. Jeder Schritt einzeln abwählbar, Tippzwang nur für die
       Fotos. Bewusst ein Knopf statt Automatik: ein Reset, der von selbst
       zuschlägt, trifft irgendwann ein laufendes Event.
-      *Offen bleibt genau der PIN-Teil:* WLAN und PINs fasst der Reset nicht an,
+      *Offen bleibt genau der PIN-Teil* (sechsstellig sind sie seit P2-21, aber
+      unverändert von Vermietung zu Vermietung)*:* WLAN und PINs fasst der Reset nicht an,
       weil er sonst „1234"/„fotobox123" zurückschreiben würde. Der Vormieter
       kennt Host-PIN und WLAN-Passwort also weiterhin und käme in Funkreichweite
       wieder ins Panel.

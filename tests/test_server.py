@@ -287,15 +287,47 @@ def test_invalid_print_mode_ignored(app):
 # ── Warnung bei Auslieferungs-PINs (P2-21) ─────────────────────────────────────
 
 def test_insecure_defaults_reported(app, monkeypatch):
-    monkeypatch.setitem(config.cfg, "admin_pin", "1234")
-    monkeypatch.setitem(config.cfg, "host_pin", "0000")
-    monkeypatch.setitem(config.cfg, "wifi_password", "fotobox123")
+    for key in ("admin_pin", "host_pin", "wifi_password"):
+        monkeypatch.setitem(config.cfg, key, config.default_value(key))
     body = _login(app).get("/api/admin/config").get_json()
     assert set(body["insecure_defaults"]) == {"Admin-PIN", "Gastgeber-PIN", "WLAN-Passwort"}
 
-    monkeypatch.setitem(config.cfg, "admin_pin", "8471")
+    monkeypatch.setitem(config.cfg, "admin_pin", "847193")
     body = _login(app).get("/api/admin/config").get_json()
     assert "Admin-PIN" not in body["insecure_defaults"]
+
+
+def test_pin_from_an_older_config_is_flagged_as_too_short(app, monkeypatch):
+    """Vierstellige PINs aus einer config.json von vor `PIN_MIN_LEN` gelten
+    beim Login weiter — ein Update darf den Besitzer nicht aussperren. Die
+    Warnung muss sie trotzdem nennen, sonst faellt es nie auf."""
+    monkeypatch.setitem(config.cfg, "admin_pin", "1234")
+    body = _login(app).get("/api/admin/config").get_json()
+    assert "Admin-PIN (zu kurz)" in body["insecure_defaults"]
+
+
+# ── PIN-Länge ──────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("pin,accepted", [
+    ("12345",         False),      # eine Stelle zu wenig
+    ("123456",        True),
+    ("123456789012",  True),       # Maximum
+    ("1234567890123", False),
+])
+def test_pin_length_is_enforced(app, pin, accepted):
+    r = _login(app).post("/api/admin/config", json={"admin_pin": pin})
+    assert (r.status_code == 200) is accepted
+    if accepted:
+        assert config.cfg["admin_pin"] == pin
+
+
+def test_empty_host_pin_still_disables_host_login(app):
+    """Leer heisst 'Gastgeber-Login aus' und darf nicht an der Mindestlaenge
+    haengenbleiben. Der Admin-PIN darf dagegen nie leer werden."""
+    c = _login(app)
+    assert c.post("/api/admin/config", json={"host_pin": ""}).status_code == 200
+    assert config.cfg["host_pin"] == ""
+    assert c.post("/api/admin/config", json={"admin_pin": ""}).status_code == 400
 
 
 # ── /go/-Kurzlinks ─────────────────────────────────────────────────────────────

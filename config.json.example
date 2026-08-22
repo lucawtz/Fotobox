@@ -4,8 +4,8 @@
   "countdown_duration": 3,
   "wifi_ssid": "Fotobox",
   "wifi_password": "fotobox123",
-  "admin_pin": "1234",
-  "host_pin": "0000",
+  "admin_pin": "123456",
+  "host_pin": "000000",
   "logo_path": "Layout/logo.png",
   "theme": {
     "bg_top": "#D5BB99",

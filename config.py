@@ -39,6 +39,15 @@ _BOX_FIELDS = frozenset({
 # kommt per git aufs Pi.
 _PERSISTED_FIELDS = _MIETER_FIELDS | _BOX_FIELDS
 
+# Laenge von Admin- und Gastgeber-PIN. Vier Stellen sind 10.000 Moeglichkeiten
+# — auf einem offenen Gaeste-WLAN, in dem jeder die Galerie-URL kennt, ist das
+# selbst mit Login-Lockout duenn. Sechs Stellen sind Faktor 100 mehr und noch
+# gut merkbar. Der Login prueft die Laenge NICHT nach: eine kuerzere PIN aus
+# einer aelteren config.json funktioniert weiter, sonst sperrt ein Update den
+# Besitzer aus. gallery_server._insecure_defaults() warnt stattdessen.
+PIN_MIN_LEN = 6
+PIN_MAX_LEN = 12
+
 # Was eine Vermietung "einfaerbt" und bei der Uebergabe an den naechsten
 # Gastgeber zurueck auf Auslieferungszustand kann. Bewusst OHNE wifi_* und
 # *_pin: die vergibt der Box-Besitzer, und ein Reset auf "1234"/"fotobox123"
@@ -55,8 +64,8 @@ _DEFAULTS: dict = {
     "max_photos": 500,
     "gpio_pins": {"left": 17, "trigger": 27, "right": 22},
     "logo_path": "Layout/logo.png",
-    "admin_pin": "1234",
-    "host_pin": "0000",
+    "admin_pin": "123456",
+    "host_pin": "000000",
     "idle_timeout": 0,
     "slide_duration_ms": 5000,
     "gallery_port": 80,
@@ -122,7 +131,7 @@ _DEFAULTS: dict = {
     # gallery_server.preflight() auf einen Fallback-Port gezogen werden
     # kann — ein fest gezeichneter Galerie-Code zeigte dann ins Leere.
     # Leer = ui.py zeichnet weiter Kalender-Glyph und Domain.
-    "booking_qr_path": "https://bytebots.de/",
+    "booking_qr_path": "",
     "disk_warn_mb": 500,
     # Harte Grenze: darunter wird die Aufnahme verweigert, statt gphoto2
     # ins Leere laufen zu lassen. Ein RAW+JPEG-Paar der 700D braucht ~30 MB,

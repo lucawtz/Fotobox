@@ -28,6 +28,11 @@ import { api, AdminConfig, EventsResponse } from "../../api";
 import SettingsCard from "./SettingsCard";
 import { useAuth } from "./authContext";
 
+// Spiegelt config.PIN_MIN_LEN / PIN_MAX_LEN — der Server lehnt alles andere
+// mit 400 ab, das hier erspart dem Admin nur den Fehlversuch.
+const PIN_MIN = 6;
+const PIN_MAX = 12;
+
 export default function AdminEvent() {
   const { role } = useAuth();
   const isAdmin = role === "admin";
@@ -119,8 +124,9 @@ export default function AdminEvent() {
     (isAdmin && hostPin  !== (cfg.host_pin  ?? ""))
   );
 
-  const adminPinValid = !isAdmin || (adminPin.length >= 4 && adminPin.length <= 12);
-  const hostPinValid  = !isAdmin || hostPin === "" || (hostPin.length >= 4 && hostPin.length <= 12);
+  const adminPinValid = !isAdmin || (adminPin.length >= PIN_MIN && adminPin.length <= PIN_MAX);
+  const hostPinValid  = !isAdmin || hostPin === ""
+    || (hostPin.length >= PIN_MIN && hostPin.length <= PIN_MAX);
 
   return (
     <>
@@ -209,7 +215,7 @@ export default function AdminEvent() {
             <SettingsCard
               icon={<LockRoundedIcon />}
               title="Admin-PIN"
-              description="Voller Zugang. 4–12 Zeichen."
+              description={`Voller Zugang. ${PIN_MIN}–${PIN_MAX} Ziffern.`}
             >
               {cfg ? (
                 <TextField
@@ -217,7 +223,7 @@ export default function AdminEvent() {
                   value={adminPin}
                   onChange={(e) => setAdminPin(e.target.value)}
                   fullWidth
-                  inputProps={{ maxLength: 12, inputMode: "numeric" }}
+                  inputProps={{ maxLength: PIN_MAX, inputMode: "numeric" }}
                   InputProps={{
                     endAdornment: (
                       <InputAdornment position="end">
@@ -227,8 +233,9 @@ export default function AdminEvent() {
                       </InputAdornment>
                     ),
                   }}
-                  helperText={adminPin.length > 0 && adminPin.length < 4 ? "PIN zu kurz" : " "}
-                  error={adminPin.length > 0 && adminPin.length < 4}
+                  helperText={adminPin.length > 0 && adminPin.length < PIN_MIN
+                    ? `Mindestens ${PIN_MIN} Ziffern` : " "}
+                  error={adminPin.length > 0 && adminPin.length < PIN_MIN}
                 />
               ) : (
                 <Skeleton variant="rounded" height={56} />
@@ -238,7 +245,7 @@ export default function AdminEvent() {
             <SettingsCard
               icon={<LockRoundedIcon />}
               title="Gastgeber-PIN"
-              description="Eingeschränkter Zugang: nur Event-Name, Countdown und Logo — und nur das laufende Event, nie das Archiv. Leer lassen, um Gastgeber-Login zu deaktivieren."
+              description={`Eingeschränkter Zugang: nur Event-Name, Countdown und Logo — und nur das laufende Event, nie das Archiv. ${PIN_MIN}–${PIN_MAX} Ziffern, leer lassen deaktiviert den Gastgeber-Login.`}
             >
               {cfg ? (
                 <TextField
@@ -246,8 +253,8 @@ export default function AdminEvent() {
                   value={hostPin}
                   onChange={(e) => setHostPin(e.target.value)}
                   fullWidth
-                  inputProps={{ maxLength: 12, inputMode: "numeric" }}
-                  placeholder="z.B. 0000"
+                  inputProps={{ maxLength: PIN_MAX, inputMode: "numeric" }}
+                  placeholder="z.B. 004711"
                   InputProps={{
                     endAdornment: (
                       <InputAdornment position="end">
@@ -257,8 +264,9 @@ export default function AdminEvent() {
                       </InputAdornment>
                     ),
                   }}
-                  helperText={hostPin.length > 0 && hostPin.length < 4 ? "PIN zu kurz" : " "}
-                  error={hostPin.length > 0 && hostPin.length < 4}
+                  helperText={hostPin.length > 0 && hostPin.length < PIN_MIN
+                    ? `Mindestens ${PIN_MIN} Ziffern` : " "}
+                  error={hostPin.length > 0 && hostPin.length < PIN_MIN}
                 />
               ) : (
                 <Skeleton variant="rounded" height={56} />

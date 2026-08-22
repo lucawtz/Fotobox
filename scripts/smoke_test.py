@@ -394,7 +394,10 @@ def check_config():
     except ImportError as exc:
         return fail("Module nicht importierbar", exc)
 
-    shipped = {"admin_pin": "1234", "host_pin": "0000", "wifi_password": "fotobox123"}
+    # Werte aus config._DEFAULTS statt einer zweiten Kopie — sonst prueft der
+    # Smoke-Test nach einer Default-Aenderung gegen Werte, die es nicht gibt.
+    shipped = {k: config.default_value(k)
+               for k in ("admin_pin", "host_pin", "wifi_password")}
     still = [k for k, v in shipped.items() if config.cfg.get(k) == v]
     (warn if still else ok)(
         "Auslieferungs-PINs", ", ".join(still) + " noch auf Standard — im "
