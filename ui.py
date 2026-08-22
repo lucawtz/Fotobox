@@ -236,6 +236,9 @@ class UI:
         self._logo_mtime        = self._mtime(self._logo_path_seen)
         self._qr_url_seen       = cfg.get("gallery_url", "")
         self._theme_seen        = dict(cfg.get("theme") or {})
+        # Von main.py gesetzt (gecachter CUPS-Zustand aus printing.status()).
+        # Steuert, ob der Result-Screen einen Druck-Knopf anbietet.
+        self.print_ready        = False
         self._last_reload_check = 0.0
 
         # Polaroid-Galerie
@@ -350,6 +353,14 @@ class UI:
         if not camera_ok:
             self._draw_error_banner(camera_msg or "Kamera nicht erkannt – USB prüfen")
         pygame.display.flip()
+
+    def latest_live_frame(self):
+        """Letzter Live-View-Frame (BGR) oder None.
+
+        Wird von der Dev-Kamera genutzt, damit sie kein zweites
+        cv2.VideoCapture auf dasselbe Geraet oeffnen muss.
+        """
+        return self._live.latest() if self._live else None
 
     def _draw_live(self):
         """Live-Vorschau aus der Capture-Card im konfigurierten live_view_rect.
@@ -736,6 +747,68 @@ class UI:
             pygame.event.pump()
             pygame.time.wait(30)
 
+    def wait_for_capture(self, done, timeout: float = 35.0,
+                         message: str = "Foto wird übertragen…") -> bool:
+        """Haelt die Render-Schleife am Leben, waehrend gphoto2 laeuft.
+
+        Vorher wartete main.py hier blockierend — der Bildschirm stand bis zu
+        35 s auf dem letzten "Lächeln!"-Frame, ohne jedes Lebenszeichen. Der
+        Gast konnte nicht unterscheiden, ob die Box arbeitet oder haengt.
+
+        Rueckgabe: True wenn `done` rechtzeitig gesetzt wurde, sonst False.
+        """
+        deadline = time.monotonic() + timeout
+        dots = 0
+        while not done.is_set():
+            if time.monotonic() >= deadline:
+                return False
+            self._draw_live_fullscreen()
+            shade = pygame.Surface((W, H), pygame.SRCALPHA)
+            shade.fill((0, 0, 0, 150))
+            self._screen.blit(shade, (0, 0))
+            lbl = self._f_medium.render(message, True, C_WHITE)
+            self._screen.blit(lbl, lbl.get_rect(center=(W // 2, H // 2 - 30)))
+            # Laufende Punkte als Lebenszeichen — reicht, um "arbeitet" von
+            # "eingefroren" zu unterscheiden.
+            dots = (dots + 1) % 60
+            pips = "•" * (1 + dots // 20)
+            pip = self._f_large.render(pips, True, C_GOLD)
+            self._screen.blit(pip, pip.get_rect(center=(W // 2, H // 2 + 70)))
+            pygame.display.flip()
+            pygame.event.pump()
+            pygame.time.wait(30)
+        return True
+
+    def show_notice(self, title: str, detail: str = "",
+                    seconds: float = 3.5, error: bool = True) -> None:
+        """Vollflaechiger Hinweis fuer den Gast (blockierend).
+
+        Ohne das laeuft bei einem Kamera-Fehler der Countdown, der Blitz feuert
+        — und dann passiert sichtbar nichts. Die einzige Spur war eine Zeile im
+        Log, die am Event-Abend niemand liest.
+        """
+        accent = C_RED if error else C_GREEN
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            self._screen.fill((12, 8, 4))
+            box = pygame.Rect(0, 0, 1200, 380)
+            box.center = (W // 2, H // 2)
+            pygame.draw.rect(self._screen, (28, 20, 12), box, border_radius=28)
+            pygame.draw.rect(self._screen, accent, box, width=5, border_radius=28)
+            lbl = self._f_medium.render(title, True, C_WHITE)
+            self._screen.blit(lbl, lbl.get_rect(center=(W // 2, H // 2 - 55)))
+            if detail:
+                sub = self._f_normal.render(detail, True, C_DIM)
+                self._screen.blit(sub, sub.get_rect(center=(W // 2, H // 2 + 35)))
+            left = max(0.0, end - time.monotonic())
+            bar_w = int(box.width * (left / seconds)) if seconds > 0 else 0
+            pygame.draw.rect(self._screen, accent,
+                             (box.left, box.bottom - 8, bar_w, 8),
+                             border_bottom_left_radius=28)
+            pygame.display.flip()
+            pygame.event.pump()
+            pygame.time.wait(30)
+
     def _draw_countdown_frame(self, number: int, photo_num: int, total: int):
         self._draw_live_fullscreen()
         lbl = self._f_big.render(str(number), True, C_WHITE)
@@ -781,24 +854,52 @@ class UI:
         pygame.display.flip()
 
     def _draw_result_photo(self, path: str):
-        if path not in self._result_cache:
-            try:
-                img = pygame.image.load(path).convert()
-                target_w = int(W * 0.72)
-                target_h = int(H * 0.72)
-                scale = min(target_w / img.get_width(), target_h / img.get_height())
-                nw = int(img.get_width() * scale)
-                nh = int(img.get_height() * scale)
-                self._result_cache[path] = pygame.transform.smoothscale(img, (nw, nh))
-                # Cap: älteste Einträge wegwerfen damit der Cache nicht endlos wächst
-                while len(self._result_cache) > self._RESULT_CACHE_MAX:
-                    oldest = next(iter(self._result_cache))
-                    self._result_cache.pop(oldest, None)
-            except Exception as exc:
-                logger.warning("Result-Foto: %s", exc)
-                return
-        surf = self._result_cache[path]
-        self._screen.blit(surf, surf.get_rect(centerx=W // 2, centery=H // 2 - 60))
+        surf = self._result_surface(path)
+        if surf is not None:
+            self._screen.blit(surf, (0, 0))
+
+    def _result_surface(self, path: str):
+        """Fertig komponiertes Vollbild: unscharfer Hintergrund + scharfes Foto.
+
+        Wird pro Pfad gecacht, sodass pro Frame nur noch ein einziger Blit
+        anfaellt — auf dem Pi merklich billiger als jedes Mal neu skalieren.
+        """
+        if path in self._result_cache:
+            return self._result_cache[path]
+
+        try:
+            img = pygame.image.load(path).convert()
+        except Exception as exc:
+            logger.warning("Result-Foto: %s", exc)
+            return None
+
+        iw, ih = img.get_width(), img.get_height()
+        canvas = pygame.Surface((W, H))
+
+        # Hintergrund: dasselbe Foto stark weichgezeichnet und abgedunkelt,
+        # damit an den Seiten keine harten schwarzen Balken stehen. Der Blur
+        # ist ein Down-/Upscale — pygame.transform.gaussian_blur gibt es nicht
+        # in jedem Build und waere hier deutlich teurer.
+        small = pygame.transform.smoothscale(img, (max(1, W // 24), max(1, H // 24)))
+        canvas.blit(pygame.transform.smoothscale(small, (W, H)), (0, 0))
+        shade = pygame.Surface((W, H))
+        shade.fill((0, 0, 0))
+        shade.set_alpha(130)
+        canvas.blit(shade, (0, 0))
+
+        # Vordergrund: contain statt cover — das komplette Foto bleibt sichtbar,
+        # es wird also niemandem der Kopf abgeschnitten.
+        fit = min(W / iw, H / ih)
+        nw, nh = max(1, int(iw * fit)), max(1, int(ih * fit))
+        sharp = pygame.transform.smoothscale(img, (nw, nh))
+        canvas.blit(sharp, sharp.get_rect(center=(W // 2, H // 2)))
+
+        self._result_cache[path] = canvas
+        # Cap: älteste Einträge wegwerfen damit der Cache nicht endlos wächst
+        while len(self._result_cache) > self._RESULT_CACHE_MAX:
+            oldest = next(iter(self._result_cache))
+            self._result_cache.pop(oldest, None)
+        return canvas
 
     def _draw_qr_result(self):
         if self._qr_surf is None:
@@ -811,33 +912,90 @@ class UI:
         self._screen.blit(bg, (x - PAD, y - PAD))
         self._screen.blit(self._qr_surf, (x, y))
 
+    _SCRIM_H = 300
+
+    def _result_scrim(self):
+        """Schwarzer Verlauf von transparent nach unten hin deckend.
+
+        Einmal gebaut und gecacht — die Buttons liegen jetzt direkt auf dem
+        Foto, und ohne Scrim waeren sie auf hellen Aufnahmen unlesbar.
+        """
+        if getattr(self, "_scrim_surf", None) is None:
+            scrim = pygame.Surface((W, self._SCRIM_H), pygame.SRCALPHA)
+            for i in range(self._SCRIM_H):
+                # Exponent flacher als quadratisch, damit schon die Timer-Zeile
+                # oberhalb der Buttons abgedunkelt wird — auf einem hellen Foto
+                # war der goldene Text dort sonst praktisch unlesbar.
+                a = int(245 * (i / self._SCRIM_H) ** 1.3)
+                pygame.draw.line(scrim, (0, 0, 0, a), (0, i), (W, i))
+            self._scrim_surf = scrim
+        return self._scrim_surf
+
     def _draw_result_buttons(self, time_left: float):
+        self._screen.blit(self._result_scrim(), (0, H - self._SCRIM_H))
         keys = pygame.key.get_pressed()
         btn_w, btn_h = 340, 72
         gap = 60
-        total_w = 3 * btn_w + 2 * gap
+        # Der Druck-Knopf erscheint nur, wenn CUPS einen bereiten Drucker
+        # kennt. Vorher stand "Drucken" immer da und tat sichtbar nichts,
+        # solange kein Drucker eingerichtet war — schlimmer als kein Knopf.
+        n_btn = 3 if self.print_ready else 2
+        total_w = n_btn * btn_w + (n_btn - 1) * gap
         sx = (W - total_w) // 2
         by = H - btn_h - 20
 
         # Timer
         timer = self._f_small.render(f"Zurück in {max(0, int(time_left)) + 1}s",
-                                     True, C_DIM)
+                                     True, C_WHITE)
         self._screen.blit(timer, timer.get_rect(centerx=W // 2, bottom=by - 10))
 
+        # Pfeile werden gezeichnet statt als '←'/'→' gesetzt: pygame findet
+        # fuer SysFont('sans-serif') keinen Treffer (weder in Sysfonts noch in
+        # Sysalias — nur 'sans' waere ein Alias) und faellt deshalb auf das
+        # gebundelte freesansbold.ttf zurueck. Dem fehlen die Pfeil-Glyphen,
+        # es erschien nur ein .notdef-Kaestchen — auf dem Pi genauso wie auf
+        # der Dev-Maschine, weil die Fontdatei im pygame-Paket liegt.
+        ARROW_SIZE, ARROW_GAP = 22, 14
         defs = [
-            ("← Zurück",  "Q",     keys[pygame.K_q]),
-            ("Nochmal",   "Space", keys[pygame.K_SPACE]),
-            ("Drucken →", "E",     keys[pygame.K_e]),
+            ("Zurück",  "left",  "Q",     keys[pygame.K_q]),
+            ("Nochmal", None,    "Space", keys[pygame.K_SPACE]),
         ]
-        for i, (label, key_hint, hl) in enumerate(defs):
+        if self.print_ready:
+            defs.append(("Drucken", "right", "E", keys[pygame.K_e]))
+        for i, (label, arrow, key_hint, hl) in enumerate(defs):
             rect = pygame.Rect(sx + i * (btn_w + gap), by, btn_w, btn_h)
             color = C_BTN_HL if hl else C_BTN_BG
             pygame.draw.rect(self._screen, color, rect, border_radius=12)
             pygame.draw.rect(self._screen, C_GOLD, rect, width=2, border_radius=12)
-            lbl = self._f_normal.render(label, True, C_WHITE if hl else C_GOLD)
-            self._screen.blit(lbl, lbl.get_rect(centerx=rect.centerx, centery=rect.centery - 10))
+
+            fg  = C_WHITE if hl else C_GOLD
+            lbl = self._f_normal.render(label, True, fg)
+            ly  = rect.centery - 10
+            # Pfeil + Text als Gruppe zentrieren, damit die Beschriftung nicht
+            # gegenueber den Buttons ohne Pfeil verrutscht.
+            group_w = lbl.get_width() + (ARROW_SIZE + ARROW_GAP if arrow else 0)
+            gx = rect.centerx - group_w // 2
+            if arrow == "left":
+                self._draw_arrow(gx + ARROW_SIZE // 2, ly, ARROW_SIZE, fg, "left")
+                self._screen.blit(lbl, lbl.get_rect(midleft=(gx + ARROW_SIZE + ARROW_GAP, ly)))
+            else:
+                self._screen.blit(lbl, lbl.get_rect(midleft=(gx, ly)))
+                if arrow == "right":
+                    self._draw_arrow(gx + lbl.get_width() + ARROW_GAP + ARROW_SIZE // 2,
+                                     ly, ARROW_SIZE, fg, "right")
+
             hint = self._f_small.render(f"[ {key_hint} ]", True, C_DIM)
             self._screen.blit(hint, hint.get_rect(centerx=rect.centerx, centery=rect.centery + 20))
+
+    def _draw_arrow(self, cx: int, cy: int, size: int, color, pointing: str):
+        """Gefuelltes Dreieck als Pfeil — schriftunabhaengig und damit auf
+        Dev-Maschine und Pi garantiert deckungsgleich."""
+        h, w = size, int(size * 0.78)
+        if pointing == "left":
+            pts = [(cx + w // 2, cy - h // 2), (cx + w // 2, cy + h // 2), (cx - w // 2, cy)]
+        else:
+            pts = [(cx - w // 2, cy - h // 2), (cx - w // 2, cy + h // 2), (cx + w // 2, cy)]
+        pygame.draw.polygon(self._screen, color, pts)
 
     # ── USB-Export-Overlay ─────────────────────────────────────────────────────
 

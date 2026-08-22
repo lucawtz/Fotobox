@@ -20,3 +20,7 @@ node_modules/
 
 # Generierte Script-Vorschaubilder
 scripts/preview_*.png
+
+# Lokales Python-venv (Entwicklung auf macOS)
+venv/
+.venv/

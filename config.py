@@ -25,6 +25,20 @@ _MIETER_FIELDS = frozenset({
     "theme",
 })
 
+# Box-spezifische Einstellungen: gehoeren nicht dem Mieter, unterscheiden sich
+# aber von Geraet zu Geraet (welcher Drucker haengt dran?) und muessen deshalb
+# genauso in die lokale config.json — ein `git pull` darf sie nicht ueberschreiben.
+_BOX_FIELDS = frozenset({
+    "print_enabled",
+    "printer_name",
+    "print_copies",
+    "print_mode",
+})
+
+# Alles was persistiert wird. Der Rest lebt ausschliesslich in _DEFAULTS und
+# kommt per git aufs Pi.
+_PERSISTED_FIELDS = _MIETER_FIELDS | _BOX_FIELDS
+
 _DEFAULTS: dict = {
     "wifi_ssid": "Fotobox",
     "wifi_password": "fotobox123",
@@ -39,9 +53,16 @@ _DEFAULTS: dict = {
     "idle_timeout": 0,
     "slide_duration_ms": 5000,
     "gallery_port": 80,
-    "hotspot_enabled": False,
+    # Owner-Default: die Box IST der Access-Point. Zum Einrichten per
+    # VNC/Heim-WLAN stattdessen `main.py --no-hotspot` starten — das
+    # laesst den Galerie-Server auch auf 127.0.0.1 gebunden.
+    "hotspot_enabled": True,
     "hotspot_ip": "192.168.4.1",
     "hotspot_interface": "wlan0",
+    # Wie lange eine Event-Session laeuft, bevor automatisch ein neuer
+    # Ordner beginnt. 18h deckt "Feier bis 02:00" ab, trennt aber den
+    # naechsten Tag zuverlaessig. Siehe events.current_event_folder().
+    "event_session_hours": 18,
     "picture_dir": "Picture_Box",
     "capture_device": 0,
     "theme": {
@@ -77,6 +98,21 @@ _DEFAULTS: dict = {
     "disk_warn_mb": 500,
     "thumbnail_max_age_days": 30,
     "photo_max_age_days": 7,
+    # ── Drucken ────────────────────────────────────────────────────────────
+    # printer_name leer = CUPS-Standarddrucker (sonst exakter Name aus
+    # `lpstat -p`). print_media und print_options haengen vom Treiber ab —
+    # die passenden Werte liefert `lpoptions -p <drucker> -l`, siehe README.
+    "print_enabled": True,
+    "printer_name": "",
+    "print_copies": 1,
+    "print_media": "Postcard",        # Canon Selphy CP: 100x148 mm
+    "print_size_mm": [148, 100],      # Querformat, Breite x Hoehe
+    "print_dpi": 300,
+    # auto = randlos wenn das Seitenverhaeltnis fast passt (Einzelfoto),
+    # sonst vollstaendig mit weissem Rand (2x2-Collage wuerde sonst
+    # oben und unten abgeschnitten). Alternativ "cover" oder "fit".
+    "print_mode": "auto",
+    "print_options": [],
     "camera_keepalive_s": 25,
     "camera_output_mode": "3",
 }
@@ -95,7 +131,7 @@ def load_config() -> dict:
             # so bleibt z.B. ein neuer idle_timeout-Default aus config.py
             # nach `git pull` wirksam, statt von einer alten persistierten
             # config.json überschrieben zu werden.
-            for k in _MIETER_FIELDS:
+            for k in _PERSISTED_FIELDS:
                 if k in saved:
                     data[k] = saved[k]
         except Exception as exc:
@@ -131,7 +167,7 @@ def save_config(data: dict):
     aus config.py und bleiben unberührt. So überschreibt die persistierte
     config.json keine Code-Updates aus git.
     """
-    saveable = {k: v for k, v in data.items() if k in _MIETER_FIELDS}
+    saveable = {k: v for k, v in data.items() if k in _PERSISTED_FIELDS}
     if "logo_path" in saveable and isinstance(saveable["logo_path"], str):
         if os.path.isabs(saveable["logo_path"]):
             try:

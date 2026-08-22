@@ -41,13 +41,21 @@ export default function PhotoView() {
     }).catch(() => setLoading(false));
   }, [event]);
 
+  // Startposition kommt aus der URL — aber NUR fuer initialSlide. Danach ist
+  // der sichtbare Slide die Quelle der Wahrheit: onSlideChange aktualisiert die
+  // URL per history.replaceState, und das sieht useParams() nie. Wer das hier
+  // an `filename` haengt, laedt und loescht das zuerst geoeffnete Foto statt
+  // dem, das der Gast gerade anschaut.
   const startIndex = useMemo(() => {
     if (!filename || !event) return 0;
     const i = photos.findIndex((p) => p.event === event && p.filename === filename);
     return i < 0 ? 0 : i;
   }, [event, filename, photos]);
 
-  const current = photos[startIndex];
+  const [slideIndex, setSlideIndex] = useState<number | null>(null);
+  // Clamp: nach dem Loeschen des letzten Fotos kann der Index sonst ins Leere zeigen.
+  const index = Math.min(slideIndex ?? startIndex, Math.max(photos.length - 1, 0));
+  const current = photos[index];
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -55,6 +63,7 @@ export default function PhotoView() {
   }, []);
 
   const onSlideChange = (sw: SwiperType) => {
+    setSlideIndex(sw.activeIndex);
     const p = photos[sw.activeIndex];
     if (p) {
       window.history.replaceState(
@@ -74,14 +83,18 @@ export default function PhotoView() {
     setToast("Foto gelöscht");
     if (remaining.length === 0) {
       navigate(backTo);
-    } else {
-      const next = Math.min(startIndex, remaining.length - 1);
-      const np = remaining[next];
-      navigate(
-        `/photo/${encodeURIComponent(np.event)}/${encodeURIComponent(np.filename)}`,
-        { replace: true },
-      );
+      return;
     }
+    // Bewusst replaceState statt navigate(): ein Router-Wechsel wuerde
+    // startIndex neu berechnen und mit slideIndex konkurrieren.
+    const next = Math.min(index, remaining.length - 1);
+    setSlideIndex(next);
+    const np = remaining[next];
+    window.history.replaceState(
+      null, "",
+      `/photo/${encodeURIComponent(np.event)}/${encodeURIComponent(np.filename)}`,
+    );
+    swiperRef.current?.slideTo(next, 0);
   };
 
   if (loading) {
@@ -142,7 +155,7 @@ export default function PhotoView() {
               fontSize: { xs: ".7rem", sm: ".75rem" },
             }}
           >
-            {startIndex + 1} / {photos.length} · {current.event}
+            {index + 1} / {photos.length} · {current.event}
           </Typography>
           <Typography
             variant="body2"

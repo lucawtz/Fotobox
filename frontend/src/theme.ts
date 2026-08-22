@@ -51,7 +51,9 @@ const theme = createTheme({
     },
   },
   typography: {
-    fontFamily: '"Google Sans", "Inter", system-ui, -apple-system, sans-serif',
+    // "Google Sans" stand hier, wurde aber nie geladen — toter Eintrag.
+    // "Inter Variable" ist der Family-Name aus @fontsource-variable/inter.
+    fontFamily: '"Inter Variable", "Inter", system-ui, -apple-system, sans-serif',
     h1: { fontWeight: 500, letterSpacing: "-0.02em" },
     h2: { fontWeight: 500, letterSpacing: "-0.02em" },
     h3: { fontWeight: 500, letterSpacing: "-0.01em" },

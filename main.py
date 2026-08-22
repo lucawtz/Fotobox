@@ -2,7 +2,6 @@ import argparse
 import logging
 import os
 import signal
-import subprocess
 import sys
 import threading
 import time
@@ -16,6 +15,7 @@ import disk_monitor
 import events
 import gallery_server
 import hotspot
+import printing
 import usb_status
 from camera import Camera
 from hardware import Buttons
@@ -46,14 +46,17 @@ logger = logging.getLogger(__name__)
 
 def _do_countdown(ui: UI, camera: Camera, cfg: dict,
                   photo_num: int, total: int) -> Optional[str]:
-    result: dict = {"path": None}
+    result: dict = {"path": None, "error": None}
     done = threading.Event()
 
     def _capture():
         try:
             result["path"] = camera.capture(events.current_event_dir(cfg))
+            if not result["path"]:
+                result["error"] = "Kamera lieferte kein Bild"
         except Exception as exc:
             logger.error("Capture fehlgeschlagen: %s", exc)
+            result["error"] = str(exc)
         finally:
             done.set()
 
@@ -63,18 +66,41 @@ def _do_countdown(ui: UI, camera: Camera, cfg: dict,
         photo_num=photo_num,
         total=total,
     )
-    done.wait(timeout=35)
+
+    # Warten MIT laufender Render-Schleife: sonst steht der Bildschirm bis zu
+    # 35 s auf dem letzten "Lächeln!"-Frame und wirkt abgestuerzt.
+    if not ui.wait_for_capture(done, timeout=35.0):
+        logger.error("Capture-Timeout nach 35 s — gphoto2 antwortet nicht")
+        ui.show_notice("Kamera antwortet nicht",
+                       "Bitte kurz warten und nochmal auslösen")
+        return None
+
+    if not result["path"]:
+        # Bisher lief der Gast hier ins Leere: Countdown, Blitz — und nichts.
+        logger.error("Kein Foto gespeichert: %s", result["error"])
+        ui.show_notice("Foto konnte nicht gespeichert werden",
+                       "Bitte nochmal auslösen")
+        return None
+
     return result["path"]
 
 
-def _do_print(path: str):
-    try:
-        subprocess.Popen(["lp", path])
-        logger.info("Druckauftrag: %s", path)
-    except FileNotFoundError:
-        logger.warning("lp nicht verfügbar — Drucken übersprungen")
-    except Exception as exc:
-        logger.error("Druckfehler: %s", exc)
+def _do_print(ui: UI, path: str, cfg: dict) -> None:
+    """Druckt ein Foto und sagt dem Gast, was passiert ist.
+
+    Vorher war das ein nacktes `Popen(["lp", path])`: kein Zielgeraet, kein
+    Papierformat, keine Rueckmeldung, und der Kindprozess wurde nie
+    eingesammelt (ein Zombie pro Druck). Jetzt uebernimmt printing.py die
+    Aufbereitung und meldet Erfolg oder Fehler zurueck.
+    """
+    ui.show_notice("Wird gedruckt…", "Einen Moment bitte", seconds=0.8, error=False)
+    ok, message = printing.print_photo(path, cfg)
+    if ok:
+        ui.show_notice("Foto wird gedruckt", "Bitte am Drucker warten",
+                       seconds=2.5, error=False)
+    else:
+        logger.error("Drucken fehlgeschlagen: %s", message)
+        ui.show_notice("Drucken nicht möglich", message, seconds=4.0)
 
 
 def _count_photos(picture_dir: str) -> int:
@@ -103,11 +129,13 @@ class _StatusCache:
     """
     REFRESH_S = 1.0
 
-    def __init__(self, picture_dir: str):
+    def __init__(self, picture_dir: str, cfg: dict):
         self._picture_dir = picture_dir
+        self._cfg = cfg
         self._last = 0.0
         self.free_mb = 0
         self.photo_count = 0
+        self.print_ready = False
 
     def maybe_refresh(self, now_monotonic: float):
         if now_monotonic - self._last < self.REFRESH_S:
@@ -115,6 +143,9 @@ class _StatusCache:
         self._last = now_monotonic
         self.free_mb = disk_monitor.get_free_mb(config.BASE_DIR)
         self.photo_count = _count_photos(self._picture_dir)
+        # printing.status() cacht intern nochmal (20 s TTL) — hier wird also
+        # nicht jede Sekunde ein lpstat geforkt.
+        self.print_ready = printing.available(self._cfg)
 
 
 def _cleanup_orphans(paths):
@@ -134,6 +165,9 @@ def _parse_args():
     p.add_argument("--no-hotspot", action="store_true",
                    help="Hotspot trotz hotspot_enabled=true NICHT starten "
                         "(für Setup/Test mit VNC über Heim-WLAN)")
+    p.add_argument("--dev-camera", action="store_true",
+                   help="Fotos aus dem Live-View (Webcam) speichern statt per "
+                        "gphoto2 — nur für Entwicklung ohne DSLR, NICHT auf dem Pi")
     return p.parse_args()
 
 
@@ -159,13 +193,22 @@ def main():
 
     # Hotspot — defensiv: darf die App-Initialisierung niemals blockieren.
     # CLI-Flag --no-hotspot überschreibt config (für VNC-Setup-Betrieb).
-    if cfg.get("hotspot_enabled") and not args.no_hotspot:
+    hotspot_wanted = bool(cfg.get("hotspot_enabled")) and not args.no_hotspot
+    if hotspot_wanted:
         try:
             hotspot.start()
         except Exception as exc:
             logger.warning("Hotspot-Start fehlgeschlagen: %s", exc)
     elif args.no_hotspot:
         logger.info("Hotspot per --no-hotspot übersprungen — Heim-WLAN bleibt aktiv")
+
+    # Bind-Entscheidung an den *effektiven* Hotspot-Zustand koppeln, nicht nur
+    # ans Config-Flag: mit Hotspot muss die Galerie auf allen Interfaces
+    # lauschen (Gaeste-Handys), mit --no-hotspot bleibt sie auf 127.0.0.1.
+    # Bewusst auch dann 0.0.0.0, wenn hotspot.start() oben gescheitert ist —
+    # dann haengt der Pi meist am Heim-/Venue-WLAN und die Galerie ist die
+    # einzige Rettung, um noch an die Fotos zu kommen.
+    gallery_server.set_bind_all(hotspot_wanted)
 
     # Galerie-Server: Preflight synchron (Port-Bind-Check + ggf. Fallback)
     # damit der QR-Code in der UI die korrekte Port-Info bekommt. Falls
@@ -178,11 +221,16 @@ def main():
     threading.Thread(target=gallery_server.run, daemon=True).start()
     logger.info("Galerie: %s", cfg.get("gallery_url", "?"))
 
-    # Kamera (Watchdog im Hintergrund)
-    camera = Camera(
-        keepalive_s=cfg.get("camera_keepalive_s", 25),
-        output_mode=str(cfg.get("camera_output_mode", "3")),
-    )
+    # Kamera (Watchdog im Hintergrund). Im Dev-Modus stattdessen die Webcam,
+    # die ohnehin schon den Live-View speist — siehe dev_camera.py.
+    if args.dev_camera:
+        from dev_camera import DevCamera
+        camera = DevCamera()
+    else:
+        camera = Camera(
+            keepalive_s=cfg.get("camera_keepalive_s", 25),
+            output_mode=str(cfg.get("camera_output_mode", "3")),
+        )
 
     # Buttons (GPIO + Tastatur-Fallback)
     pins = cfg.get("gpio_pins", {})
@@ -201,6 +249,11 @@ def main():
         btns.close()
         sys.exit(1)
 
+    # Erst jetzt existiert der LiveReader — die Dev-Kamera zieht ihre Frames
+    # von dort, statt das Capture-Device ein zweites Mal zu oeffnen.
+    if args.dev_camera:
+        camera.set_frame_provider(ui.latest_live_frame)
+
     logger.info("Fotobox bereit. Space=Einzelfoto  E=Collage  "
                 "Q=Wake-Camera/Zurück  Esc=Beenden")
 
@@ -211,7 +264,7 @@ def main():
     result_since    = 0.0
     idle_since      = time.monotonic()
     clock           = pygame.time.Clock()
-    status_cache    = _StatusCache(cfg["picture_dir"])
+    status_cache    = _StatusCache(cfg["picture_dir"], cfg)
 
     try:
         while running:
@@ -222,6 +275,8 @@ def main():
             status_cache.maybe_refresh(now)
             free_mb   = status_cache.free_mb
             photo_cnt = status_cache.photo_count
+            # Der Result-Screen blendet den Druck-Knopf danach ein oder aus.
+            ui.print_ready = status_cache.print_ready
 
             # ── USB-Export hat absolute Priorität ─────────────────────────────
             # Wird vom udev-getriggerten scripts/usb_export.py geschrieben.
@@ -276,6 +331,8 @@ def main():
 
                     if not camera.available:
                         logger.warning("Auslöser ignoriert: %s", camera.error_message)
+                        ui.show_notice("Kamera nicht bereit",
+                                       camera.error_message or "Bitte Kamera prüfen")
                         btns.wait_for_release()
                     elif mode == "single":
                         # Kein Auto-Wake — Live-View muss manuell per Camera-Knopf
@@ -304,6 +361,11 @@ def main():
                             # Abgebrochene Collage: angefangene Einzelfotos
                             # nicht in der Galerie liegen lassen
                             _cleanup_orphans(shots)
+                            # _do_countdown hat den konkreten Fehler schon
+                            # angezeigt; hier nur noch klarstellen, dass die
+                            # ganze Collage verworfen wurde.
+                            ui.show_notice("Collage abgebrochen",
+                                           f"Nur {len(shots)} von 4 Fotos — bitte neu starten")
                         btns.wait_for_release()
                 else:
                     ui.render_homescreen(
@@ -356,7 +418,7 @@ def main():
                     btns.wait_for_release()
 
                 elif right:  # Drucken
-                    _do_print(result_photo)
+                    _do_print(ui, result_photo, cfg)
                     btns.wait_for_release()
 
                 else:

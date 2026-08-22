@@ -24,7 +24,7 @@ export default function AdminWifi() {
   const [pwd, setPwd] = useState("");
   const [showPwd, setShowPwd] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [toast, setToast] = useState<{ severity: "success" | "error"; msg: string } | null>(null);
+  const [toast, setToast] = useState<{ severity: "success" | "error" | "info"; msg: string } | null>(null);
 
   useEffect(() => {
     api.admin.config.get().then((c) => {
@@ -37,8 +37,14 @@ export default function AdminWifi() {
   const save = async () => {
     setBusy(true);
     try {
-      await api.admin.config.save({ wifi_ssid: ssid, wifi_password: pwd });
-      setToast({ severity: "success", msg: "WLAN-Einstellungen gespeichert" });
+      const r = await api.admin.config.save({ wifi_ssid: ssid, wifi_password: pwd });
+      // Der Server startet den Hotspot mit den neuen Daten neu. Wer das hier
+      // gerade bedient, haengt fast immer AN diesem Hotspot — der Abbruch
+      // gleich ist erwartet und darf nicht wie ein Fehler aussehen.
+      setToast(r.wifi_restarting
+        ? { severity: "info",
+            msg: "Gespeichert. WLAN startet neu — bitte mit den neuen Daten neu verbinden." }
+        : { severity: "success", msg: "WLAN-Einstellungen gespeichert" });
     } catch (e) {
       setToast({ severity: "error", msg: e instanceof Error ? e.message : String(e) });
     } finally { setBusy(false); }
@@ -101,6 +107,14 @@ export default function AdminWifi() {
           ) : <Skeleton variant="rounded" height={56} />}
         </SettingsCard>
 
+        {dirty && (
+          <Alert severity="warning" variant="outlined">
+            Beim Speichern startet das Fotobox-WLAN neu. Alle verbundenen Geräte
+            fliegen kurz raus — auch dieses hier. Danach mit den neuen Daten neu
+            verbinden. Am besten <strong>vor</strong> dem Event ändern.
+          </Alert>
+        )}
+
         <Box
           sx={{
             display: "flex",
@@ -120,7 +134,7 @@ export default function AdminWifi() {
             Verwerfen
           </Button>
           <Button
-            disabled={!dirty || busy || (pwd.length > 0 && pwd.length < 8)}
+            disabled={!dirty || busy || pwd.length < 8 || ssid.trim().length === 0}
             onClick={save}
             variant="contained"
             sx={{ flex: { xs: 1, sm: "0 0 auto" } }}
@@ -132,7 +146,7 @@ export default function AdminWifi() {
 
       <Snackbar
         open={!!toast}
-        autoHideDuration={2400}
+        autoHideDuration={toast?.severity === "info" ? 8000 : 2400}
         onClose={() => setToast(null)}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       >

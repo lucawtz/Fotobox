@@ -2,15 +2,33 @@
 Description=Fotobox
 After=graphical.target network.target
 Wants=graphical.target
+# Bremse gegen Restart-Endlosschleifen bei dauerhaften Fehlern (z.B. kein
+# Display): nach 5 Fehlstarts in 5 Minuten bleibt der Service stehen.
+# Gehoert seit systemd 229 in [Unit], nicht in [Service].
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 ExecStart=__PYTHON__ __INSTALL_DIR__/main.py
-Restart=no
+# Ein Absturz mitten im Event darf die Box nicht bis zum naechsten SSH-Login
+# tot liegen lassen. StartLimit* verhindert die Endlosschleife, wenn der
+# Fehler dauerhaft ist (z.B. kein Display) — dann bleibt sie nach 5 Versuchen
+# in 5 Minuten stehen, statt die Logs vollzuschreiben.
+Restart=on-failure
+RestartSec=5
 User=__USER__
 Group=__USER__
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=__HOME__/.Xauthority
 WorkingDirectory=__INSTALL_DIR__
+# /run/fotobox wird von systemd bei jedem Start angelegt (und dem Service-User
+# uebergeben). Vorher ueberlebte das Verzeichnis den Reboot nicht und kam nur
+# zurueck, weil usb_export.py es als root neu anlegt.
+RuntimeDirectory=fotobox
+RuntimeDirectoryMode=0755
+# Nicht beim Service-Stop loeschen: der USB-Export laeuft per udev auch dann,
+# wenn die Fotobox gerade nicht laeuft, und schreibt seinen Status dorthin.
+RuntimeDirectoryPreserve=yes
 StandardOutput=append:__INSTALL_DIR__/logs/fotobox.log
 StandardError=append:__INSTALL_DIR__/logs/fotobox.log
 KillSignal=SIGTERM

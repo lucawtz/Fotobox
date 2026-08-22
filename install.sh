@@ -116,11 +116,13 @@ fi
 # gstatic.com etc.) bei uns an, der Server schickt 302-Redirect zur
 # Galerie — Phone öffnet automatisch das "Anmelden"-Popup.
 #
-# IP wird aus config.json gelesen, und die Datei wird dem Service-User
-# übergeben — hotspot.py passt sie zur Laufzeit auf die echte Interface-
-# IP an, falls NetworkManager im 'shared mode' von ipv4.addresses abweicht.
+# IP kommt aus den Owner-Defaults in config.py (NICHT aus config.json —
+# dort landen nur Mieter-Felder, hotspot_ip wird beim Speichern verworfen).
+# Die Datei wird dem Service-User übergeben — hotspot.py passt sie zur
+# Laufzeit auf die echte Interface-IP an, falls NetworkManager im
+# 'shared mode' von ipv4.addresses abweicht.
 echo "→ Captive-Portal-DNS einrichten..."
-HOTSPOT_IP=$(python3 -c "import json,sys; print(json.load(open('$INSTALL_DIR/config.json')).get('hotspot_ip','192.168.4.1'))" 2>/dev/null || echo "192.168.4.1")
+HOTSPOT_IP=$(cd "$INSTALL_DIR" && python3 -c "import config; print(config.cfg['hotspot_ip'])" 2>/dev/null || echo "192.168.4.1")
 sudo mkdir -p /etc/NetworkManager/dnsmasq-shared.d
 sudo tee /etc/NetworkManager/dnsmasq-shared.d/captive.conf > /dev/null <<EOF
 # Fotobox Captive-Portal: alle DNS-Anfragen auf Hotspot-IP umleiten
@@ -157,6 +159,64 @@ EOF
 
 # 8. Drucker-Gruppe
 sudo usermod -aG lpadmin "$INSTALL_USER" 2>/dev/null || true
+
+# 9. Log-Rotation — logs/fotobox.log waechst sonst unbegrenzt, weil systemd
+# mit StandardOutput=append: dranhaengt. copytruncate, weil systemd den
+# Filedeskriptor offen haelt (Details in scripts/logrotate-fotobox).
+echo "→ Log-Rotation einrichten..."
+if [ -f "$INSTALL_DIR/scripts/logrotate-fotobox" ]; then
+    sed -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
+        -e "s|__USER__|$INSTALL_USER|g" \
+        "$INSTALL_DIR/scripts/logrotate-fotobox" \
+        | sudo tee /etc/logrotate.d/fotobox > /dev/null
+    # Syntaxpruefung: ein kaputter Eintrag legt die Rotation ALLER Logs auf
+    # dem System lahm, nicht nur unsere.
+    if sudo logrotate --debug /etc/logrotate.d/fotobox > /dev/null 2>&1; then
+        echo "  ✓ /etc/logrotate.d/fotobox"
+    else
+        echo "  ⚠ logrotate-Konfiguration fehlerhaft — wird entfernt"
+        sudo rm -f /etc/logrotate.d/fotobox
+    fi
+else
+    echo "  ⚠ scripts/logrotate-fotobox fehlt — uebersprungen"
+fi
+
+# 10. Bildschirmschoner/DPMS aus. Ohne das wird der Monitor mitten im Event
+# schwarz und der naechste Gast denkt, die Box ist aus. Beide Display-Stacks
+# abdecken: X11 (xset) und Wayland/labwc+wayfire (kein Blanking konfigurierbar,
+# daher zusaetzlich die Konsolen-Variante).
+echo "→ Bildschirmschoner deaktivieren..."
+AUTOSTART_DIR="$INSTALL_HOME/.config/autostart"
+mkdir -p "$AUTOSTART_DIR"
+cat > "$AUTOSTART_DIR/fotobox-no-blank.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Fotobox: Bildschirmschoner aus
+Exec=sh -c "xset s off; xset -dpms; xset s noblank"
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
+EOF
+# Konsolen-Blanking (greift auch ohne X/Wayland-Session)
+if ! grep -q "consoleblank=0" /boot/firmware/cmdline.txt 2>/dev/null \
+   && [ -f /boot/firmware/cmdline.txt ]; then
+    echo "  Hinweis: für vollständiges Blanking-Aus 'consoleblank=0' in"
+    echo "           /boot/firmware/cmdline.txt ergänzen (manuell, ein Reboot nötig)."
+fi
+echo "  ✓ $AUTOSTART_DIR/fotobox-no-blank.desktop"
+
+# 11. Boot-Target pruefen. Der Service haengt an graphical.target und braucht
+# eine laufende Desktop-Session — bootet der Pi in die Konsole, ist der
+# Service zwar aktiviert, startet aber nie erfolgreich.
+echo "→ Boot-Target prüfen..."
+CURRENT_TARGET=$(systemctl get-default 2>/dev/null || echo "unbekannt")
+if [ "$CURRENT_TARGET" = "graphical.target" ]; then
+    echo "  ✓ Boot-Target ist graphical.target"
+else
+    echo "  ⚠ Boot-Target ist '$CURRENT_TARGET', nicht graphical.target."
+    echo "    Die Fotobox-UI braucht eine Desktop-Session. Umstellen mit:"
+    echo "      sudo raspi-config nonint do_boot_behaviour B4   # Autologin Desktop"
+    echo "      sudo systemctl set-default graphical.target"
+fi
 
 echo ""
 echo "=== Installation abgeschlossen ==="

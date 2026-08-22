@@ -138,7 +138,8 @@ export const api = {
     config: {
       get: () => fetch("/api/admin/config", FETCH_OPTS).then(json<AdminConfig>),
       save: (data: Partial<AdminConfig>) =>
-        postJson("/api/admin/config", data).then(json<{ ok: boolean }>),
+        postJson("/api/admin/config", data)
+          .then(json<{ ok: boolean; wifi_restarting?: boolean }>),
     },
     uploadLogo: async (file: File) => {
       const fd = new FormData();

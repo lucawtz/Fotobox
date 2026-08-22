@@ -1,0 +1,25 @@
+# Logrotate fuer die Fotobox — von install.sh nach /etc/logrotate.d/fotobox
+# kopiert (Pfad wird dabei per sed eingesetzt).
+#
+# copytruncate ist hier Pflicht: systemd haelt die Datei ueber
+# StandardOutput=append: dauerhaft offen. Ein normales Umbenennen wuerde den
+# Filedeskriptor ins Leere zeigen lassen und die Box wuerde bis zum naechsten
+# Neustart still gar nichts mehr loggen.
+#
+# logs/gallery.log steht bewusst NICHT hier: das rotiert Python selbst per
+# RotatingFileHandler. Beides gleichzeitig wuerde sich gegenseitig zerlegen.
+__INSTALL_DIR__/logs/fotobox.log {
+    weekly
+    rotate 4
+    # maxsize, nicht size: 'size' wuerde das woechentliche Intervall komplett
+    # ersetzen. So wird woechentlich rotiert — oder frueher, wenn ein langer
+    # Event-Abend die Datei vorher ueber 20 MB treibt.
+    maxsize 20M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    # kein 'create': bei copytruncate bleibt die Originaldatei bestehen.
+    su __USER__ __USER__
+}

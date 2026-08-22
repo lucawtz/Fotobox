@@ -1,4 +1,5 @@
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import secrets
 import shutil
@@ -286,6 +287,16 @@ def photo(_filename):
     return _no_spa_response()
 
 
+@app.route("/event/<path:_folder>")
+def event_gallery(_folder):
+    """Client-Route der SPA (frontend/src/App.tsx). Ohne diese Regel liefert
+    Flask ein nacktes 404, sobald ein Gast die Event-Seite neu laedt oder den
+    Link teilt — der React-Router bekommt den Pfad dann nie zu sehen."""
+    if _spa_enabled():
+        return send_file(SPA_INDEX)
+    return _no_spa_response()
+
+
 @app.route("/assets/<path:fname>")
 def spa_assets(fname: str):
     if not _spa_enabled():
@@ -541,12 +552,17 @@ def api_delete(event: str, filename: str):
     except Exception as exc:
         logger.error("Foto löschen: %s", exc)
         return jsonify(ok=False, error="Löschen fehlgeschlagen"), 500
-    thumb_path = os.path.join(_thumb_dir(), event, filename)
-    if os.path.exists(thumb_path):
+    # Thumbnail UND Mid-Size-Preview mit entfernen. Ohne die Preview liefert
+    # /preview/<event>/<file> das geloeschte Foto weiter in 1280px aus — und
+    # genau die URL rendert die Detail-Ansicht (PhotoView.tsx).
+    for derived in (os.path.join(_thumb_dir(), event, filename),
+                    os.path.join(_preview_dir(), event, filename)):
         try:
-            os.remove(thumb_path)
-        except OSError:
+            os.remove(derived)
+        except FileNotFoundError:
             pass
+        except OSError as exc:
+            logger.warning("Abgeleitete Datei '%s' nicht entfernt: %s", derived, exc)
     # Falls Event-Ordner jetzt leer ist, entfernen
     ev_dir = os.path.join(_pic_dir(), event)
     try:
@@ -556,6 +572,25 @@ def api_delete(event: str, filename: str):
         pass
     logger.info("Foto gelöscht: %s/%s", event, filename)
     return jsonify(ok=True)
+
+
+@app.errorhandler(404)
+def spa_fallback(err):
+    """Netz fuer weitere Client-Routen: unbekannte GET-Pfade an die SPA geben.
+
+    Bewusst eng: nur GET, nie unter /api/ (dort muss ein 404 ein 404 bleiben,
+    sonst bekommt fetch() HTML statt JSON), und nichts mit Datei-Endung —
+    ein fehlendes Bild soll weiter sauber 404en statt index.html zu liefern.
+    """
+    path = request.path
+    if path.startswith("/api/"):
+        # JSON statt Flasks HTML-404 — api.ts liest im Fehlerfall res.json().
+        return jsonify(ok=False, error="Not Found"), 404
+    if (request.method == "GET"
+            and "." not in path.rsplit("/", 1)[-1]
+            and _spa_enabled()):
+        return send_file(SPA_INDEX)
+    return err
 
 
 # ── Admin-SPA-Catch-all ────────────────────────────────────────────────────────
@@ -725,6 +760,10 @@ def api_admin_config():
             "theme":              dict(config.cfg.get("theme") or {}),
             "instagram_url":      config.cfg.get("instagram_url", ""),
             "booking_url":        config.cfg.get("booking_url", ""),
+            "print_enabled":      bool(config.cfg.get("print_enabled", True)),
+            "printer_name":       config.cfg.get("printer_name", ""),
+            "print_copies":       int(config.cfg.get("print_copies", 1)),
+            "print_mode":         config.cfg.get("print_mode", "auto"),
             "role":               role,
         }
         if is_admin:
@@ -744,6 +783,21 @@ def api_admin_config():
     except (ValueError, TypeError):
         countdown = config.cfg["countdown_duration"]
 
+    # WLAN serverseitig pruefen. Die Client-Pruefung in AdminWifi.tsx laesst
+    # sich per direktem POST umgehen — und ein zu kurzes Passwort faellt sonst
+    # erst beim naechsten Boot auf, wenn hotspot.start() den AP verweigert und
+    # niemand mehr ins Netz kommt.
+    new_ssid = (data.get("wifi_ssid") or config.cfg["wifi_ssid"]).strip()
+    new_pw   = data.get("wifi_password", config.cfg["wifi_password"]) or ""
+    if not 1 <= len(new_ssid.encode("utf-8")) <= 32:
+        return jsonify(ok=False,
+                       error="WLAN-Name muss 1–32 Zeichen lang sein"), 400
+    if not 8 <= len(new_pw) <= 63:
+        return jsonify(ok=False,
+                       error="WLAN-Passwort muss 8–63 Zeichen lang sein (WPA2)"), 400
+    wifi_changed = (new_ssid != config.cfg.get("wifi_ssid")
+                    or new_pw != config.cfg.get("wifi_password"))
+
     # Hinweis: instagram_url + booking_url sind Owner-Settings — werden vom
     # Box-Besitzer direkt in config.json gepflegt und nie über die Admin-API
     # geschrieben, damit Mieter sie nicht überschreiben können.
@@ -751,8 +805,8 @@ def api_admin_config():
         "event_name":         (data.get("event_name") or config.cfg["event_name"]).strip(),
         "subtitle":           str(data.get("subtitle", config.cfg.get("subtitle", ""))).strip()[:80],
         "countdown_duration": countdown,
-        "wifi_ssid":          (data.get("wifi_ssid")  or config.cfg["wifi_ssid"]).strip(),
-        "wifi_password":      data.get("wifi_password", config.cfg["wifi_password"]) or "",
+        "wifi_ssid":          new_ssid,
+        "wifi_password":      new_pw,
     })
 
     # Theme: Hex-Strings + panel_alpha. Ungültige Werte werden ignoriert,
@@ -794,8 +848,92 @@ def api_admin_config():
                                error="PIN muss 4–12 Zeichen lang sein"), 400
             config.cfg[pin_key] = new_pin
 
+    # Druckeinstellungen: admin-only. Der Drucker gehoert dem Box-Besitzer,
+    # ein Mieter soll ihn nicht umstellen koennen.
+    if is_admin:
+        if "print_enabled" in data:
+            config.cfg["print_enabled"] = bool(data.get("print_enabled"))
+        if "printer_name" in data:
+            config.cfg["printer_name"] = str(data.get("printer_name") or "").strip()[:128]
+        if "print_copies" in data:
+            try:
+                config.cfg["print_copies"] = max(1, min(9, int(data.get("print_copies"))))
+            except (TypeError, ValueError):
+                pass
+        if "print_mode" in data:
+            mode = str(data.get("print_mode") or "auto").lower()
+            if mode in ("auto", "cover", "fit"):
+                config.cfg["print_mode"] = mode
+        # Zustand sofort neu ermitteln, damit die Oberflaeche nicht den alten
+        # Cache-Wert zeigt und der Result-Screen den Knopf richtig setzt.
+        try:
+            import printing
+            printing.refresh_status(config.cfg)
+        except Exception as exc:
+            logger.warning("Druckerstatus nach Konfigwechsel: %s", exc)
+
     config.save_config(config.cfg)
-    return jsonify(ok=True)
+
+    # Geaenderte WLAN-Daten muessen in den laufenden AP. Ohne das zeigte der
+    # Boxschirm sofort die neue SSID (ui.py laedt die Config sekuendlich neu),
+    # waehrend der AP weiter die alte sendete — die angezeigten Zugangsdaten
+    # waren schlicht falsch und niemand kam rein.
+    restarting = wifi_changed and _restart_hotspot_async()
+    return jsonify(ok=True, wifi_restarting=restarting)
+
+
+def _restart_hotspot_async() -> bool:
+    """Startet den Hotspot im Hintergrund mit den neuen Zugangsdaten neu.
+
+    Im Hintergrund, weil nmcli mehrere Sekunden braucht und der Browser des
+    Admins sonst in einen Timeout liefe — die Antwort muss RAUS, bevor der AP
+    faellt, sonst sieht der Admin nur einen Verbindungsabbruch ohne Erklaerung.
+    """
+    if not _bind_all:
+        # Kein Hotspot-Betrieb (Setup per --no-hotspot): nichts neu zu starten.
+        return False
+    try:
+        import hotspot
+    except ImportError:
+        return False
+
+    def _worker():
+        try:
+            # Kurz warten, damit die HTTP-Antwort den Client sicher erreicht,
+            # bevor ihm das WLAN unter den Fuessen weggezogen wird.
+            time.sleep(1.5)
+            logger.info("WLAN geändert — Hotspot wird neu gestartet")
+            hotspot.stop()
+            if hotspot.start():
+                logger.info("Hotspot mit neuen Zugangsdaten aktiv")
+            else:
+                logger.error("Hotspot-Neustart fehlgeschlagen — alte Verbindung "
+                             "ist weg, Box braucht ggf. einen Neustart")
+        except Exception as exc:
+            logger.error("Hotspot-Neustart: %s", exc, exc_info=True)
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return True
+
+
+@app.route("/api/admin/printers")
+@_api_admin_required
+def api_admin_printers():
+    """Verfuegbare CUPS-Drucker + aktueller Zustand fuer die Admin-Oberflaeche."""
+    try:
+        import printing
+        return jsonify(ok=True,
+                       printers=printing.list_printers(),
+                       default=printing.default_printer(),
+                       status=printing.refresh_status(config.cfg))
+    except Exception as exc:
+        logger.error("Druckerliste: %s", exc, exc_info=True)
+        # Bewusst 200: die Admin-Seite soll "kein Drucksystem" anzeigen
+        # koennen, statt in den generischen Fehler-Toast zu laufen.
+        return jsonify(ok=False, error="Drucksystem nicht erreichbar",
+                       printers=[], default=None,
+                       status={"available": False, "printer": None,
+                               "message": "Drucksystem nicht erreichbar"}), 200
 
 
 _ALLOWED_LOGO_FORMATS = {"PNG", "JPEG", "GIF", "WEBP", "BMP"}
@@ -949,6 +1087,31 @@ def _can_bind(host: str, port: int) -> bool:
         s.close()
 
 
+_bind_all: Optional[bool] = None
+
+
+def set_bind_all(value: bool):
+    """Legt fest ob der Galerie-Server an alle Interfaces bindet.
+
+    main.py ruft das VOR preflight() mit dem *effektiven* Hotspot-Zustand auf
+    (config-Flag UND nicht per --no-hotspot unterdrueckt). Ohne diesen Aufruf
+    faellt _default_host() auf das reine Config-Flag zurueck, damit
+    Standalone-Starts sich verhalten wie bisher.
+    """
+    global _bind_all
+    _bind_all = bool(value)
+
+
+def _default_host() -> str:
+    """0.0.0.0 nur wenn der Hotspot wirklich laufen soll.
+
+    Sonst 127.0.0.1 — im Heim-WLAN (Setup-Betrieb per --no-hotspot) waere die
+    Galerie samt Admin-Panel sonst ungewollt fuer das ganze Netz offen.
+    """
+    want = _bind_all if _bind_all is not None else config.cfg.get("hotspot_enabled")
+    return "0.0.0.0" if want else "127.0.0.1"
+
+
 def preflight() -> int:
     """Prüft synchron ob der konfigurierte Port gebunden werden kann.
 
@@ -963,7 +1126,7 @@ def preflight() -> int:
 
     Rückgabe: der tatsächlich nutzbare Port.
     """
-    host = "0.0.0.0" if config.cfg.get("hotspot_enabled") else "127.0.0.1"
+    host = _default_host()
     port = config.cfg.get("gallery_port", 80)
     if _can_bind(host, port):
         return port
@@ -998,12 +1161,17 @@ def run(host: Optional[str] = None, port: Optional[int] = None):
     """
     global _running
     if host is None:
-        host = "0.0.0.0" if config.cfg.get("hotspot_enabled") else "127.0.0.1"
+        host = _default_host()
     port = port or config.cfg["gallery_port"]
 
     log_dir = os.path.join(config.BASE_DIR, "logs")
     os.makedirs(log_dir, exist_ok=True)
-    fh = logging.FileHandler(os.path.join(log_dir, "gallery.log"))
+    # Rotierend statt unbegrenzt: bei 40 Gaesten mit 8-Sekunden-Polling
+    # schreibt werkzeug sonst ueber einen Abend hunderte MB auf die SD-Karte.
+    # 5 MB x 3 reicht zur Fehlersuche und deckelt bei 20 MB.
+    fh = RotatingFileHandler(os.path.join(log_dir, "gallery.log"),
+                             maxBytes=5 * 1024 * 1024, backupCount=3,
+                             encoding="utf-8")
     fh.setLevel(logging.INFO)
     logging.getLogger("werkzeug").addHandler(fh)
 
