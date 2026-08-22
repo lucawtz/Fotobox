@@ -11,9 +11,45 @@ import cv2
 import pygame
 import pygame.gfxdraw
 
+import display_env
+
 logger = logging.getLogger(__name__)
 
 W, H = 1920, 1080
+
+# ── Action-Buttons: Geometrie + Hit-Test ───────────────────────────────────────
+# Bewusst modulweit statt als UI-Methode: so laesst sich der Hit-Test fuer
+# Klick/Tap ohne initialisiertes Display testen (tests/test_actions.py).
+
+def action_rects(cfg: dict) -> list:
+    """Position + Rect jedes konfigurierten Action-Buttons.
+
+    Buttons werden vertikal gestapelt rechts angeordnet, mittig zur Höhe der
+    Live-View, damit sie auf Augenhöhe der Vorschau sitzen.
+    """
+    actions = cfg.get("actions") or []
+    if not actions:
+        return []
+    n = len(actions)
+    total_h = n * ACTION_H + (n - 1) * ACTION_GAP
+
+    live = cfg.get("live_view_rect", [440, 600, 1040, 450])
+    center_y = live[1] + live[3] // 2
+    y0 = max(80, center_y - total_h // 2)
+
+    return [(action,
+             pygame.Rect(ACTION_X, y0 + i * (ACTION_H + ACTION_GAP),
+                         ACTION_W, ACTION_H))
+            for i, action in enumerate(actions)]
+
+
+def action_at(cfg: dict, pos) -> Optional[dict]:
+    """Welcher Action-Button liegt unter `pos`? None wenn keiner getroffen ist."""
+    for action, rect in action_rects(cfg):
+        if rect.collidepoint(pos):
+            return action
+    return None
+
 
 # Fallback-Farben — werden verwendet wenn das Theme im config.json fehlt
 # oder ungültig ist. Entsprechen dem Default-Look (Gold/Dunkel).
@@ -198,11 +234,82 @@ class _LiveReader:
 class UI:
     """Pygame-UI mit State-Machine für Homescreen, Countdown, Result und Slideshow."""
 
+    # Wie lange der Mauszeiger nach der letzten Bewegung sichtbar bleibt.
+    _CURSOR_IDLE_S = 3.0
+
+    @staticmethod
+    def _scaling_flag() -> int:
+        """pygame.SCALED, falls der Schirm W x H nicht exakt kann — sonst 0.
+
+        Ohne das nimmt SDL bei FULLSCREEN einfach den nächstbesten Modus und
+        liefert eine Surface dieser Größe: auf einem MacBook z.B. 1920x1200.
+        Das gesamte Layout hängt aber an den Konstanten W/H — alles, was
+        unten verankert ist (WLAN-Box, Status-Bar, Result-QR), säße dann
+        120 px zu hoch. SCALED garantiert die Wunschgröße und skaliert
+        selbst auf den Schirm.
+
+        Die Entscheidung faellt bewusst *vor* dem set_mode: ein zweiter
+        set_mode-Aufruf nach einem bereits gesetzten Fullscreen-Modus haengt
+        sich auf macOS weg, ein Nachkorrigieren scheidet also aus.
+
+        Muss nach pygame.display.init() laufen — list_modes() braucht einen
+        initialisierten Treiber.
+        """
+        try:
+            modes = pygame.display.list_modes()
+        except pygame.error as exc:
+            logger.debug("Display: list_modes() nicht verfuegbar: %s", exc)
+            return 0
+        # -1 heisst "jede Groesse geht" (z.B. im Fenstermodus-Treiber).
+        if modes == -1 or not modes or (W, H) in modes:
+            return 0
+        logger.info("Display: %dx%d ist kein nativer Modus (verfuegbar: %s…) "
+                    "— SCALED aktiv", W, H, modes[:3])
+        return pygame.SCALED
+
+    @staticmethod
+    def _open_display():
+        """Oeffnet das Vollbild — ueber Wayland oder X11, je nachdem was laeuft.
+
+        Frueher stand hier ein blankes set_mode(), abhaengig vom fest in
+        fotobox.service gesetzten DISPLAY=:0. Auf einem Bookworm mit
+        Wayland-Compositor und ohne XWayland blieb der Schirm damit schwarz.
+        Jetzt liefert display_env.prepare() eine Treiber-Reihenfolge, die
+        hier der Reihe nach durchprobiert wird.
+        """
+        drivers = display_env.prepare()
+        last_exc = None
+        for driver in drivers:
+            os.environ["SDL_VIDEODRIVER"] = driver
+            try:
+                pygame.display.quit()      # evtl. Rest vom Fehlversuch davor
+                pygame.display.init()
+                flags = pygame.FULLSCREEN | UI._scaling_flag()
+                screen = pygame.display.set_mode((W, H), flags)
+                if screen.get_size() != (W, H):
+                    # Sollte nach _scaling_flag() nicht mehr vorkommen — wenn
+                    # doch, sitzt das halbe Layout falsch und man sucht sonst
+                    # lange nach dem Grund.
+                    logger.warning(
+                        "Display: Surface ist %s statt %dx%d — Layout sitzt "
+                        "nicht bündig", screen.get_size(), W, H)
+                logger.info("Display: SDL-Treiber '%s' aktiv (%dx%d%s)",
+                            driver, W, H,
+                            ", skaliert" if flags & pygame.SCALED else "")
+                return screen
+            except pygame.error as exc:
+                logger.warning("Display: Treiber '%s' scheitert (%s)", driver, exc)
+                last_exc = exc
+        raise RuntimeError(
+            f"Kein nutzbarer SDL-Videotreiber (probiert: {', '.join(drivers)}). "
+            f"Letzter Fehler: {last_exc}"
+        )
+
     def __init__(self, cfg: dict, capture_device: int):
         self._cfg = cfg
 
         pygame.init()
-        self._screen = pygame.display.set_mode((W, H), pygame.FULLSCREEN)
+        self._screen = self._open_display()
         pygame.display.set_caption("Fotobox")
         pygame.mouse.set_visible(False)
 
@@ -287,15 +394,54 @@ class UI:
         self._crop_last_ms: int = 0
         self._CROP_REFRESH_MS = 2000
 
+        # Klick/Tap auf einen Action-Button. Auf der Box haengt keine Maus,
+        # das bleibt dort also totes Kapital — auf dem Entwicklungs-Laptop
+        # ist es der einzige Weg, die Buttons ohne GPIO auszuloesen.
+        self._pending_click: Optional[tuple] = None
+        self._cursor_until: float = 0.0
+
     # ── Öffentliche API ────────────────────────────────────────────────────────
 
     def check_quit(self) -> bool:
+        """Pumpt die Event-Queue und meldet einen Beenden-Wunsch.
+
+        Nebenbei werden Maus-/Touch-Events eingesammelt: `pygame.event.get()`
+        leert die Queue, wer hier nicht hinschaut sieht einen Klick nie
+        wieder. Muss deshalb jeden Frame laufen — tut es in main.py auch.
+        """
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 return True
+            if event.type == pygame.MOUSEMOTION:
+                self._cursor_until = time.monotonic() + self._CURSOR_IDLE_S
+                pygame.mouse.set_visible(True)
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                self._pending_click = event.pos
+            elif event.type == pygame.FINGERDOWN:
+                # Touch liefert normalisierte Koordinaten (0..1).
+                self._pending_click = (int(event.x * W), int(event.y * H))
+
+        # Cursor wieder ausblenden, sobald die Maus ruht — sonst steht auf
+        # einem angeschlossenen Testmonitor dauerhaft ein Pfeil im Bild.
+        if self._cursor_until and time.monotonic() > self._cursor_until:
+            self._cursor_until = 0.0
+            pygame.mouse.set_visible(False)
         return False
+
+    def take_click_action(self) -> Optional[dict]:
+        """Konsumiert einen anstehenden Klick/Tap und liefert die getroffene
+        Action aus `config["actions"]` (oder None).
+
+        Wird in main.py in JEDEM Frame aufgerufen, egal in welchem State:
+        sonst bliebe ein Klick auf dem Result-Screen liegen und wuerde
+        verspaetet eine Aufnahme starten, sobald der Homescreen wieder da ist.
+        """
+        pos, self._pending_click = self._pending_click, None
+        if pos is None:
+            return None
+        return action_at(self._cfg, pos)
 
     @staticmethod
     def _mtime(path: str) -> float:
@@ -459,24 +605,7 @@ class UI:
         return (y0, y1, x0, x1)
 
     def _action_rects(self):
-        """Berechnet Position+Rect für jeden konfigurierten Action-Button.
-        Buttons werden vertikal gestapelt rechts angeordnet, mittig zur
-        Höhe der Live-View, damit sie auf Augenhöhe der Vorschau sitzen.
-        """
-        actions = self._cfg.get("actions") or []
-        if not actions:
-            return []
-        n = len(actions)
-        total_h = n * ACTION_H + (n - 1) * ACTION_GAP
-
-        live = self._cfg.get("live_view_rect", [440, 600, 1040, 450])
-        center_y = live[1] + live[3] // 2
-        y0 = max(80, center_y - total_h // 2)
-
-        return [(action,
-                 pygame.Rect(ACTION_X, y0 + i * (ACTION_H + ACTION_GAP),
-                             ACTION_W, ACTION_H))
-                for i, action in enumerate(actions)]
+        return action_rects(self._cfg)
 
     def _draw_action_buttons(self):
         """Action-Buttons mit pro-Action Akzentfarbe und modernem Look:
