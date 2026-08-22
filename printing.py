@@ -58,33 +58,75 @@ def _run(args: list, timeout: float = 8.0) -> Optional[subprocess.CompletedProce
         return None
 
 
-def list_printers() -> list[dict]:
-    """Alle CUPS-Drucker mit Zustand. Leere Liste = keiner eingerichtet."""
+def _printer_states() -> dict:
+    """Zustand je Drucker aus `lpstat -p`.
+
+    Nur auswertbar, wenn CUPS englisch antwortet — die Zeile ist uebersetzt.
+    Leeres dict heisst deshalb "Zustand unbekannt", nicht "kein Drucker".
+    """
     proc = _run(["lpstat", "-p"])
     if proc is None or proc.returncode != 0:
-        return []
-    out = []
+        return {}
+    states = {}
     for line in proc.stdout.splitlines():
         # "printer Selphy is idle.  enabled since ..." / "... is disabled since"
         m = re.match(r"printer\s+(\S+)\s+is\s+(\S+?)\.?\s", line + " ")
-        if not m:
-            continue
-        name, state = m.group(1), m.group(2).lower()
+        if m:
+            states[m.group(1)] = (m.group(2).lower(), line.strip())
+    return states
+
+
+def list_printers() -> list[dict]:
+    """Alle CUPS-Drucker mit Zustand. Leere Liste = keiner eingerichtet.
+
+    Die Namen kommen aus `lpstat -e` — eine nackte Zieladresse pro Zeile, ohne
+    uebersetzbare Prosa. `lpstat -p` wird von CUPS dagegen lokalisiert: auf
+    einem deutschen System steht dort 'Drucker „Selphy" ist inaktiv', woran der
+    englische Parser scheitert. Das Ergebnis war eine leere Liste, damit
+    `available() == False`, damit kein Druck-Knopf in der UI (`print_ready`) —
+    und die irrefuehrende Meldung "Kein Drucker in CUPS eingerichtet", obwohl
+    einer angeschlossen war.
+    """
+    states = _printer_states()
+
+    names = []
+    proc = _run(["lpstat", "-e"])
+    if proc is not None and proc.returncode == 0:
+        names = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    if not names:
+        # Aeltere CUPS-Versionen ohne `-e`: dann bleibt nur der englische Parser.
+        names = list(states)
+
+    out = []
+    for name in names:
+        state, line = states.get(name, ("unknown", ""))
         out.append({
             "name":  name,
-            "state": state,                      # idle | printing | disabled
-            "ready": state in ("idle", "printing"),
-            "line":  line.strip(),
+            "state": state,                      # idle | printing | disabled | unknown
+            # 'unknown' heisst "lpstat antwortet nicht auf Englisch", nicht
+            # "Drucker kaputt". Lieber den Knopf anbieten und einen echten
+            # lp-Fehler melden, als das Drucken stumm zu verstecken.
+            "ready": state in ("idle", "printing", "unknown"),
+            "line":  line or name,
         })
     return out
 
 
 def default_printer() -> Optional[str]:
+    """Standarddrucker laut CUPS, oder None.
+
+    Ebenfalls uebersetzt: "system default destination: Selphy" heisst auf
+    Deutsch "System-Standardzielort: Selphy". Ein Regex auf das englische
+    Wort lieferte dort None — resolve_printer() fiel dann auf den
+    erstbesten Drucker zurueck und ignorierte den eingestellten Standard.
+    Deshalb wird nur auf den Doppelpunkt gematcht; den gibt es genau dann,
+    wenn ueberhaupt ein Standard gesetzt ist ("no system default
+    destination" / "Kein System-Standardzielort" haben keinen).
+    """
     proc = _run(["lpstat", "-d"])
     if proc is None or proc.returncode != 0:
         return None
-    # "system default destination: Selphy"  /  "no system default destination"
-    m = re.search(r"destination:\s*(\S+)", proc.stdout)
+    m = re.search(r":\s*(\S+)\s*$", proc.stdout.strip())
     return m.group(1) if m else None
 
 
@@ -149,16 +191,29 @@ def available(cfg: dict) -> bool:
 
 # ── Bildaufbereitung ───────────────────────────────────────────────────────────
 
-def _paper_aspect(cfg: dict) -> float:
-    """Seitenverhältnis des Papiers (Breite/Höhe) im Querformat."""
+def _paper_mm(cfg: dict) -> tuple[float, float]:
+    """Papierformat als (lange Seite, kurze Seite) in mm, immer plausibel.
+
+    Einzige Quelle fuer die Masse — prepare() hatte frueher eine zweite,
+    ungepruefte Ableitung derselben Werte und ist bei print_size_mm=[0, 0]
+    in eine Division durch null gelaufen.
+    """
     size = cfg.get("print_size_mm") or [148, 100]
     try:
         w, h = float(size[0]), float(size[1])
-        if w <= 0 or h <= 0:
-            raise ValueError
-    except (TypeError, ValueError, IndexError):
+        if not (w > 0 and h > 0):
+            raise ValueError("Papierformat muss positiv sein")
+    except (TypeError, ValueError, IndexError) as exc:
+        logger.warning("Ungueltiges print_size_mm %r (%s) — nutze 148x100 mm",
+                       size, exc)
         w, h = 148.0, 100.0
-    return max(w, h) / min(w, h)
+    return max(w, h), min(w, h)
+
+
+def _paper_aspect(cfg: dict) -> float:
+    """Seitenverhältnis des Papiers (Breite/Höhe) im Querformat."""
+    long_mm, short_mm = _paper_mm(cfg)
+    return long_mm / short_mm
 
 
 def prepare(path: str, cfg: dict) -> str:
@@ -182,9 +237,14 @@ def prepare(path: str, cfg: dict) -> str:
 
     mode = (cfg.get("print_mode") or "auto").lower()
     target = _paper_aspect(cfg)
-    dpi = int(cfg.get("print_dpi", 300) or 300)
-    size_mm = cfg.get("print_size_mm") or [148, 100]
-    long_mm, short_mm = max(size_mm), min(size_mm)
+    try:
+        dpi = int(cfg.get("print_dpi", 300) or 300)
+        if dpi <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        logger.warning("Ungueltiges print_dpi %r — nutze 300", cfg.get("print_dpi"))
+        dpi = 300
+    long_mm, short_mm = _paper_mm(cfg)
 
     try:
         with Image.open(path) as img:
