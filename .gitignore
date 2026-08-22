@@ -29,3 +29,8 @@ venv/
 # Layout/logo.png). Das ist Mieter-Data und gehoert nicht ins Repo.
 # Layout/logo_default.png (Box-Besitzer-Standard) bleibt bewusst trackbar.
 Layout/logo.png
+
+# Visuelles Test-Gerüst für Admin-Seiten (nicht im Vite-Entry, nicht im Build).
+# Enthält einen fest eingebauten Admin-PIN samt Auto-Login — gehört nicht ins Repo.
+frontend/dev-check.html
+frontend/src/dev-check.tsx

@@ -7,6 +7,8 @@ import {
   Snackbar,
   Alert,
   CircularProgress,
+  Collapse,
+  ButtonBase,
 } from "@mui/material";
 import ImageRoundedIcon from "@mui/icons-material/ImageRounded";
 import PaletteRoundedIcon from "@mui/icons-material/PaletteRounded";
@@ -14,6 +16,7 @@ import CloudUploadRoundedIcon from "@mui/icons-material/CloudUploadRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
+import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
 import { api, ThemeColors } from "../../api";
 import SettingsCard from "./SettingsCard";
 import ThemePreview from "./ThemePreview";
@@ -65,6 +68,7 @@ export default function AdminBranding() {
   const [theme, setTheme] = useState<Record<string, string>>(DEFAULT_THEME);
   const [savedTheme, setSavedTheme] = useState<Record<string, string>>(DEFAULT_THEME);
   const [themeBusy, setThemeBusy] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(true);
 
   const [toast, setToast] = useState<{ severity: "success" | "error"; msg: string } | null>(null);
 
@@ -161,25 +165,6 @@ export default function AdminBranding() {
             Logo und Farbschema des Homescreens
           </Typography>
         </Box>
-
-        <SettingsCard
-          icon={<VisibilityRoundedIcon />}
-          title="Vorschau"
-          description="So sieht der Box-Bildschirm mit den aktuellen Einstellungen aus — auf der Box selbst erst nach dem Speichern. Fotos, Live-Bild und QR-Codes sind Platzhalter."
-        >
-          <Box sx={{ maxWidth: 620, mx: "auto" }}>
-            <ThemePreview
-              theme={theme}
-              eventName={preview.eventName}
-              subtitle={preview.subtitle}
-              logoUrl={hasLogo ? previewUrl : null}
-              wifiSsid={preview.wifiSsid}
-              wifiPassword={preview.wifiPassword}
-              instagramUrl={preview.instagramUrl}
-              bookingUrl={preview.bookingUrl}
-            />
-          </Box>
-        </SettingsCard>
 
         <SettingsCard
           icon={<ImageRoundedIcon />}
@@ -368,6 +353,71 @@ export default function AdminBranding() {
                 </Box>
               );
             })}
+          </Box>
+
+          {/* Sitzt bewusst zwischen Presets und Farbwaehlern: beide Regler
+              liegen damit direkt an der Vorschau, egal ob man ein Preset
+              anklickt (darueber) oder eine Einzelfarbe zieht (darunter) —
+              kein Hin- und Herscrollen. */}
+          <Box
+            sx={{
+              mb: 2.5,
+              borderRadius: 2,
+              border: "1px solid",
+              borderColor: "divider",
+              bgcolor: "grey.50",
+              overflow: "hidden",
+            }}
+          >
+            <ButtonBase
+              onClick={() => setPreviewOpen((o) => !o)}
+              aria-expanded={previewOpen}
+              sx={{
+                width: "100%",
+                px: 1.5,
+                py: 1.25,
+                gap: 1.25,
+                justifyContent: "flex-start",
+                color: "text.primary",
+                "&:hover": { bgcolor: "grey.100" },
+              }}
+            >
+              <VisibilityRoundedIcon fontSize="small" sx={{ color: "primary.main" }} />
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                Vorschau
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ flex: 1, textAlign: "left", display: { xs: "none", sm: "block" } }}
+              >
+                So sieht der Box-Bildschirm aus — Fotos, Live-Bild und QR-Codes
+                sind Platzhalter
+              </Typography>
+              <ExpandMoreRoundedIcon
+                sx={{
+                  color: "text.secondary",
+                  transition: "transform .2s",
+                  transform: previewOpen ? "rotate(180deg)" : "none",
+                }}
+              />
+            </ButtonBase>
+            <Collapse in={previewOpen} unmountOnExit>
+              <Box sx={{ px: 1.5, pb: 1.5 }}>
+                <Box sx={{ maxWidth: 560, mx: "auto" }}>
+                  <ThemePreview
+                    theme={theme}
+                    eventName={preview.eventName}
+                    subtitle={preview.subtitle}
+                    logoUrl={hasLogo ? previewUrl : null}
+                    wifiSsid={preview.wifiSsid}
+                    wifiPassword={preview.wifiPassword}
+                    instagramUrl={preview.instagramUrl}
+                    bookingUrl={preview.bookingUrl}
+                  />
+                </Box>
+              </Box>
+            </Collapse>
           </Box>
 
           <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 1.5 }}>
