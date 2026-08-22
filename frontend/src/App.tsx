@@ -12,6 +12,7 @@ const AdminOverview    = lazy(() => import("./pages/admin/AdminOverview"));
 const AdminEvent       = lazy(() => import("./pages/admin/AdminEvent"));
 const AdminWifi        = lazy(() => import("./pages/admin/AdminWifi"));
 const AdminBranding    = lazy(() => import("./pages/admin/AdminBranding"));
+const AdminPrint       = lazy(() => import("./pages/admin/AdminPrint"));
 const AdminMaintenance = lazy(() => import("./pages/admin/AdminMaintenance"));
 const RequireAuth      = lazy(() => import("./pages/admin/RequireAuth"));
 
@@ -44,6 +45,16 @@ export default function App() {
         <Route path="event"     element={<Suspense fallback={null}><AdminEvent /></Suspense>} />
         <Route path="branding"  element={<Suspense fallback={null}><AdminBranding /></Suspense>} />
         <Route path="wifi"      element={<Suspense fallback={null}><AdminWifi /></Suspense>} />
+        <Route
+          path="print"
+          element={
+            <Suspense fallback={null}>
+              <RequireAuth requireAdmin>
+                <AdminPrint />
+              </RequireAuth>
+            </Suspense>
+          }
+        />
         <Route
           path="maintenance"
           element={

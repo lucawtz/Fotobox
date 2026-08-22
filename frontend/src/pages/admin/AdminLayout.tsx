@@ -23,6 +23,7 @@ import {
 import MenuRoundedIcon from "@mui/icons-material/MenuRounded";
 import DashboardRoundedIcon from "@mui/icons-material/DashboardRounded";
 import EventRoundedIcon from "@mui/icons-material/EventRounded";
+import PrintRoundedIcon from "@mui/icons-material/PrintRounded";
 import WifiRoundedIcon from "@mui/icons-material/WifiRounded";
 import ImageRoundedIcon from "@mui/icons-material/ImageRounded";
 import BuildRoundedIcon from "@mui/icons-material/BuildRounded";
@@ -45,6 +46,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/admin/event",       label: "Event",     icon: <EventRoundedIcon />     },
   { to: "/admin/branding",    label: "Design",    icon: <ImageRoundedIcon />     },
   { to: "/admin/wifi",        label: "WLAN",      icon: <WifiRoundedIcon />     },
+  { to: "/admin/print",       label: "Drucken",   icon: <PrintRoundedIcon />,    adminOnly: true },
   { to: "/admin/maintenance", label: "Wartung",   icon: <BuildRoundedIcon />,    adminOnly: true },
 ];
 

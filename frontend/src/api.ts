@@ -62,11 +62,31 @@ export interface AdminConfig {
   theme: ThemeColors;
   instagram_url: string;
   booking_url: string;
+  insecure_defaults?: string[];
+  print_enabled: boolean;
+  printer_name: string;
+  print_copies: number;
+  print_mode: "auto" | "cover" | "fit";
   // Nur Admin sieht diese Felder — Gastgeber bekommt sie nicht vom Server.
   wifi_ssid?: string;
   wifi_password?: string;
   admin_pin?: string;
   host_pin?: string;
+}
+
+export interface Printer {
+  name: string;
+  state: string;
+  ready: boolean;
+  line: string;
+}
+
+export interface PrinterInfo {
+  ok: boolean;
+  error?: string;
+  printers: Printer[];
+  default: string | null;
+  status: { available: boolean; printer: string | null; message: string };
 }
 
 export interface AdminStatus {
@@ -81,6 +101,30 @@ export interface AdminStatus {
 
 const FETCH_OPTS: RequestInit = { credentials: "include" };
 
+// Auf einem ausgelasteten 2,4-GHz-Hotspot (hotspot.py pinnt Band bg / Kanal 6)
+// bleibt eine Anfrage sonst endlos haengen und der Spinner dreht sich fuer
+// immer. Lieber ein klarer Fehler, den der Gast durch Neuladen loest.
+const TIMEOUT_MS = 12_000;
+const UPLOAD_TIMEOUT_MS = 60_000;   // Logo-Upload darf laenger brauchen
+
+/** fetch mit Zeitlimit. AbortController statt AbortSignal.timeout(), damit
+ *  auch aeltere Handy-Browser (Safari < 16) mitspielen. */
+const xfetch = async (url: string, opts: RequestInit = {},
+                      timeoutMs: number = TIMEOUT_MS): Promise<Response> => {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...FETCH_OPTS, ...opts, signal: ctl.signal });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new Error("Zeitüberschreitung — WLAN überlastet? Bitte neu laden.");
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const json = async <T,>(res: Response): Promise<T> => {
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
@@ -90,8 +134,7 @@ const json = async <T,>(res: Response): Promise<T> => {
   return res.json() as Promise<T>;
 };
 
-const postJson = (url: string, body: unknown) => fetch(url, {
-  ...FETCH_OPTS,
+const postJson = (url: string, body: unknown) => xfetch(url, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
@@ -102,12 +145,12 @@ const evPath = (p: Pick<Photo, "event" | "filename">) =>
 
 export const api = {
   list: (event?: string | null) =>
-    fetch("/api/photos" + (event ? `?event=${encodeURIComponent(event)}` : ""), FETCH_OPTS)
+    xfetch("/api/photos" + (event ? `?event=${encodeURIComponent(event)}` : ""))
       .then(json<PhotosResponse>),
   count: (event?: string | null) =>
-    fetch("/api/count" + (event ? `?event=${encodeURIComponent(event)}` : ""), FETCH_OPTS)
+    xfetch("/api/count" + (event ? `?event=${encodeURIComponent(event)}` : ""))
       .then(json<{ count: number }>),
-  events: () => fetch("/api/events", FETCH_OPTS).then(json<EventsResponse>),
+  events: () => xfetch("/api/events").then(json<EventsResponse>),
 
   thumbUrl:    (p: Pick<Photo, "event" | "filename">) => `/thumb/${evPath(p)}`,
   // Preview = 1280px JPEG mit Quality 80 — viel schneller über Hotspot als
@@ -122,8 +165,7 @@ export const api = {
   delete: async (p: Pick<Photo, "event" | "filename">, pin: string): Promise<DeleteResult> => {
     const fd = new FormData();
     fd.set("pin", pin);
-    const res = await fetch(`/api/delete/${evPath(p)}`, {
-      ...FETCH_OPTS,
+    const res = await xfetch(`/api/delete/${evPath(p)}`, {
       method: "POST",
       body: fd,
     });
@@ -131,20 +173,22 @@ export const api = {
   },
 
   admin: {
-    me:     () => fetch("/api/admin/me", FETCH_OPTS).then(json<{ authenticated: boolean; role: AdminRole | null }>),
+    me:     () => xfetch("/api/admin/me").then(json<{ authenticated: boolean; role: AdminRole | null }>),
     login:  (pin: string) => postJson("/api/admin/login", { pin }).then(json<{ ok: boolean; error?: string; role?: AdminRole }>),
-    logout: () => fetch("/api/admin/logout", { ...FETCH_OPTS, method: "POST" }).then(json<{ ok: boolean }>),
-    status: () => fetch("/api/admin/status", FETCH_OPTS).then(json<AdminStatus>),
+    logout: () => xfetch("/api/admin/logout", { method: "POST" }).then(json<{ ok: boolean }>),
+    status: () => xfetch("/api/admin/status").then(json<AdminStatus>),
     config: {
-      get: () => fetch("/api/admin/config", FETCH_OPTS).then(json<AdminConfig>),
+      get: () => xfetch("/api/admin/config").then(json<AdminConfig>),
       save: (data: Partial<AdminConfig>) =>
         postJson("/api/admin/config", data)
           .then(json<{ ok: boolean; wifi_restarting?: boolean }>),
     },
+    printers: () =>
+      xfetch("/api/admin/printers").then(json<PrinterInfo>),
     uploadLogo: async (file: File) => {
       const fd = new FormData();
       fd.set("logo", file);
-      const res = await fetch("/api/admin/logo", { ...FETCH_OPTS, method: "POST", body: fd });
+      const res = await xfetch("/api/admin/logo", { method: "POST", body: fd }, UPLOAD_TIMEOUT_MS);
       return json<{ ok: boolean; error?: string }>(res);
     },
     reset: (confirm: string) =>

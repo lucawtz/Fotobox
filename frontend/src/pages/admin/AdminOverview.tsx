@@ -9,6 +9,7 @@ import {
   Button,
   Skeleton,
   Tooltip,
+  Alert,
 } from "@mui/material";
 import PhotoLibraryRoundedIcon from "@mui/icons-material/PhotoLibraryRounded";
 import StorageRoundedIcon from "@mui/icons-material/StorageRounded";
@@ -111,12 +112,21 @@ export default function AdminOverview() {
   const [status, setStatus] = useState<AdminStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [insecure, setInsecure] = useState<string[]>([]);
 
   const load = async (silent = false) => {
     if (!silent) setRefreshing(true);
     try {
       const s = await api.admin.status();
       setStatus(s);
+      // Nicht im 15-Sekunden-Poll: nur beim Oeffnen der Seite und beim
+      // manuellen Aktualisieren. Die Config aendert sich nicht im Takt.
+      if (!silent) {
+        try {
+          const c = await api.admin.config.get();
+          setInsecure(c.insecure_defaults ?? []);
+        } catch { /* Gastgeber-Rolle darf das evtl. nicht — kein Drama */ }
+      }
     } catch { /* ignore */ }
     finally {
       setLoading(false);
@@ -137,6 +147,14 @@ export default function AdminOverview() {
 
   return (
     <Stack spacing={3}>
+      {insecure.length > 0 && (
+        <Alert severity="warning">
+          <strong>Noch auf Auslieferungszustand:</strong> {insecure.join(", ")}.
+          Der Admin-PIN gibt „alle Fotos löschen" frei — auf einem WLAN, in dem
+          jeder Gast steckt, sollte er nicht „1234" sein. Ändern unter{" "}
+          <strong>Event</strong> bzw. <strong>WLAN</strong>.
+        </Alert>
+      )}
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.5 }}>
         <Box sx={{ minWidth: 0 }}>
           <Typography variant="h5" sx={{ fontWeight: 500 }}>
