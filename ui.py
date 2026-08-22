@@ -104,6 +104,26 @@ SOCIAL_QR_PAD   = 16
 # eine Warnung im Log als ein huebscher, toter Code.
 SOCIAL_QR_MIN   = 104
 
+# ── Header-Grenzen ────────────────────────────────────────────────────────────
+# Untergrenzen, unter die _fit_text den Header NICHT senken darf. Darunter
+# liest der Gast aus 2 m Abstand nichts mehr — dann lieber mitten im Wort
+# umbrechen (_hard_wrap) als weiter schrumpfen.
+EVENT_MIN_PT = 22
+SUB_MIN_PT   = 16
+
+# Zeichenlimits fuer event_name / subtitle, gemessen bei genau diesen
+# Untergrenzen gegen SIDEBAR_W - 30 = 290 px:
+#
+#   Event-Name  22 pt fett, 2 Zeilen -> 51 Zeichen gemischt, 43 in Versalien
+#   Untertitel  16 pt,      3 Zeilen -> 65 Zeichen gemischt, 62 in Versalien
+#
+# Genommen ist jeweils der Versalien-Fall, abgerundet. Wer mehr eintippt,
+# bekommt keinen kleineren Text mehr, sondern einen harten Umbruch mit "…" —
+# deshalb schneidet der Galerie-Server hier ab und das Admin-Panel zeigt den
+# Zaehler. gallery_server._MAX_EVENT_NAME / _MAX_SUBTITLE spiegeln die Werte.
+EVENT_NAME_MAX_CHARS = 40
+SUBTITLE_MAX_CHARS   = 60
+
 # Polaroid-Renderer
 POLAROID_PAD_TOP = 18
 POLAROID_PAD_LR  = 18
@@ -296,6 +316,18 @@ class UI:
     # Wie lange der Mauszeiger nach der letzten Bewegung sichtbar bleibt.
     _CURSOR_IDLE_S = 3.0
 
+    # Die Status-Bar ist Aufbau-Information: Kamera, Speicher, Hotspot
+    # interessieren genau so lange, bis die Box steht. Danach ist sie nur
+    # noch ein Balken im Bild, deshalb blendet sie nach einer Minute aus.
+    #
+    # Zurueck holt sie eine Mausbewegung — dasselbe Signal, das ohnehin
+    # schon den Cursor einblendet. Bewusst nicht jeder Tastendruck: die
+    # Taster loest am Eventabend der Gast aus, und dann stuende die Bar den
+    # ganzen Abend. Die Maus hat nur, wer die Box aufbaut.
+    _STATUS_BAR_S    = 60.0
+    _STATUS_BAR_FADE = 1.0    # Sekunden Ausblendung, damit sie nicht springt
+    _status_bar_until = 0.0
+
     @staticmethod
     def _scaling_flag() -> int:
         """pygame.SCALED, falls der Schirm W x H nicht exakt kann — sonst 0.
@@ -487,6 +519,7 @@ class UI:
         # ist es der einzige Weg, die Buttons ohne GPIO auszuloesen.
         self._pending_click: Optional[tuple] = None
         self._cursor_until: float = 0.0
+        self._status_bar_until = time.monotonic() + self._STATUS_BAR_S
 
     # ── Öffentliche API ────────────────────────────────────────────────────────
 
@@ -503,7 +536,9 @@ class UI:
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 return True
             if event.type == pygame.MOUSEMOTION:
-                self._cursor_until = time.monotonic() + self._CURSOR_IDLE_S
+                now = time.monotonic()
+                self._cursor_until = now + self._CURSOR_IDLE_S
+                self._status_bar_until = now + self._STATUS_BAR_S
                 pygame.mouse.set_visible(True)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 self._pending_click = event.pos
@@ -908,12 +943,19 @@ class UI:
         `max_w` passen. None, wenn das mit dieser Schrift nicht aufgeht."""
         lines, cur = [], ""
         for word in text.split():
+            # Wortbreite VOR dem Umbruch pruefen, nicht erst wenn das Wort am
+            # Zeilenanfang steht. Frueher stand hier nur `if not cur` — ein zu
+            # breites Wort mitten im Text landete damit ungeprueft in `cur` und
+            # wurde als Zeile ausgegeben. _fit_text sah ein gueltiges Ergebnis
+            # und senkte die Punktgroesse nie: "Hochzeit Anna &
+            # Maximilian-Ferdinand" brach in eine 370 px breite Zeile um und
+            # lief aus der 290 px schmalen Sidebar ueber die Live-View.
+            if font.size(word)[0] > max_w:
+                return None
             probe = f"{cur} {word}".strip()
             if font.size(probe)[0] <= max_w:
                 cur = probe
                 continue
-            if not cur:
-                return None                  # ein einzelnes Wort ist zu breit
             lines.append(cur)
             cur = word
             if len(lines) == max_lines:
@@ -937,9 +979,39 @@ class UI:
             if lines:
                 return font, lines
             pt -= 1
+        # Untergrenze erreicht. Hier stand frueher `or [text]` — eine einzelne,
+        # beliebig breite Zeile. Bei einem deutschen Kompositum reicht das:
+        # "Betriebsversammlungsjubilaeum" ist selbst bei 13 pt noch 330 px
+        # breit und lief damit aus der Sidebar. Stattdessen hart umbrechen,
+        # notfalls mitten im Wort — abgeschnittener Text ist haesslich, Text
+        # ueber der Live-View ist kaputt.
         font = _font(min_pt, bold)
-        # Untergrenze erreicht: lieber eine zu breite Zeile als kein Text.
-        return font, self._wrap(text, font, max_w, max_lines) or [text]
+        return font, (self._wrap(text, font, max_w, max_lines)
+                      or self._hard_wrap(text, font, max_w, max_lines))
+
+    @staticmethod
+    def _hard_wrap(text: str, font: pygame.font.Font, max_w: int,
+                   max_lines: int) -> list:
+        """Wie _wrap, bricht aber auch innerhalb eines Wortes um und gibt
+        immer Zeilen zurueck. Was nicht mehr passt, endet mit '…'."""
+        lines, cur = [], ""
+        for word in text.split():
+            for ch in ((" " + word) if cur else word):
+                if font.size(cur + ch)[0] <= max_w:
+                    cur += ch
+                    continue
+                lines.append(cur)
+                if len(lines) == max_lines:
+                    # Letzte Zeile kuerzen, bis das Auslassungszeichen passt.
+                    last = lines[-1]
+                    while last and font.size(last + "…")[0] > max_w:
+                        last = last[:-1]
+                    lines[-1] = last + "…"
+                    return lines
+                cur = ch.lstrip()
+        if cur:
+            lines.append(cur)
+        return lines or [""]
 
     def _header_blocks(self) -> list:
         """[(Schrift, Zeilen, Farbe)] fuer Event-Name und Untertitel.
@@ -957,12 +1029,15 @@ class UI:
 
         max_w  = SIDEBAR_W - 30
         blocks = []
-        for text, pt, bold, color, max_lines in (
-                (name, self._f_event_pt, True,  self._theme["sidebar_text"], 2),
-                (sub,  self._f_sub_pt,   False, self._theme["sidebar_dim"],  3)):
+        for text, pt, min_pt, bold, color, max_lines in (
+                (name, self._f_event_pt, EVENT_MIN_PT, True,
+                 self._theme["sidebar_text"], 2),
+                (sub,  self._f_sub_pt,   SUB_MIN_PT,   False,
+                 self._theme["sidebar_dim"],  3)):
             if not text:
                 continue
-            font, lines = self._fit_text(text, pt, bold, max_w, max_lines)
+            font, lines = self._fit_text(text, pt, bold, max_w, max_lines,
+                                         min_pt=min_pt)
             blocks.append((font, lines, color))
         self._header_cache = (key, blocks)
         return blocks
@@ -971,7 +1046,10 @@ class UI:
     # Klassenattribute, damit auch Instanzen ohne __init__ sie haben.
     _f_event_pt       = 38
     _f_sub_pt         = 24
+    _f_medium_pt      = 46
+    _f_normal_pt      = 38
     _header_cache     = None
+    _social_cache     = None
     _HEADER_LINE_GAP  = 2     # zwischen umgebrochenen Zeilen eines Blocks
     _HEADER_BLOCK_GAP = 8     # zwischen Event-Name und Untertitel
 
@@ -1025,11 +1103,25 @@ class UI:
         """
         return self._f_small.get_height() + 10
 
+    def _status_bar_alpha(self) -> int:
+        """0..255 — 0 heisst: Bar ist abgelaufen und wird nicht gezeichnet."""
+        left = self._status_bar_until - time.monotonic()
+        if left <= 0:
+            return 0
+        if left >= self._STATUS_BAR_FADE:
+            return 255
+        return max(1, int(255 * left / self._STATUS_BAR_FADE))
+
     def _draw_status_bar(self, camera_ok: bool, free_mb: int, photo_count: int):
+        alpha = self._status_bar_alpha()
+        if not alpha:
+            return
         bar_h = self._status_bar_height()
+        # Balken UND Text auf eine eigene Flaeche, damit das Ausblenden
+        # beides zugleich erfasst — sonst bliebe die Schrift stehen,
+        # waehrend der Hintergrund schon weg ist.
         bar = pygame.Surface((W, bar_h), pygame.SRCALPHA)
         bar.fill((0, 0, 0, 160))
-        self._screen.blit(bar, (0, H - bar_h))
 
         cam_color = C_GREEN if camera_ok else C_RED
         cam_text  = "Kamera: OK" if camera_ok else "Kamera: FEHLT"
@@ -1039,12 +1131,14 @@ class UI:
             (f"Fotos: {photo_count}", C_DIM),
             ("Hotspot: aktiv" if self._cfg.get("hotspot_enabled") else "Hotspot: aus", C_DIM),
         ]
-        ty = H - bar_h + (bar_h - self._f_small.get_height()) // 2
+        ty = (bar_h - self._f_small.get_height()) // 2
         x = 20
         for text, color in items:
             lbl = self._f_small.render(text, True, color)
-            self._screen.blit(lbl, (x, ty))
+            bar.blit(lbl, (x, ty))
             x += lbl.get_width() + 60
+        bar.set_alpha(alpha)
+        self._screen.blit(bar, (0, H - bar_h))
 
     def _disk_label(self, free_mb: int) -> str:
         if free_mb < 0:
@@ -1128,6 +1222,23 @@ class UI:
             pygame.time.wait(30)
         return True
 
+    # Innenbreite der Notice-Box (1200 px minus je 40 px Rand).
+    _NOTICE_W = 1120
+
+    def _notice_title(self, text: str) -> tuple:
+        """(Schrift, Zeilen) fuer die Ueberschrift eines Hinweises."""
+        if not text:
+            return _font(self._f_medium_pt, True), []
+        return self._fit_text(text, self._f_medium_pt, True, self._NOTICE_W,
+                              max_lines=2, min_pt=26)
+
+    def _notice_detail(self, text: str) -> tuple:
+        """(Schrift, Zeilen) fuer die Detailzeile eines Hinweises."""
+        if not text:
+            return _font(self._f_normal_pt, True), []
+        return self._fit_text(text, self._f_normal_pt, True, self._NOTICE_W,
+                              max_lines=3, min_pt=20)
+
     def show_notice(self, title: str, detail: str = "",
                     seconds: float = 3.5, error: bool = True) -> None:
         """Vollflaechiger Hinweis fuer den Gast (blockierend).
@@ -1144,11 +1255,29 @@ class UI:
             box.center = (W // 2, H // 2)
             pygame.draw.rect(self._screen, (28, 20, 12), box, border_radius=28)
             pygame.draw.rect(self._screen, accent, box, width=5, border_radius=28)
-            lbl = self._f_medium.render(title, True, C_WHITE)
-            self._screen.blit(lbl, lbl.get_rect(center=(W // 2, H // 2 - 55)))
-            if detail:
-                sub = self._f_normal.render(detail, True, C_DIM)
-                self._screen.blit(sub, sub.get_rect(center=(W // 2, H // 2 + 35)))
+            # Titel und Detail umbrechen statt roh rendern. `detail` kommt
+            # von aussen — printing.py reicht Drucker-Fehlermeldungen durch
+            # (auf 80 Zeichen gekuerzt). Mit der echten Schrift passen in die
+            # 1200 px breite Box nur noch rund 57 Zeichen, eine typische
+            # CUPS-Meldung stand also ausserhalb des Kastens, genau dann wenn
+            # der Gast sie lesen soll.
+            # Beide Bloecke als EINE mittig sitzende Gruppe stapeln. Feste
+            # Mittelpunkte (frueher H/2-55 und H/2+35) tragen nur solange,
+            # wie beides einzeilig bleibt — bei drei Detailzeilen lief der
+            # Titel in die erste Detailzeile.
+            blocks = [b for b in (self._notice_title(title) + (C_WHITE,),
+                                  self._notice_detail(detail) + (C_DIM,))
+                      if b[1]]
+            GAP = 24
+            total = sum(len(l) * f.get_height() for f, l, _ in blocks)
+            total += GAP * (len(blocks) - 1)
+            ly = H // 2 - total // 2
+            for lines_font, lines, color in blocks:
+                for line in lines:
+                    surf = lines_font.render(line, True, color)
+                    self._screen.blit(surf, surf.get_rect(centerx=W // 2, top=ly))
+                    ly += lines_font.get_height()
+                ly += GAP
             left = max(0.0, end - time.monotonic())
             bar_w = int(box.width * (left / seconds)) if seconds > 0 else 0
             pygame.draw.rect(self._screen, accent,
@@ -1683,11 +1812,25 @@ class UI:
         top, bottom = self._qr_group_bounds()
         room = bottom - top
         rows = self._social_rows()
+
+        # Ergebnis cachen. _draw_qr_card (ueber _sidebar_qr_y) und
+        # _draw_social_links rufen das je Frame — ohne Cache lief die Suche
+        # zweimal pro Bild UND loggte zweimal. Bei drei Codes und 30 fps
+        # waren das 120 Warnzeilen pro Sekunde, die das Journal auf dem Pi
+        # zugeschuettet haben. Der Schluessel enthaelt alles, was das
+        # Ergebnis beeinflusst; die Warnung steht im Cache-Miss und faellt
+        # damit genau einmal je Konfiguration an.
+        key = (top, bottom, self._qr_card_size(),
+               tuple((r[0], r[1], r[2], r[3] is not None) for r in rows))
+        if self._social_cache and self._social_cache[0] == key:
+            return self._social_cache[1]
+
         while True:
             size = SOCIAL_QR_SIZE
             while size > SOCIAL_QR_MIN and self._group_height(rows, size) > room:
                 size -= 2
             if self._group_height(rows, size) <= room:
+                self._social_cache = (key, (rows, size))
                 return rows, size
             idx = next((i for i in range(len(rows) - 1, -1, -1)
                         if rows[i][3] is not None), None)
@@ -1700,6 +1843,7 @@ class UI:
                     "sind %d px, und es gibt keinen Code mehr abzugeben. "
                     "Kürzeren Untertitel setzen oder die WLAN-Box kürzen.",
                     self._group_height(rows, size), room)
+                self._social_cache = (key, (rows, size))
                 return rows, size
             logger.warning(
                 "Sidebar zu eng für %d Codes: '%s' fällt auf Glyph und Text "
@@ -1961,18 +2105,15 @@ class UI:
         if not ssid and not pwd:
             return
 
-        cx = SIDEBAR_W // 2
         box_w = SIDEBAR_W - 40
-        # Bottom-up positionieren — direkt über der Status-Bar (28 px hoch).
-        margin_bottom = 56
-        # Box-Höhe abhängig davon ob beide Felder gesetzt sind.
-        line_h = self._f_normal.get_height()
-        label_h = self._f_label.get_height()
-        rows = (1 if ssid else 0) + (1 if pwd else 0)
-        box_h = 22 + rows * (label_h + 4 + line_h + 14)
+        # Position und Hoehe kommen aus _wifi_box_metrics, nicht aus einer
+        # zweiten Rechnung. Hier stand frueher ein eigenes `margin_bottom =
+        # 56` samt Kopie der Hoehenformel — der Anker, an dem sich die
+        # QR-Gruppe ausrichtet, meinte damit eine Oberkante, die 7 px
+        # neben der gezeichneten lag.
+        y, box_h = self._wifi_box_metrics()
 
         x = (SIDEBAR_W - box_w) // 2
-        y = H - margin_bottom - box_h
         box = pygame.Rect(x, y, box_w, box_h)
 
         pygame.draw.rect(self._screen, self._theme["panel_bg"],
