@@ -64,6 +64,11 @@ _DEFAULTS: dict = {
     # naechsten Tag zuverlaessig. Siehe events.current_event_folder().
     "event_session_hours": 18,
     "picture_dir": "Picture_Box",
+    # Gaeste sehen nur das laufende Event. Auf True stellen, wenn die Galerie
+    # bewusst als Archiv ueber alle Feiern dienen soll — dann sieht aber jeder
+    # im Fotobox-WLAN auch die Fotos der letzten Veranstaltung.
+    # Admin und Host sehen unabhaengig davon immer alles.
+    "gallery_guests_see_all": False,
     "capture_device": 0,
     "theme": {
         "bg_top":         "#D5BB99",

@@ -392,7 +392,7 @@ background:#fff}
 <div class="card" id="hint">
 <h2>Seite l&auml;dt nicht?</h2>
 <ol>
-<li>Du bist im <b>Fotobox-WLAN</b> — das hat kein Internet.</li>
+<li>Du bist im WLAN <b>__SSID__</b> — das hat kein Internet.</li>
 <li>WLAN kurz trennen oder mobile Daten einschalten.</li>
 <li>Dann oben auf den Button tippen.</li>
 </ol>
@@ -432,14 +432,34 @@ background:#fff}
 </body></html>"""
 
 
+def _js_string(value: str) -> str:
+    r"""JS-Literal fuer den Einbau in einen <script>-Block.
+
+    json.dumps allein reicht nicht: es escaped zwar Anfuehrungszeichen, laesst
+    aber '</script>' durch — und der HTML-Parser beendet den Script-Block an
+    genau dieser Zeichenfolge, ganz egal ob sie in JS in einem String steht.
+    Deshalb zusaetzlich < > & als \u-Sequenzen, die JS wieder als das
+    urspruengliche Zeichen liest.
+    """
+    return (json.dumps(value)
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("&", "\\u0026"))
+
+
 def _go_page(target: str, label: str) -> str:
     domain = target.split("://", 1)[-1].split("/", 1)[0] or target
+    # Den echten Netznamen nennen statt "Fotobox-WLAN": der Mieter darf die
+    # SSID im Admin-Panel aendern, und der Gast sucht im WLAN-Menue genau
+    # den Namen, der dort steht.
+    ssid = (config.cfg.get("wifi_ssid") or "").strip() or "der Fotobox"
     return (_GO_PAGE_TMPL
+            .replace("__SSID__",   html.escape(ssid))
             .replace("__LABEL__",  html.escape(label))
             .replace("__HREF__",   html.escape(target, quote=True))
             .replace("__DOMAIN__", html.escape(domain))
             .replace("__SHOWN__",  html.escape(target))
-            .replace("__JSON__",   json.dumps(target))
+            .replace("__JSON__",   _js_string(target))
             .replace("__PROBE__",  str(_GO_PROBE_MS)))
 
 
@@ -485,39 +505,83 @@ def _public_links() -> dict:
     }
 
 
+# ── Sichtbarkeit: Gaeste nur im laufenden Event ────────────────────────────────
+
+def _may_see_all_events() -> bool:
+    """Admin und Host sehen jedes Event, Gaeste nur das laufende.
+
+    Ohne diese Trennung sieht jeder im Fotobox-WLAN die Fotos der letzten Feier:
+    `is_safe_event` prueft nur Pfad-Traversal, nicht Zugehoerigkeit. Der Owner
+    kann die Galerie per `gallery_guests_see_all` bewusst als Archiv oeffnen.
+    """
+    if config.cfg.get("gallery_guests_see_all"):
+        return True
+    return _session_role() is not None
+
+
+def _may_see_event(event: str) -> bool:
+    return _may_see_all_events() or event == events.current_event_folder(config.cfg)
+
+
+def _visible_photo_list(event_filter: Optional[str] = None) -> list:
+    """Wie `_photo_list`, aber auf die sichtbaren Events begrenzt.
+
+    Bewusst nicht in `_photo_list` selbst: Altersloeschung, Thumbnail-Prewarm
+    und die Admin-Uebersicht brauchen weiterhin *alle* Fotos — sonst raeumt der
+    Cleanup vergangene Events nie wieder auf.
+    """
+    if _may_see_all_events():
+        return _photo_list(event_filter)
+    active = events.current_event_folder(config.cfg)
+    if event_filter and event_filter != active:
+        return []
+    return _photo_list(active)
+
+
 @app.route("/img/<event>/<filename>")
 def img(event, filename):
+    # 404 statt 403: dass es weitere Events gibt, geht einen Gast nichts an.
+    if not _may_see_event(event):
+        abort(404)
     path = _safe_path(event, filename)
     if path is None:
         abort(404)
     response = send_file(path)
-    response.headers["Cache-Control"] = "public, max-age=3600"
+    # `private`, weil die Antwort jetzt von der Session abhaengt — ein
+    # geteilter Cache duerfte sie nicht an den naechsten Gast weiterreichen.
+    response.headers["Cache-Control"] = "private, max-age=3600"
     return response
 
 
 @app.route("/thumb/<event>/<filename>")
 def thumb(event, filename):
+    if not _may_see_event(event):
+        abort(404)
     t = _make_thumb(event, filename)
     if t is None:
         abort(404)
     response = send_file(t)
-    response.headers["Cache-Control"] = "public, max-age=3600"
+    response.headers["Cache-Control"] = "private, max-age=3600"
     return response
 
 
 @app.route("/preview/<event>/<filename>")
 def preview(event, filename):
     """1280px-Vorschau für die Detail-Ansicht — viel kleiner als Original."""
+    if not _may_see_event(event):
+        abort(404)
     p = _make_preview(event, filename)
     if p is None:
         abort(404)
     response = send_file(p)
-    response.headers["Cache-Control"] = "public, max-age=3600"
+    response.headers["Cache-Control"] = "private, max-age=3600"
     return response
 
 
 @app.route("/download/<event>/<filename>")
 def download(event, filename):
+    if not _may_see_event(event):
+        abort(404)
     path = _safe_path(event, filename)
     if path is None:
         abort(404)
@@ -598,6 +662,10 @@ def api_download_zip():
     event_filter = (request.args.get("event") or "").strip()
     if not event_filter or not events.is_safe_event(event_filter):
         return jsonify(ok=False, error="Event-Parameter erforderlich"), 400
+    # Der Traversal-Check oben sagt nur "sauberer Ordnername", nicht "darf der
+    # Gast da ran". Ohne das hier zieht jeder das komplette letzte Event als ZIP.
+    if not _may_see_event(event_filter):
+        abort(404)
 
     pic_dir = _pic_dir()
     items: list[tuple[str, str]] = []
@@ -622,15 +690,21 @@ def api_download_zip():
 @app.route("/api/count")
 def api_count():
     event_filter = request.args.get("event") or None
-    return jsonify(count=len(_photo_list(event_filter)))
+    return jsonify(count=len(_visible_photo_list(event_filter)))
 
 
 @app.route("/api/events")
 def api_events():
     _maybe_cleanup_old_photos()
+    active = events.current_event_folder(config.cfg)
+    all_events = events.list_events(config.cfg)
+    # Gaeste bekommen die Event-Auswahl gar nicht erst zu sehen — sonst stuende
+    # in der Galerie eine Liste fremder Feiern, auch wenn die Fotos gesperrt sind.
+    visible = (all_events if _may_see_all_events()
+               else [e for e in all_events if e.get("folder") == active])
     return jsonify({
-        "active":             events.current_event_folder(config.cfg),
-        "events":             events.list_events(config.cfg),
+        "active":             active,
+        "events":             visible,
         "event_name":         config.cfg.get("event_name", "Fotobox"),
         "photo_max_age_days": int(config.cfg.get("photo_max_age_days", 0)),
         **_public_links(),
@@ -643,7 +717,7 @@ def api_photos():
     event_filter = request.args.get("event") or None
     pic_dir = _pic_dir()
     out = []
-    for ev, f in _photo_list(event_filter):
+    for ev, f in _visible_photo_list(event_filter):
         try:
             st = os.stat(os.path.join(pic_dir, ev, f))
             out.append({

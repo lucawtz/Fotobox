@@ -13,8 +13,10 @@ import PaletteRoundedIcon from "@mui/icons-material/PaletteRounded";
 import CloudUploadRoundedIcon from "@mui/icons-material/CloudUploadRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
+import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
 import { api, ThemeColors } from "../../api";
 import SettingsCard from "./SettingsCard";
+import ThemePreview from "./ThemePreview";
 import {
   THEME_PRESETS,
   DEFAULT_PRESET_ID,
@@ -51,6 +53,14 @@ export default function AdminBranding() {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Alles was neben den Farben in die Vorschau einfliesst. Kommt aus
+  // demselben /api/admin/config-Call, den wir ohnehin machen.
+  const [preview, setPreview] = useState({
+    eventName: "", subtitle: "",
+    wifiSsid: "", wifiPassword: "",
+    instagramUrl: "", bookingUrl: "",
+  });
+
   // Theme-Section
   const [theme, setTheme] = useState<Record<string, string>>(DEFAULT_THEME);
   const [savedTheme, setSavedTheme] = useState<Record<string, string>>(DEFAULT_THEME);
@@ -62,6 +72,15 @@ export default function AdminBranding() {
     api.admin.config.get().then((c) => {
       setHasLogo(c.has_logo);
       if (c.has_logo) setPreviewUrl(api.logoUrl());
+
+      setPreview({
+        eventName:    c.event_name ?? "",
+        subtitle:     c.subtitle ?? "",
+        wifiSsid:     c.wifi_ssid ?? "",
+        wifiPassword: c.wifi_password ?? "",
+        instagramUrl: c.instagram_url ?? "",
+        bookingUrl:   c.booking_url ?? "",
+      });
 
       // Wir laden ALLE bekannten Theme-Felder (nicht nur die 6 UI-Picker),
       // damit Preset-Wechsel auch Felder wie polaroid_frame oder logo_circle
@@ -142,6 +161,25 @@ export default function AdminBranding() {
             Logo und Farbschema des Homescreens
           </Typography>
         </Box>
+
+        <SettingsCard
+          icon={<VisibilityRoundedIcon />}
+          title="Vorschau"
+          description="So sieht der Box-Bildschirm mit den aktuellen Einstellungen aus — auf der Box selbst erst nach dem Speichern. Fotos, Live-Bild und QR-Codes sind Platzhalter."
+        >
+          <Box sx={{ maxWidth: 620, mx: "auto" }}>
+            <ThemePreview
+              theme={theme}
+              eventName={preview.eventName}
+              subtitle={preview.subtitle}
+              logoUrl={hasLogo ? previewUrl : null}
+              wifiSsid={preview.wifiSsid}
+              wifiPassword={preview.wifiPassword}
+              instagramUrl={preview.instagramUrl}
+              bookingUrl={preview.bookingUrl}
+            />
+          </Box>
+        </SettingsCard>
 
         <SettingsCard
           icon={<ImageRoundedIcon />}

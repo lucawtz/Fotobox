@@ -85,6 +85,42 @@ def _do_countdown(ui: UI, camera: Camera, cfg: dict,
     return result["path"]
 
 
+COLLAGE_SHOTS = 4
+
+
+def _capture_sequence(ui: UI, camera, cfg: dict, mode: str) -> Optional[str]:
+    """Nimmt ein Einzelfoto ("single") oder eine 2x2-Collage ("collage") auf.
+
+    Rueckgabe: Pfad des Bildes, das auf dem Result-Screen landet — oder None,
+    wenn abgebrochen wurde. Der Grund wurde dem Gast dann bereits angezeigt.
+
+    Stand vorher zweimal wortgleich in der State-Machine (Homescreen und
+    "Nochmal" auf dem Result-Screen). Als eigene Funktion laesst sich der
+    Ablauf ausserdem ohne Kamera und ohne Display testen —
+    siehe tests/test_capture_flow.py.
+    """
+    if mode == "single":
+        return _do_countdown(ui, camera, cfg, 1, 1)
+
+    shots: list = []
+    for i in range(COLLAGE_SHOTS):
+        photo = _do_countdown(ui, camera, cfg, i + 1, COLLAGE_SHOTS)
+        if not photo:
+            break
+        shots.append(photo)
+
+    if len(shots) == COLLAGE_SHOTS:
+        return collage_mod.make_collage(shots, events.current_event_dir(cfg))
+
+    # Abgebrochene Collage: angefangene Einzelfotos nicht in der Galerie
+    # liegen lassen. _do_countdown hat den konkreten Fehler schon angezeigt,
+    # hier nur noch klarstellen, dass die ganze Collage verworfen wurde.
+    _cleanup_orphans(shots)
+    ui.show_notice("Collage abgebrochen",
+                   f"Nur {len(shots)} von {COLLAGE_SHOTS} Fotos — bitte neu starten")
+    return None
+
+
 def _do_print(ui: UI, path: str, cfg: dict) -> None:
     """Druckt ein Foto und sagt dem Gast, was passiert ist.
 
@@ -255,7 +291,8 @@ def main():
         camera.set_frame_provider(ui.latest_live_frame)
 
     logger.info("Fotobox bereit. Space=Einzelfoto  E=Collage  "
-                "Q=Wake-Camera/Zurück  Esc=Beenden")
+                "Q=Wake-Camera/Zurück  Esc=Beenden  "
+                "(die Buttons rechts sind auch klickbar)")
 
     # ── State-Machine ──────────────────────────────────────────────────────────
     state           = "HOMESCREEN"
@@ -272,6 +309,12 @@ def main():
                 break
 
             now = time.monotonic()
+
+            # Klick/Tap jeden Frame abholen, auch wenn der aktuelle State ihn
+            # nicht braucht — sonst bliebe er in der UI liegen und wuerde
+            # spaeter im Homescreen eine ungewollte Aufnahme starten.
+            clicked = ui.take_click_action()
+
             status_cache.maybe_refresh(now)
             free_mb   = status_cache.free_mb
             photo_cnt = status_cache.photo_count
@@ -299,6 +342,16 @@ def main():
                 left    = btns.left_pressed()
                 trigger = btns.trigger_pressed()
                 right   = btns.right_pressed()
+
+                # Ein Klick/Tap auf einen Action-Button zaehlt wie der Knopf,
+                # auf den er laut config["actions"][*]["key"] zeigt. Damit ist
+                # die Box auf dem Entwicklungs-Laptop ohne GPIO komplett
+                # bedienbar (und ein spaeterer Touchscreen ohne Zusatzcode).
+                if clicked:
+                    action_key = clicked.get("key")
+                    trigger = trigger or action_key == "trigger"
+                    right   = right   or action_key == "right"
+                    left    = left    or action_key == "left"
 
                 # Linker Knopf (Q) auf dem Homescreen = Kamera-Display aufwecken.
                 # Async ausführen damit die UI nicht 8-18 s blockiert während
@@ -343,38 +396,15 @@ def main():
                         ui.show_notice("Kamera nicht bereit",
                                        camera.error_message or "Bitte Kamera prüfen")
                         btns.wait_for_release()
-                    elif mode == "single":
+                    else:
                         # Kein Auto-Wake — Live-View muss manuell per Camera-Knopf
                         # oder Q auf der Fotobox aktiviert werden, sonst killt der
                         # capture-preview-Pull eine eventuell laufende manuelle LV.
-                        photo = _do_countdown(ui, camera, cfg, 1, 1)
+                        photo = _capture_sequence(ui, camera, cfg, mode)
                         if photo:
                             result_photo = photo
                             result_since = time.monotonic()
                             state = "RESULT"
-                        btns.wait_for_release()
-                    else:  # collage
-                        shots: list[str] = []
-                        for i in range(4):
-                            photo = _do_countdown(ui, camera, cfg, i + 1, 4)
-                            if photo:
-                                shots.append(photo)
-                            else:
-                                break
-                        if len(shots) == 4:
-                            result_photo = collage_mod.make_collage(
-                                shots, events.current_event_dir(cfg))
-                            result_since = time.monotonic()
-                            state = "RESULT"
-                        else:
-                            # Abgebrochene Collage: angefangene Einzelfotos
-                            # nicht in der Galerie liegen lassen
-                            _cleanup_orphans(shots)
-                            # _do_countdown hat den konkreten Fehler schon
-                            # angezeigt; hier nur noch klarstellen, dass die
-                            # ganze Collage verworfen wurde.
-                            ui.show_notice("Collage abgebrochen",
-                                           f"Nur {len(shots)} von 4 Fotos — bitte neu starten")
                         btns.wait_for_release()
                 else:
                     ui.render_homescreen(
@@ -403,27 +433,17 @@ def main():
 
                 elif trigger:  # Nochmal
                     ui.add_photo(result_photo)
-                    if mode == "single":
-                        photo = _do_countdown(ui, camera, cfg, 1, 1)
-                        if photo:
-                            result_photo = photo
-                            result_since = time.monotonic()
+                    photo = _capture_sequence(ui, camera, cfg, mode)
+                    if photo:
+                        result_photo = photo
+                        result_since = time.monotonic()
                     else:
-                        shots = []
-                        for i in range(4):
-                            photo = _do_countdown(ui, camera, cfg, i + 1, 4)
-                            if photo:
-                                shots.append(photo)
-                            else:
-                                break
-                        if len(shots) == 4:
-                            result_photo = collage_mod.make_collage(
-                                shots, events.current_event_dir(cfg))
-                            result_since = time.monotonic()
-                        else:
-                            _cleanup_orphans(shots)
-                            state = "HOMESCREEN"
-                            idle_since = now
+                        # Zurueck auf den Homescreen statt auf dem Result-Screen
+                        # mit dem alten Bild stehenzubleiben: dessen Timer laeuft
+                        # weiter und wuerde das Foto ein zweites Mal in die
+                        # Polaroid-Galerie haengen.
+                        state = "HOMESCREEN"
+                        idle_since = now
                     btns.wait_for_release()
 
                 elif right:  # Drucken
