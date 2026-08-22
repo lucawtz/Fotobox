@@ -1286,11 +1286,14 @@ class UI:
             scaled = self._scale_to_fill(img, self._PW, self._PH)
             self._photo_cache[path] = scaled
             self._fade_start[path] = pygame.time.get_ticks()
+            # Ueber _build_polaroid vorwaermen, NICHT das nackte Foto rotieren:
+            # sonst steht im Cache ein Bild ohne Cream-Rand und ohne Pin, und
+            # _draw_polaroid ruft _build_polaroid wegen des Cache-Treffers nie
+            # auf. Genau daran verlor jedes befuellte Polaroid Rahmen und Pin,
+            # waehrend die leeren Platzhalter (kein Vorwaermen) beides hatten.
             for _, _, angle in self._frames:
-                surf = pygame.Surface((self._PW, self._PH), pygame.SRCALPHA)
-                surf.blit(scaled, (0, 0))
-                self._rot_cache[(path, angle)] = pygame.transform.rotozoom(
-                    surf, angle, 1.0)
+                self._rot_cache[(path, angle)] = self._build_polaroid(
+                    scaled, None, angle)
         except Exception as exc:
             logger.warning("Polaroid-Ladefehler: %s", exc)
 
