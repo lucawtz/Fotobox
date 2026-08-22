@@ -100,21 +100,10 @@ _DEFAULTS: dict = {
     "live_view_rect": [510, 540, 800, 450],
     "instagram_url": "https://www.instagram.com/lucawtz",
     "booking_url":   "https://bytebots.de/",
-    # Beschriftung unter dem Booking-QR. "Termine buchen" beantwortet die
-    # Frage nicht, die der Gast beim Scannen hat — naemlich was er dort
-    # ueberhaupt bekommt.
+    # Erste Zeile der Booking-Reihe in der Sidebar; darunter zeigt ui.py
+    # automatisch die Domain aus booking_url. "Termine buchen" allein war
+    # eine Sackgasse — es nennt kein Ziel, das der Gast ansteuern koennte.
     "booking_label": "Fotobox mieten",
-    # Wohin die Mini-QR-Codes am Box-Screen zeigen:
-    #   "local"  — auf http://<hotspot_ip>/go/<slug> (Default). Immer
-    #              erreichbar, weil hotspot.py per 'address=/#/<ip>' ohnehin
-    #              jede DNS-Anfrage auf die Box umbiegt: eine nackte
-    #              https-URL im QR laeuft fuer jeden Gast im Fotobox-WLAN
-    #              ins Leere. Die /go/-Seite erklaert stattdessen den Weg
-    #              nach draussen und leitet automatisch weiter, sobald das
-    #              Handy Internet hat.
-    #   "direct" — die nackte Ziel-URL im QR. Nur sinnvoll, wenn die Gaeste
-    #              typischerweise NICHT im Fotobox-WLAN haengen.
-    "qr_link_mode": "local",
     "disk_warn_mb": 500,
     # Harte Grenze: darunter wird die Aufnahme verweigert, statt gphoto2
     # ins Leere laufen zu lassen. Ein RAW+JPEG-Paar der 700D braucht ~30 MB,
