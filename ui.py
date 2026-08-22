@@ -319,7 +319,7 @@ class UI:
 
     # Die Status-Bar ist Aufbau-Information: Kamera, Speicher, Hotspot
     # interessieren genau so lange, bis die Box steht. Danach ist sie nur
-    # noch ein Balken im Bild, deshalb blendet sie nach einer Minute aus.
+    # noch ein Balken im Bild, deshalb blendet sie nach 30 Sekunden aus.
     #
     # Zurueck holt sie die Taste I. Bewusst NICHT die Maus: eine einzige
     # MOUSEMOTION startete die volle Minute neu, und auf einem Rechner mit
@@ -327,7 +327,7 @@ class UI:
     # der laufenden App, die Bar war nach Ablauf weg und zwei Sekunden
     # spaeter wieder da. Ebenso wenig die Ausloeser: die drueckt am
     # Eventabend der Gast. Eine Tastatur haengt nur beim Aufbau dran.
-    _STATUS_BAR_S    = 60.0
+    _STATUS_BAR_S    = 30.0
     _STATUS_BAR_FADE = 1.0    # Sekunden Ausblendung, damit sie nicht springt
     _status_bar_until = 0.0
 
