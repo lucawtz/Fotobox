@@ -71,6 +71,24 @@ export const formatDate = (iso: string): string => {
   });
 };
 
+/** Was bei der Uebergabe an den naechsten Gastgeber zurueckgesetzt wird.
+ *  WLAN und PINs fehlen bewusst — die vergibt der Box-Besitzer selbst. */
+export interface HandoverSteps {
+  branding:  boolean;
+  logo:      boolean;
+  photos:    boolean;
+  new_event: boolean;
+}
+
+export interface HandoverResult {
+  ok: boolean;
+  error?: string;
+  done: HandoverSteps;
+  removed: number;
+  /** Ordner des frisch gestarteten Events, null wenn nicht angehakt. */
+  folder: string | null;
+}
+
 export interface DeleteResult {
   ok: boolean;
   error?: string;
@@ -233,6 +251,10 @@ export const api = {
     },
     reset: (confirm: string) =>
       postJson("/api/admin/reset", { confirm }).then(json<DeleteResult>),
+    // confirm nur noetig, wenn `photos` angehakt ist — der Server prueft das.
+    handover: (steps: HandoverSteps, confirm?: string) =>
+      postJson("/api/admin/handover", { ...steps, confirm })
+        .then(json<HandoverResult>),
     deleteEvent: (folder: string) =>
       xfetch(`/api/admin/event/${encodeURIComponent(folder)}/delete`, { method: "POST" })
         .then(json<DeleteResult>),

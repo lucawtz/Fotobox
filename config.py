@@ -39,6 +39,13 @@ _BOX_FIELDS = frozenset({
 # kommt per git aufs Pi.
 _PERSISTED_FIELDS = _MIETER_FIELDS | _BOX_FIELDS
 
+# Was eine Vermietung "einfaerbt" und bei der Uebergabe an den naechsten
+# Gastgeber zurueck auf Auslieferungszustand kann. Bewusst OHNE wifi_* und
+# *_pin: die vergibt der Box-Besitzer, und ein Reset auf "1234"/"fotobox123"
+# waere ein Rueckschritt (siehe gallery_server._insecure_defaults).
+# logo_path fehlt ebenfalls — der Pfad bleibt, geloescht wird die Datei.
+HANDOVER_FIELDS = ("event_name", "subtitle", "countdown_duration", "theme")
+
 _DEFAULTS: dict = {
     "wifi_ssid": "Fotobox",
     "wifi_password": "fotobox123",
@@ -109,6 +116,13 @@ _DEFAULTS: dict = {
     # automatisch die Domain aus booking_url. "Termine buchen" allein war
     # eine Sackgasse — es nennt kein Ziel, das der Gast ansteuern koennte.
     "booking_label": "Fotobox mieten",
+    # Selbst gestalteter QR-Code auf booking_url. Anders als beim
+    # Galerie-Code ist das gefahrlos: booking_url zeigt nach draussen und
+    # wird nie zur Laufzeit umgeschrieben, waehrend gallery_url von
+    # gallery_server.preflight() auf einen Fallback-Port gezogen werden
+    # kann — ein fest gezeichneter Galerie-Code zeigte dann ins Leere.
+    # Leer = ui.py zeichnet weiter Kalender-Glyph und Domain.
+    "booking_qr_path": "https://bytebots.de/",
     "disk_warn_mb": 500,
     # Harte Grenze: darunter wird die Aufnahme verweigert, statt gphoto2
     # ins Leere laufen zu lassen. Ein RAW+JPEG-Paar der 700D braucht ~30 MB,
@@ -136,10 +150,20 @@ _DEFAULTS: dict = {
 }
 
 
+def default_value(key: str):
+    """Frische Kopie des Auslieferungswerts.
+
+    Listen und Dicts werden kopiert, damit ein Aufrufer `_DEFAULTS` nicht
+    versehentlich mitaendert — `cfg["theme"]` wird an mehreren Stellen
+    in-place gepatcht.
+    """
+    v = _DEFAULTS[key]
+    return (list(v) if isinstance(v, (list, tuple)) else
+            dict(v) if isinstance(v, dict) else v)
+
+
 def load_config() -> dict:
-    data = {k: (list(v) if isinstance(v, (list, tuple)) else
-                dict(v) if isinstance(v, dict) else v)
-            for k, v in _DEFAULTS.items()}
+    data = {k: default_value(k) for k in _DEFAULTS}
 
     if os.path.exists(CONFIG_PATH):
         try:
@@ -158,9 +182,13 @@ def load_config() -> dict:
     # Relative Pfade → absolut
     if not os.path.isabs(data["logo_path"]):
         data["logo_path"] = os.path.join(BASE_DIR, data["logo_path"])
-    insta_qr = data.get("instagram_qr_path") or ""
-    if insta_qr and not os.path.isabs(insta_qr):
-        data["instagram_qr_path"] = os.path.join(BASE_DIR, insta_qr)
+    # Optionale QR-Bilder: leer ist erlaubt, relative Pfade haengen an
+    # BASE_DIR. Beide werden gleich behandelt, damit sie nicht auseinander
+    # laufen, wenn einer davon angefasst wird.
+    for _qr_key in ("instagram_qr_path", "booking_qr_path"):
+        _rel = data.get(_qr_key) or ""
+        if _rel and not os.path.isabs(_rel):
+            data[_qr_key] = os.path.join(BASE_DIR, _rel)
     if not os.path.isabs(data["picture_dir"]):
         data["picture_dir"] = os.path.join(BASE_DIR, data["picture_dir"])
 

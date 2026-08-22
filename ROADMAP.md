@@ -382,7 +382,21 @@ Nicht vergessen, nur nicht jetzt. Keiner dieser Punkte gefährdet das Event.
 - [ ] Service Worker / echtes PWA-Offline-Verhalten (Manifest existiert, SW nicht)
 - [ ] Automatisches Backup (rsync/NAS) — aktuell nur der manuelle USB-Stick,
       kombiniert mit `photo_max_age_days: 7` Auto-Löschung
-- [ ] Echte Mieter-Trennung + PIN-Zwangswechsel — erst relevant bei Vermietung
+- [~] Echte Mieter-Trennung + PIN-Zwangswechsel — erst relevant bei Vermietung
+      *Teil erledigt (22.08.):* Bis dahin übernahm der nächste Gastgeber alles
+      vom vorigen — Event-Name, Untertitel, Countdown, Theme und dessen Logo,
+      das `api_admin_logo` direkt über `Layout/logo.png` schreibt.
+      Admin → Wartung → „Box vorbereiten" (`POST /api/admin/handover`) räumt das
+      jetzt in einem Durchgang weg: `config.HANDOVER_FIELDS` zurück auf
+      Auslieferungszustand, Mieter-Logo gelöscht (`ui._load_logo` fällt auf
+      `Layout/logo_default.png` zurück), optional alle Fotos und ein frisch
+      gestartetes Event. Jeder Schritt einzeln abwählbar, Tippzwang nur für die
+      Fotos. Bewusst ein Knopf statt Automatik: ein Reset, der von selbst
+      zuschlägt, trifft irgendwann ein laufendes Event.
+      *Offen bleibt genau der PIN-Teil:* WLAN und PINs fasst der Reset nicht an,
+      weil er sonst „1234"/„fotobox123" zurückschreiben würde. Der Vormieter
+      kennt Host-PIN und WLAN-Passwort also weiterhin und käme in Funkreichweite
+      wieder ins Panel.
 - [ ] Auflösungsunabhängiges pygame-Layout — 1920×1080 fest verdrahtet (`ui.py:16,33-40`);
       entfällt, falls die Web-Oberfläche oben kommt
 - [ ] CSRF-Tokens auf den Admin-Endpunkten

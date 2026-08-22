@@ -140,6 +140,88 @@ def test_new_event_starts_fresh_folder_without_touching_photos(app, cfg, photo_f
     assert os.path.isfile(foto), "Fotos des alten Events wurden angefasst"
 
 
+# ── Uebergabe an den naechsten Gastgeber ───────────────────────────────────────
+
+def test_handover_is_admin_only(app):
+    assert app.post("/api/admin/handover",
+                    json={"branding": True}).status_code == 401
+    assert _login(app, "host").post("/api/admin/handover",
+                                    json={"branding": True}).status_code == 403
+
+
+def test_handover_rejects_empty_selection(app):
+    """Ohne Haken passiert nichts — dann soll die Antwort das auch sagen,
+    statt Erfolg zu melden."""
+    assert _login(app).post("/api/admin/handover", json={}).status_code == 400
+
+
+def test_handover_resets_branding_but_keeps_wifi_and_pins(app, cfg, monkeypatch):
+    for key, value in (("event_name", "Lisa und Tom"),
+                       ("subtitle", "Wir heiraten"),
+                       ("theme", {"accent": "#FF0000"}),
+                       ("wifi_password", "vom-vormieter")):
+        monkeypatch.setitem(config.cfg, key, value)
+
+    assert _login(app).post("/api/admin/handover",
+                            json={"branding": True}).status_code == 200
+
+    for key in config.HANDOVER_FIELDS:
+        assert config.cfg[key] == config.default_value(key), key
+    # WLAN und PINs vergibt der Box-Besitzer selbst: ein Reset wuerde hier
+    # wieder "fotobox123" bzw. "1234" hinschreiben.
+    assert config.cfg["wifi_password"] == "vom-vormieter"
+    assert config.cfg["admin_pin"] == cfg["admin_pin"]
+
+
+def test_handover_removes_only_the_tenant_logo(app, tmp_path, monkeypatch):
+    """Geloescht wird `Layout/logo.png` — dorthin schreibt jeder Upload.
+    `logo_default.png` ist der Besitzer-Standard, auf den ui._load_logo
+    zurueckfaellt, und muss liegen bleiben."""
+    layout = tmp_path / "Layout"
+    layout.mkdir()
+    (layout / "logo.png").write_bytes(b"mieter")
+    (layout / "logo_default.png").write_bytes(b"besitzer")
+    monkeypatch.setattr(config, "BASE_DIR", str(tmp_path))
+    monkeypatch.setitem(config.cfg, "logo_path", str(layout / "logo.png"))
+
+    assert _login(app).post("/api/admin/handover",
+                            json={"logo": True}).status_code == 200
+
+    assert not (layout / "logo.png").exists()
+    assert (layout / "logo_default.png").exists(), "Besitzer-Logo mitgeloescht"
+
+
+def test_handover_photos_need_the_typed_confirmation(app, cfg, photo_factory):
+    import events
+    ev = events.current_event_folder(config.cfg)
+    foto = photo_factory(os.path.join(cfg["picture_dir"], ev, "foto.jpg"))
+
+    r = _login(app).post("/api/admin/handover", json={"photos": True})
+
+    assert r.status_code == 400
+    assert os.path.isfile(foto)
+
+
+def test_handover_clears_photos_and_repins_the_event(app, cfg, photo_factory):
+    import events
+    old = events.current_event_folder(config.cfg)
+    foto = photo_factory(os.path.join(cfg["picture_dir"], old, "foto.jpg"))
+    client = _login(app)
+    client.get(f"/thumb/{old}/foto.jpg")
+    thumb = os.path.join(gallery_server._thumb_dir(), old, "foto.jpg")
+    assert os.path.isfile(thumb), "Vorbedingung: Thumbnail wurde erzeugt"
+
+    body = client.post("/api/admin/handover",
+                       json={"photos": True, "new_event": True,
+                             "confirm": "LOESCHEN"}).get_json()
+
+    assert body["removed"] == 1
+    assert not os.path.exists(foto)
+    assert not os.path.exists(thumb)
+    # Der Pin darf nicht auf den gerade weggeraeumten Ordner zeigen.
+    assert events.current_event_folder(config.cfg) == body["folder"]
+
+
 # ── WLAN-Validierung (P1-12) ───────────────────────────────────────────────────
 
 @pytest.mark.parametrize("pw,ok", [

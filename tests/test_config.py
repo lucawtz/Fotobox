@@ -76,6 +76,15 @@ def test_save_is_atomic_and_leaves_no_tmp(tmp_path, monkeypatch):
     assert not list(tmp_path.glob("*.tmp")), "tmp-Datei nicht aufgeraeumt"
 
 
+def test_default_value_hands_out_copies():
+    """cfg["theme"] wird an mehreren Stellen in-place gepatcht — gaebe
+    default_value() die Referenz aus _DEFAULTS zurueck, waere der
+    Auslieferungszustand nach dem ersten Reset dauerhaft verbogen."""
+    theme = config.default_value("theme")
+    theme["accent"] = "#000000"
+    assert config.default_value("theme")["accent"] != "#000000"
+
+
 def test_logo_path_is_stored_relative(tmp_path, monkeypatch):
     """Sonst waere die config.json nicht zwischen Dev-Rechner und Pi austauschbar."""
     cfg = _reload(monkeypatch, tmp_path / "config.json")

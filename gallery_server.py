@@ -1608,14 +1608,12 @@ def api_admin_delete_event(event: str):
     return jsonify(ok=True, removed=removed)
 
 
-@app.route("/api/admin/reset", methods=["POST"])
-@_api_admin_required
-def api_admin_reset():
-    data = request.get_json(silent=True) or request.form
-    confirm = (data.get("confirm") or "").strip()
-    if confirm != "LOESCHEN":
-        return jsonify(ok=False, error="Bestätigung fehlgeschlagen"), 400
+def _purge_all_photos() -> int:
+    """Alle Fotos, leere Event-Ordner und abgeleitete Bilder wegraeumen.
 
+    Rueckgabe: Anzahl entfernter Fotos. Previews liegen unter `_thumb_dir()`
+    und gehen ueber den rekursiven Walk mit weg.
+    """
     pic_dir = _pic_dir()
     td = _thumb_dir()
     removed = 0
@@ -1647,8 +1645,89 @@ def api_admin_reset():
                     os.rmdir(os.path.join(root, d))
                 except OSError:
                     pass
+    return removed
+
+
+@app.route("/api/admin/reset", methods=["POST"])
+@_api_admin_required
+def api_admin_reset():
+    data = request.get_json(silent=True) or request.form
+    confirm = (data.get("confirm") or "").strip()
+    if confirm != "LOESCHEN":
+        return jsonify(ok=False, error="Bestätigung fehlgeschlagen"), 400
+
+    removed = _purge_all_photos()
     logger.info("Admin-Reset: %d Fotos gelöscht", removed)
     return jsonify(ok=True, removed=removed)
+
+
+def _truthy(value) -> bool:
+    """Checkbox-Flag aus JSON (`true`) oder Formular (`"on"`)."""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "on", "yes")
+
+
+def _reset_logo() -> None:
+    """Das Mieter-Logo entfernen.
+
+    Geloescht wird nur `Layout/logo.png` — dorthin schreibt jeder Upload
+    (api_admin_logo). `Layout/logo_default.png` bleibt unberuehrt, und
+    ui._load_logo faellt genau darauf zurueck, sobald der Slot leer ist.
+    """
+    path = os.path.join(config.BASE_DIR, "Layout", "logo.png")
+    config.cfg["logo_path"] = path
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass                        # war nie eins da — nichts zu tun
+    except OSError as exc:
+        logger.warning("Logo '%s' nicht entfernt: %s", path, exc)
+
+
+_HANDOVER_STEPS = ("branding", "logo", "photos", "new_event")
+
+
+@app.route("/api/admin/handover", methods=["POST"])
+@_api_admin_required
+def api_admin_handover():
+    """Die Box fuer die naechste Vermietung vorbereiten.
+
+    Bewusst ein Knopf und kein Automatismus: ein Reset, der von selbst
+    zuschlaegt, trifft irgendwann ein laufendes Event. Der Aufrufer haakt an,
+    was weg soll — nicht gesetzte Schritte passieren nicht.
+
+    WLAN und PINs bleiben aussen vor. Die vergibt der Box-Besitzer, und ein
+    Reset auf die Auslieferungswerte waere ein Rueckschritt: danach stuende
+    wieder "1234" drin, worueber _insecure_defaults zu Recht warnt.
+    """
+    data = request.get_json(silent=True) or request.form
+    steps = {k: _truthy(data.get(k)) for k in _HANDOVER_STEPS}
+
+    if not any(steps.values()):
+        return jsonify(ok=False, error="Nichts ausgewählt"), 400
+    # Derselbe Tippzwang wie /api/admin/reset, aber nur wenn wirklich Fotos
+    # drankommen: alle uebrigen Schritte sind wiederherstellbar.
+    if steps["photos"] and (data.get("confirm") or "").strip() != "LOESCHEN":
+        return jsonify(ok=False, error="Bestätigung fehlgeschlagen"), 400
+
+    if steps["branding"]:
+        for key in config.HANDOVER_FIELDS:
+            config.cfg[key] = config.default_value(key)
+    if steps["logo"]:
+        _reset_logo()
+    if steps["branding"] or steps["logo"]:
+        config.save_config(config.cfg)
+
+    removed = _purge_all_photos() if steps["photos"] else 0
+    # Erst nach dem Loeschen: sonst zeigt der Pin auf einen Ordner, der gerade
+    # weggeraeumt wurde, und das naechste Foto landet unter dem Namen der
+    # vorigen Vermietung.
+    folder = events.start_new_event(config.cfg) if steps["new_event"] else None
+
+    logger.info("Uebergabe vorbereitet (%s), %d Fotos geloescht",
+                ", ".join(k for k, v in steps.items() if v), removed)
+    return jsonify(ok=True, done=steps, removed=removed, folder=folder)
 
 
 # ── Server starten ─────────────────────────────────────────────────────────────

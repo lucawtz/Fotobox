@@ -157,8 +157,24 @@ http://<pi-ip>/admin             (bei LAN/WLAN-Verbindung)
 - Logo hochladen
 - Admin-PIN ändern
 - Alle Fotos löschen (mit Bestätigung)
+- Box für die nächste Vermietung vorbereiten (Wartung → "Box vorbereiten")
 
 **Foto löschen (einzeln):** Foto in der Galerie öffnen → "Löschen" → Admin-PIN eingeben.
+
+**Vermietungswechsel:** Unter **Wartung → Box vorbereiten** lässt sich in einem
+Durchgang zurücksetzen, was der letzte Gastgeber hinterlassen hat: Event-Name,
+Untertitel, Countdown und Theme, sein Logo, alle Fotos und der Event-Ordner.
+Jeder Schritt ist einzeln abwählbar.
+
+WLAN-Zugangsdaten und PINs bleiben dabei **unberührt** — ein Reset würde sie auf
+die Auslieferungswerte zurücksetzen, vor denen das Panel zu Recht warnt. Beides
+gehört also weiterhin von Hand neu vergeben, sonst kommt der Vormieter in
+Funkreichweite wieder ins Admin-Panel.
+
+**Eigenes Logo hinterlegen:** Jeder Upload aus dem Admin-Panel überschreibt
+`Layout/logo.png` — das ist der Mieter-Slot. Lege dein eigenes Logo einmalig
+zusätzlich als `Layout/logo_default.png` ab: darauf fällt die Box zurück, sobald
+der Mieter-Slot leer ist, und ein Upload fasst die Datei nie an.
 
 ---
 
