@@ -254,6 +254,12 @@ class UI:
 
         Muss nach pygame.display.init() laufen — list_modes() braucht einen
         initialisierten Treiber.
+
+        Nebenwirkung: schaltet zusammen mit SCALED die Skalierungsqualitaet
+        auf linear. SDL filtert sonst mit Nearest-Neighbour, und ein Schirm,
+        der kleiner als W x H ist, franst damit jede Schrift und jede
+        Polaroid-Kante aus. Der Hint wird beim Erzeugen des Renderers
+        gelesen, muss also vor dem set_mode stehen.
         """
         try:
             modes = pygame.display.list_modes()
@@ -265,6 +271,9 @@ class UI:
             return 0
         logger.info("Display: %dx%d ist kein nativer Modus (verfuegbar: %s…) "
                     "— SCALED aktiv", W, H, modes[:3])
+        # setdefault: ein bewusst gesetztes SDL_RENDER_SCALE_QUALITY (0 =
+        # nearest, 2 = best) bleibt stehen.
+        os.environ.setdefault("SDL_RENDER_SCALE_QUALITY", "1")
         return pygame.SCALED
 
     @staticmethod

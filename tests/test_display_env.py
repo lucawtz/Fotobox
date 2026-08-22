@@ -188,12 +188,27 @@ def test_native_resolution_needs_no_scaling(display_modes):
     assert UI._scaling_flag() == 0
 
 
-def test_missing_resolution_switches_to_scaled(display_modes):
+def test_missing_resolution_switches_to_scaled(display_modes, monkeypatch):
+    import os
     import pygame
     from ui import UI
 
+    monkeypatch.delenv("SDL_RENDER_SCALE_QUALITY", raising=False)
     display_modes([(2560, 1600), (1920, 1200)])   # MacBook: kein 1920x1080
     assert UI._scaling_flag() == pygame.SCALED
+    # Ohne den Hint filtert SDL mit Nearest-Neighbour — beim Herunter-
+    # skalieren franst dann jede Schrift aus.
+    assert os.environ["SDL_RENDER_SCALE_QUALITY"] == "1"
+
+
+def test_explicit_scale_quality_is_respected(display_modes, monkeypatch):
+    import os
+    from ui import UI
+
+    monkeypatch.setenv("SDL_RENDER_SCALE_QUALITY", "0")
+    display_modes([(1920, 1200)])
+    UI._scaling_flag()
+    assert os.environ["SDL_RENDER_SCALE_QUALITY"] == "0"
 
 
 def test_any_resolution_needs_no_scaling(display_modes):
