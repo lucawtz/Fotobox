@@ -251,6 +251,19 @@ def test_go_instagram_uses_fallback_label(app, links):
     assert "<title>Instagram</title>" in body
 
 
+def test_go_instagram_shows_handle_not_domain(app, links):
+    """Unter der Ueberschrift steht, wohin der Tap fuehrt. "@foo" sagt dem
+    Gast mehr als "instagram.com", das direkt darueber schon steht."""
+    body = app.get("/go/instagram").data.decode()
+    assert '<p class="host">@foo</p>' in body
+
+
+def test_go_termin_shows_domain(app, links):
+    """Fuer alles ausser Instagram bleibt es bei der Domain — sie ist das
+    Einzige, woran der Gast erkennt, wo er gleich landet."""
+    assert '<p class="host">example.com</p>' in app.get("/go/termin").data.decode()
+
+
 def test_go_instagram_offers_app_links(app, links):
     """Der Follow-Tap passiert in der App, nicht auf der Login-Wand von
     instagram.com — also muss die Seite beide App-Schemata mitliefern."""

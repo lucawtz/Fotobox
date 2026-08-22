@@ -563,10 +563,10 @@ h1{margin:0;font-size:1.375rem;font-weight:600;letter-spacing:-.015em;
 <div class="card">
 <div class="icon">__ICON__</div>
 <h1>__LABEL__</h1>
-<p class="host">__DOMAIN__</p>
+<p class="host">__SUBLINE__</p>
 <p class="status" id="status" hidden>
 <span class="spin" aria-hidden="true"></span>Einen Moment&nbsp;… wir leiten dich weiter</p>
-<a class="btn" id="go" href="__HREF__">Weiter zu __DOMAIN__
+<a class="btn" id="go" href="__HREF__">Jetzt &ouml;ffnen
 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 <path d="M5 12h13m-5.5-6 6 6-6 6"/></svg></a>
@@ -663,6 +663,21 @@ def _js_literal(value) -> str:
             .replace("&", "\\u0026"))
 
 
+def _go_subline(slug: str, target: str, domain: str) -> str:
+    """Zeile unter der Ueberschrift: wohin der Tap fuehrt.
+
+    Bei Instagram das Handle statt der Domain — "@fotobox.wirtz" sagt dem
+    Gast mehr als "instagram.com", das er unter der Ueberschrift ohnehin
+    schon gelesen hat. Die vollstaendige URL steht weiter unten im
+    Erklaertext, falls er sie abtippen muss.
+    """
+    if slug == "instagram":
+        match = _INSTAGRAM_HANDLE_RE.match(target)
+        if match:
+            return "@" + match.group(1).lstrip("@")
+    return domain
+
+
 def _go_page(target: str, label: str, apps: Optional[dict] = None,
              slug: str = "") -> str:
     domain = target.split("://", 1)[-1].split("/", 1)[0] or target
@@ -675,7 +690,7 @@ def _go_page(target: str, label: str, apps: Optional[dict] = None,
         "SSID":    html.escape(ssid),
         "LABEL":   html.escape(label),
         "HREF":    html.escape(target, quote=True),
-        "DOMAIN":  html.escape(domain),
+        "SUBLINE": html.escape(_go_subline(slug, target, domain)),
         "SHOWN":   html.escape(target),
         "ICON":    icon,
         "ACCENT":  accent,
