@@ -75,8 +75,15 @@ def test_default_host(monkeypatch, bind_all, hotspot_cfg, expected):
 # ── Löschen (P1-14) ────────────────────────────────────────────────────────────
 
 def test_delete_removes_photo_thumbnail_and_preview(app, cfg, photo_factory):
-    ev, fn = "2026-10-15_test", "foto.jpg"
+    # Bewusst das LAUFENDE Event: /thumb und /preview sind seit _may_see_event()
+    # fuer Gaeste auf das aktive Event beschraenkt, ein fremdes Datum liefert 404.
+    import events
+    ev, fn = events.current_event_folder(config.cfg), "foto.jpg"
     orig = photo_factory(os.path.join(cfg["picture_dir"], ev, fn), size=(2000, 1500))
+    # Angemeldet, weil `ev` nicht das laufende Event ist: seit P2-17 kommen
+    # Gaeste dort nicht mehr an Bilder. Hier geht es um das Aufraeumen von
+    # Thumbnail und Preview beim Loeschen, nicht um die Sichtbarkeit.
+    _login(app)
     app.get(f"/thumb/{ev}/{fn}")
     app.get(f"/preview/{ev}/{fn}")
 
@@ -95,7 +102,8 @@ def test_delete_removes_photo_thumbnail_and_preview(app, cfg, photo_factory):
 
 
 def test_delete_needs_correct_pin(app, cfg, photo_factory):
-    ev, fn = "2026-10-15_test", "foto.jpg"
+    import events
+    ev, fn = events.current_event_folder(config.cfg), "foto.jpg"
     orig = photo_factory(os.path.join(cfg["picture_dir"], ev, fn))
     r = app.post(f"/api/delete/{ev}/{fn}", data={"pin": "0815"})
     assert r.status_code == 403
@@ -181,3 +189,85 @@ def test_insecure_defaults_reported(app, monkeypatch):
     monkeypatch.setitem(config.cfg, "admin_pin", "8471")
     body = _login(app).get("/api/admin/config").get_json()
     assert "Admin-PIN" not in body["insecure_defaults"]
+
+
+# ── /go/-Kurzlinks ─────────────────────────────────────────────────────────────
+#
+# Der Boxbildschirm ist kein Touchscreen: die Mini-QR-Codes in der Sidebar
+# (ui.py) sind der einzige Weg vom Screen aufs Handy. Sie zeigen auf diese
+# Route statt auf die nackte Ziel-URL, weil hotspot.py per 'address=/#/<ip>'
+# jede DNS-Anfrage auf die Box umbiegt.
+
+@pytest.fixture
+def links(monkeypatch):
+    monkeypatch.setitem(config.cfg, "booking_url", "https://example.com/buchen")
+    monkeypatch.setitem(config.cfg, "booking_label", "Fotobox mieten")
+    monkeypatch.setitem(config.cfg, "instagram_url", "https://instagram.com/foo")
+
+
+def test_go_termin_renders_target_and_label(app, links):
+    r = app.get("/go/termin")
+    assert r.status_code == 200
+    assert "html" in r.content_type
+    body = r.data.decode()
+    assert "https://example.com/buchen" in body
+    assert "Fotobox mieten" in body
+    # Die Seite muss den Gast auch ohne Internet abholen koennen — der
+    # Erklaertext ist der ganze Punkt der Route.
+    assert "das hat kein Internet" in body
+    # Und sie muss den echten Netznamen nennen, nicht "Fotobox-WLAN":
+    # der Mieter darf die SSID aendern.
+    assert config.cfg["wifi_ssid"] in body
+
+
+def test_go_instagram_uses_fallback_label(app, links):
+    body = app.get("/go/instagram").data.decode()
+    assert "https://instagram.com/foo" in body
+    assert "<title>Instagram</title>" in body
+
+
+def test_go_is_not_cached(app, links):
+    # Sonst zeigt das Handy nach einer Config-Aenderung noch die alte URL.
+    assert app.get("/go/termin").headers["Cache-Control"] == "no-store"
+
+
+def test_go_unknown_slug_redirects_home(app, links):
+    r = app.get("/go/gibtsnicht")
+    assert r.status_code == 302
+    assert r.headers["Location"] == "/"
+
+
+def test_go_unconfigured_link_redirects_home(app, monkeypatch):
+    monkeypatch.setitem(config.cfg, "booking_url", "")
+    assert app.get("/go/termin").status_code == 302
+
+
+@pytest.mark.parametrize("bad", [
+    "javascript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "example.com/buchen",          # ohne Schema — waere ein relativer Link
+])
+def test_go_rejects_non_http_urls(app, monkeypatch, bad):
+    """Der Wert kommt aus der Owner-Config, landet aber in href und JS."""
+    monkeypatch.setitem(config.cfg, "booking_url", bad)
+    r = app.get("/go/termin")
+    assert r.status_code == 302
+    assert bad not in r.data.decode()
+
+
+def test_go_escapes_target(app, monkeypatch):
+    monkeypatch.setitem(config.cfg, "booking_url",
+                        'https://example.com/"><script>alert(1)</script>')
+    body = app.get("/go/termin").data.decode()
+    assert "<script>alert(1)</script>" not in body
+    assert "&lt;script&gt;" in body
+
+
+@pytest.mark.parametrize("endpoint", ["/api/events", "/api/photos"])
+def test_public_api_exposes_owner_links(app, links, endpoint):
+    """Die Galerie-Seite braucht sie fuer den CTA (OwnerLinks.tsx) — der Gast
+    hat das Handy dort ohnehin schon in der Hand."""
+    data = app.get(endpoint).get_json()
+    assert data["booking_url"] == "https://example.com/buchen"
+    assert data["booking_label"] == "Fotobox mieten"
+    assert data["instagram_url"] == "https://instagram.com/foo"
