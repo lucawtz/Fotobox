@@ -133,7 +133,10 @@ export default function EventGallery() {
   const [view, setView] = useGalleryView("photos", "grid");
 
   return (
-    <>
+    // Siehe Gallery.tsx: Flex-Spalte ueber die ganze Seite, damit
+    // <OwnerLinks> per mt:auto unten andocken kann, ohne dass irgendwo eine
+    // Kopfhoehe von Hand gepflegt werden muss.
+    <Box sx={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}>
       {/* Eigene TopBar — mit Back-Button + ZIP/Refresh-Actions */}
       <Box
         component="header"
@@ -259,7 +262,16 @@ export default function EventGallery() {
         </Box>
       </Box>
 
-      <Container maxWidth="xl" disableGutters sx={{ pb: "calc(var(--sa-bottom) + 24px)" }}>
+      <Container
+        maxWidth="xl"
+        disableGutters
+        sx={{
+          pb: "calc(var(--sa-bottom) + 24px)",
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
         {/* Eigene Zeile statt in die Kopfleiste: dort draengeln sich schon
             Zurueck, Ansicht, ZIP und Aktualisieren, und drei Filterknoepfe
             mit Zahl passen auf einem Handy nicht mehr daneben. */}
@@ -374,7 +386,8 @@ export default function EventGallery() {
 
         {!loading && (
           // Container laeuft hier mit disableGutters — Padding deshalb hier.
-          <Box sx={{ px: { xs: 1.25, sm: 3 } }}>
+          // mt:auto dockt den Block bei kurzer Galerie unten an.
+          <Box sx={{ px: { xs: 1.25, sm: 3 }, mt: "auto" }}>
             <OwnerLinks links={links} />
           </Box>
         )}
@@ -422,7 +435,7 @@ export default function EventGallery() {
           </Button>
         </DialogActions>
       </Dialog>
-    </>
+    </Box>
   );
 }
 

@@ -58,7 +58,11 @@ export default function Gallery() {
   const [view, setView] = useGalleryView("events", "grid");
 
   return (
-    <>
+    // Flex-Spalte ueber die ganze Seite, damit <OwnerLinks> per mt:auto am
+    // unteren Rand andocken kann. Bewusst so statt calc(100dvh - Kopfhoehe):
+    // die Kopfleiste steckt hier mit drin, es braucht also keine gepflegte
+    // Zahl fuer ihre Hoehe, die bei jeder Aenderung veralten wuerde.
+    <Box sx={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}>
       <TopBar
         title={eventName}
         subtitle={subtitle}
@@ -72,6 +76,9 @@ export default function Gallery() {
           py: { xs: 1.5, sm: 3 },
           px: { xs: 1.25, sm: 3 },
           pb: "calc(var(--sa-bottom) + 24px)",
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
         }}
       >
         {maxAgeDays > 0 && items.length > 0 && (
@@ -169,9 +176,16 @@ export default function Gallery() {
           </Paper>
         )}
 
-        {!loading && <OwnerLinks links={links} />}
+        {/* mt:auto schiebt den Block bei kurzer Galerie an den unteren Rand,
+            statt ihn mitten im Leerraum haengen zu lassen. Bei voller Seite
+            sitzt er wie bisher einfach hinter dem letzten Inhalt. */}
+        {!loading && (
+          <Box sx={{ mt: "auto" }}>
+            <OwnerLinks links={links} />
+          </Box>
+        )}
       </Container>
-    </>
+    </Box>
   );
 }
 
