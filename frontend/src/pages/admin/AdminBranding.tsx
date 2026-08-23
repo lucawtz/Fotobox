@@ -9,6 +9,10 @@ import {
   CircularProgress,
   Collapse,
   ButtonBase,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from "@mui/material";
 import ImageRoundedIcon from "@mui/icons-material/ImageRounded";
 import PaletteRoundedIcon from "@mui/icons-material/PaletteRounded";
@@ -17,6 +21,7 @@ import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import RestartAltRoundedIcon from "@mui/icons-material/RestartAltRounded";
 import VisibilityRoundedIcon from "@mui/icons-material/VisibilityRounded";
 import ExpandMoreRoundedIcon from "@mui/icons-material/ExpandMoreRounded";
+import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import { api, ThemeColors } from "../../api";
 import SettingsCard from "./SettingsCard";
 import ThemePreview from "./ThemePreview";
@@ -63,6 +68,11 @@ export default function AdminBranding() {
   const [hasLogo, setHasLogo] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  // Ob nach dem Entfernen ein Standard-Logo greift — sonst zeigt die Box die
+  // Initialen. Bestimmt, was der Bestaetigungsdialog ankuendigt.
+  const [hasDefaultLogo, setHasDefaultLogo] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Alles was neben den Farben in die Vorschau einfliesst. Kommt aus
@@ -88,6 +98,7 @@ export default function AdminBranding() {
   useEffect(() => {
     api.admin.config.get().then((c) => {
       setHasLogo(c.has_logo);
+      setHasDefaultLogo(!!c.has_default_logo);
       if (c.has_logo) setPreviewUrl(api.logoUrl());
 
       setPreview({
@@ -143,6 +154,25 @@ export default function AdminBranding() {
       setToast({ severity: "error", msg: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusy(false);
+    }
+  };
+
+  const removeLogo = async () => {
+    setRemoving(true);
+    try {
+      const r = await api.admin.deleteLogo();
+      if (!r.ok) throw new Error(r.error ?? "Logo konnte nicht entfernt werden");
+      setHasLogo(false);
+      setHasDefaultLogo(r.has_default_logo);
+      // previewUrl leeren, sonst zeigt der Kasten das eben geloeschte Bild
+      // weiter — die URL traegt einen Cache-Buster, das Bild liegt im Cache.
+      setPreviewUrl(null);
+      setConfirmRemove(false);
+      setToast({ severity: "success", msg: "Logo entfernt" });
+    } catch (e) {
+      setToast({ severity: "error", msg: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -281,12 +311,24 @@ export default function AdminBranding() {
             )}
           </Box>
 
-          <Box sx={{ mt: 2, display: "flex", justifyContent: "flex-end" }}>
+          <Box sx={{ mt: 2, display: "flex", justifyContent: "flex-end", gap: 1.5 }}>
+            {/* Nur sichtbar, wenn ueberhaupt ein Logo hochgeladen ist —
+                sonst gaebe es nichts zu entfernen. */}
+            {hasLogo && (
+              <Button
+                startIcon={<DeleteOutlineRoundedIcon />}
+                onClick={() => setConfirmRemove(true)}
+                disabled={busy || removing}
+                color="error"
+              >
+                Logo entfernen
+              </Button>
+            )}
             <Button
               variant="outlined"
               startIcon={<CloudUploadRoundedIcon />}
               onClick={() => inputRef.current?.click()}
-              disabled={busy}
+              disabled={busy || removing}
             >
               Datei auswählen
             </Button>
@@ -593,6 +635,46 @@ export default function AdminBranding() {
           </Box>
         </SettingsCard>
       </Stack>
+
+      <Dialog
+        open={confirmRemove}
+        onClose={removing ? undefined : () => setConfirmRemove(false)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1.25, pb: 1 }}>
+          <DeleteOutlineRoundedIcon color="error" />
+          Logo entfernen?
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            {hasDefaultLogo
+              ? "Der Homescreen zeigt danach wieder das Standard-Logo der Box."
+              : "Die Box hat kein Standard-Logo hinterlegt — der Homescreen "
+                + "zeigt danach die Initialen des Event-Namens im Cream-Kreis."}
+            {" "}Du kannst jederzeit ein neues Logo hochladen.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, gap: 1 }}>
+          <Button
+            onClick={() => setConfirmRemove(false)}
+            disabled={removing}
+            color="inherit"
+            sx={{ flex: 1 }}
+          >
+            Abbrechen
+          </Button>
+          <Button
+            onClick={removeLogo}
+            disabled={removing}
+            variant="contained"
+            color="error"
+            sx={{ flex: 1 }}
+          >
+            {removing ? "Entferne…" : "Entfernen"}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={!!toast}

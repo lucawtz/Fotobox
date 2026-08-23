@@ -1294,6 +1294,10 @@ def api_admin_config():
             "subtitle":           config.cfg.get("subtitle", ""),
             "countdown_duration": config.cfg.get("countdown_duration", 3),
             "has_logo":           os.path.isfile(config.cfg.get("logo_path", "")),
+            # Ob nach dem Entfernen ein Standard-Logo greift oder die Sidebar
+            # auf die Initialen des Event-Namens faellt. Sonst muesste das
+            # Admin-Panel raten, was es dem Nutzer ankuendigt.
+            "has_default_logo":   os.path.isfile(_default_logo_path()),
             "wifi_ssid":          config.cfg.get("wifi_ssid", ""),
             "wifi_password":      config.cfg.get("wifi_password", ""),
             "theme":              dict(config.cfg.get("theme") or {}),
@@ -1499,14 +1503,82 @@ def api_admin_printers():
                                "message": "Drucksystem nicht erreichbar"}), 200
 
 
+# Ein Testdruck kostet ein Blatt Thermosublimationspapier. Ein Doppelklick oder
+# ein zweiter offener Admin-Tab soll davon nicht zwei ziehen.
+_TEST_PRINT_COOLDOWN_S = 30.0
+# None statt 0.0: `time.monotonic()` zaehlt ab Systemstart, ist auf einem
+# frisch gebooteten Pi also selbst noch einstellig. Mit 0.0 als "noch nie
+# gedruckt" haette die Sperre ausgerechnet den ersten Testdruck nach dem
+# Einschalten abgelehnt — genau dann, wenn man ihn braucht.
+_last_test_print: Optional[float] = None
+# Die Sperre allein reicht nicht: waitress bedient mehrere Threads, ein
+# Doppelklick kaeme also zweimal durch die Zeitpruefung, bevor der erste
+# Durchlauf den Stempel setzt. Genau der Fall, den die Sperre verhindern soll.
+_test_print_lock = threading.Lock()
+
+
+@app.route("/api/admin/print-test", methods=["POST"])
+@_api_admin_required
+def api_admin_print_test():
+    """Testseite drucken: prueft Drucker, Papierformat, Raender und Farben.
+
+    Nutzt bewusst die *gespeicherte* Config, nicht das Formular im Browser —
+    sonst testet man etwas anderes, als die Box spaeter druckt.
+    """
+    global _last_test_print
+    # Nicht blockierend: der zweite Klick soll eine Antwort bekommen, nicht
+    # warten und danach doch noch ein Blatt ziehen.
+    if not _test_print_lock.acquire(blocking=False):
+        return jsonify(ok=False, error="Ein Testdruck läuft bereits."), 429
+    try:
+        wait = (0.0 if _last_test_print is None
+                else _TEST_PRINT_COOLDOWN_S - (time.monotonic() - _last_test_print))
+        if wait > 0:
+            return jsonify(ok=False,
+                           error=f"Gerade eben schon getestet — noch {int(wait) + 1} s "
+                                 "warten. Jeder Testdruck verbraucht ein Blatt."), 429
+
+        try:
+            import printing
+            ok, message = printing.print_test(config.cfg)
+        except Exception as exc:
+            logger.error("Testdruck: %s", exc, exc_info=True)
+            return jsonify(ok=False, error="Drucksystem nicht erreichbar"), 200
+
+        if ok:
+            # Nur ein angenommener Auftrag verbraucht Papier. Nach "kein
+            # Papier" oder "Drucker aus" soll der Admin sofort nachlegen und
+            # neu testen koennen, statt 30 s vor der Box zu stehen.
+            _last_test_print = time.monotonic()
+            logger.info("Testdruck ausgeloest: %s", message)
+        # Bewusst 200 auch im Fehlerfall: die Meldung kommt von CUPS ("Drucker
+        # 'X' ist deaktiviert") und ist fuer den Admin brauchbarer als der
+        # generische Fehler-Toast, in den ein 4xx laufen wuerde.
+        return jsonify(ok=ok, message=message if ok else None,
+                       error=None if ok else message), 200
+    finally:
+        _test_print_lock.release()
+
+
 _ALLOWED_LOGO_FORMATS = {"PNG", "JPEG", "GIF", "WEBP", "BMP"}
 # Pi 4B hat 4 GB RAM — 50 MP gibt PIL ~200 MB; alles drüber ist Bomb-Verdacht.
 _MAX_LOGO_PIXELS = 50_000_000
 
 
-@app.route("/api/admin/logo", methods=["POST"])
+@app.route("/api/admin/logo", methods=["POST", "DELETE"])
 @_api_login_required
 def api_admin_logo():
+    # DELETE ist die Umkehrung des Uploads und steht deshalb denselben Rollen
+    # offen: wer ein Logo hochladen darf, darf ein falsches auch zurueckziehen.
+    # _reset_logo entfernt nur Layout/logo.png — das Standard-Logo des
+    # Box-Besitzers (logo_default.png) bleibt unberuehrt und greift danach
+    # wieder, sonst zeigt die Sidebar die Initialen des Event-Namens.
+    if request.method == "DELETE":
+        _reset_logo()
+        config.save_config(config.cfg)
+        return jsonify(ok=True, has_logo=False,
+                       has_default_logo=os.path.isfile(_default_logo_path()))
+
     logo_file = request.files.get("logo")
     if not logo_file or not logo_file.filename:
         return jsonify(ok=False, error="Keine Datei ausgewählt"), 400
@@ -1697,6 +1769,12 @@ def _truthy(value) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in ("1", "true", "on", "yes")
+
+
+def _default_logo_path() -> str:
+    """Standard-Logo des Box-Besitzers. Ueberlebt jeden Mieter-Upload und
+    jedes Zuruecksetzen — siehe _reset_logo und ui._load_logo."""
+    return os.path.join(config.BASE_DIR, "Layout", "logo_default.png")
 
 
 def _reset_logo() -> None:

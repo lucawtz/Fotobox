@@ -32,8 +32,13 @@ logger = logging.getLogger(__name__)
 _STATUS_TTL_S = 20.0
 
 _lock = threading.Lock()
+# `state` ist der CUPS-Zustand des aufgeloesten Druckers (idle | printing |
+# disabled | unknown) oder None, wenn gar keiner in Frage kommt. Er haengt hier
+# mit drin, damit die UI "geprueft bereit" von "angeboten, aber nicht
+# auslesbar" unterscheiden kann — `available` allein sagt das nicht, weil
+# 'unknown' bewusst als bereit durchgeht (siehe list_printers).
 _status: dict = {"available": False, "printer": None, "message": "noch nicht geprüft",
-                 "checked": 0.0}
+                 "state": None, "checked": 0.0}
 
 
 # ── CUPS-Abfragen ──────────────────────────────────────────────────────────────
@@ -147,14 +152,14 @@ def refresh_status(cfg: dict) -> dict:
     """Fragt CUPS wirklich ab und aktualisiert den Cache."""
     with _lock:
         if not cfg.get("print_enabled", True):
-            _status.update(available=False, printer=None,
+            _status.update(available=False, printer=None, state=None,
                            message="Drucken in der Config deaktiviert",
                            checked=time.monotonic())
             return dict(_status)
 
         printers = list_printers()
         if not printers:
-            _status.update(available=False, printer=None,
+            _status.update(available=False, printer=None, state=None,
                            message="Kein Drucker in CUPS eingerichtet",
                            checked=time.monotonic())
             return dict(_status)
@@ -163,17 +168,27 @@ def refresh_status(cfg: dict) -> dict:
         if name is None:
             wanted = cfg.get("printer_name")
             _status.update(
-                available=False, printer=None,
+                available=False, printer=None, state=None,
                 message=f"Drucker '{wanted}' nicht gefunden",
                 checked=time.monotonic())
             return dict(_status)
 
         entry = next((p for p in printers if p["name"] == name), None)
         ready = bool(entry and entry["ready"])
-        _status.update(
-            available=ready, printer=name,
-            message="bereit" if ready else f"Drucker '{name}' ist deaktiviert",
-            checked=time.monotonic())
+        state = entry["state"] if entry else "unknown"
+        # Meldung aus dem Zustand statt aus dem Ja/Nein: "ist deaktiviert" war
+        # frueher die Antwort auf JEDEN nicht-bereiten Zustand, auch auf
+        # solche, die CUPS ausser 'disabled' liefert.
+        if state == "unknown":
+            message = f"Drucker '{name}' gefunden, Zustand nicht auslesbar"
+        elif ready:
+            message = "bereit"
+        elif state == "disabled":
+            message = f"Drucker '{name}' ist deaktiviert"
+        else:
+            message = f"Drucker '{name}' meldet '{state}'"
+        _status.update(available=ready, printer=name, state=state,
+                       message=message, checked=time.monotonic())
         return dict(_status)
 
 
@@ -210,6 +225,23 @@ def _paper_mm(cfg: dict) -> tuple[float, float]:
     return max(w, h), min(w, h)
 
 
+def _print_dpi(cfg: dict) -> int:
+    """Druckaufloesung aus der Config, immer plausibel.
+
+    Wie _paper_mm die einzige Quelle: prepare() und die Testseite muessen
+    dieselbe Zahl benutzen, sonst passt die Testseite nicht aufs Blatt.
+    """
+    raw = cfg.get("print_dpi", 300)
+    try:
+        dpi = int(raw or 300)
+        if dpi <= 0:
+            raise ValueError("dpi muss positiv sein")
+        return dpi
+    except (TypeError, ValueError) as exc:
+        logger.warning("Ungueltiges print_dpi %r (%s) — nutze 300", raw, exc)
+        return 300
+
+
 def _paper_aspect(cfg: dict) -> float:
     """Seitenverhältnis des Papiers (Breite/Höhe) im Querformat."""
     long_mm, short_mm = _paper_mm(cfg)
@@ -237,13 +269,7 @@ def prepare(path: str, cfg: dict) -> str:
 
     mode = (cfg.get("print_mode") or "auto").lower()
     target = _paper_aspect(cfg)
-    try:
-        dpi = int(cfg.get("print_dpi", 300) or 300)
-        if dpi <= 0:
-            raise ValueError
-    except (TypeError, ValueError):
-        logger.warning("Ungueltiges print_dpi %r — nutze 300", cfg.get("print_dpi"))
-        dpi = 300
+    dpi = _print_dpi(cfg)
     long_mm, short_mm = _paper_mm(cfg)
 
     try:
@@ -339,3 +365,214 @@ def print_photo(path: str, cfg: dict) -> tuple[bool, str]:
                 os.remove(prepared)
             except OSError:
                 pass
+
+
+# ── Testdruck ──────────────────────────────────────────────────────────────────
+#
+# Vor einem Event sind es immer dieselben vier Fragen: Kommt ueberhaupt Papier?
+# Stimmt das Format? Wird der Rand abgeschnitten? Sind die Farben brauchbar?
+# Ein Foto beantwortet davon nur die erste — auf einem Gruppenbild sieht
+# niemand, dass links 3 mm fehlen. Darum eine Seite mit Rahmen, Eckwinkeln und
+# Massstab: jedes Element beantwortet genau eine der Fragen.
+
+_MODE_LABEL = {
+    "auto":  "automatisch (Einzelfoto randlos, Collage vollständig)",
+    "cover": "immer randlos",
+    "fit":   "immer vollständig",
+}
+
+
+def _test_font(size_px: int):
+    """Schrift fuer die Testseite, nach Verfuegbarkeit auf dem Ziel.
+
+    Kein Grund fuer eine neue Abhaengigkeit: das Pi hat DejaVu, und pygame ist
+    ohnehin Pflicht und bringt eine Schrift mit — dieselbe, auf die auch ui.py
+    zurueckfaellt. Zuletzt Pillows eingebaute: dann sieht es haesslich aus,
+    aber der Testdruck kommt trotzdem heraus.
+    """
+    from PIL import ImageFont
+    candidates = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                  "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+    try:
+        import pygame
+        candidates.append(os.path.join(os.path.dirname(pygame.__file__),
+                                       "freesansbold.ttf"))
+    except ImportError:
+        pass
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size_px)
+        except OSError:
+            continue
+    try:
+        return ImageFont.load_default(size=size_px)   # Pillow >= 10.1
+    except TypeError:                                  # aeltere Pillow
+        return ImageFont.load_default()
+
+
+def test_page(cfg: dict, printer: Optional[str] = None) -> str:
+    """Zeichnet eine Testseite im eingestellten Papierformat.
+
+    Bewusst exakt im Seitenverhaeltnis des Papiers erzeugt: dann laesst
+    prepare() sie unveraendert durch (cover wie fit sind hier identisch), und
+    was auf dem Blatt fehlt, hat wirklich der Drucker abgeschnitten und nicht
+    die Aufbereitung. Damit ist der Testdruck aussagekraeftig, egal welcher
+    print_mode eingestellt ist.
+
+    Alle Positionen sind Anteile der Blatthoehe, nur Rahmen, Eckwinkel und
+    Massstab sind in mm — die muessen physikalisch stimmen, der Rest soll auf
+    jedem Papierformat sitzen (Postkarte wie 13x18).
+
+    Rueckgabe: Pfad einer temporaeren JPEG-Datei; der Aufrufer loescht sie.
+    """
+    from PIL import Image, ImageDraw
+
+    long_mm, short_mm = _paper_mm(cfg)
+    dpi = _print_dpi(cfg)
+
+    def px(v_mm: float) -> int:
+        return int(round(v_mm / 25.4 * dpi))
+
+    w, h = px(long_mm), px(short_mm)
+    xr, yb = w - 1, h - 1
+    img = Image.new("RGB", (w, h), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+
+    ink  = (25, 25, 25)
+    soft = (110, 110, 110)
+    mark = (220, 0, 120)          # kraeftig, faellt auch auf blassem Druck auf
+
+    # Rahmen 5 mm vom Blattrand. Ringsum gleich breit = Format und Skalierung
+    # stimmen; auf einer Seite duenner = das Bild sitzt nicht mittig.
+    inset = px(5)
+    d.rectangle([inset, inset, xr - inset, yb - inset],
+                outline=ink, width=max(1, px(0.4)))
+
+    # Eckwinkel direkt am Blattrand. Randlos druckende Treiber vergroessern das
+    # Bild leicht ("bleed") — dann fehlen genau diese Winkel, und man weiss,
+    # wie viel ein echtes Foto am Rand verliert.
+    arm, thick = px(9), max(2, px(0.8))
+    for horiz, vert in (
+        ((0, 0, arm, thick),                 (0, 0, thick, arm)),
+        ((xr - arm, 0, xr, thick),           (xr - thick, 0, xr, arm)),
+        ((0, yb - thick, arm, yb),           (0, yb - arm, thick, yb)),
+        ((xr - arm, yb - thick, xr, yb),     (xr - thick, yb - arm, xr, yb)),
+    ):
+        d.rectangle(horiz, fill=mark)
+        d.rectangle(vert, fill=mark)
+
+    # Textblock. Bewusst ohne `anchor=`: das unterstuetzt die eingebaute
+    # Pillow-Schrift aus _test_font nicht, und daran soll der Testdruck nicht
+    # scheitern.
+    x0, x1 = px(11), w - px(11)
+    f_title = _test_font(max(8, int(h * 0.085)))
+    f_body  = _test_font(max(6, int(h * 0.040)))
+    f_small = _test_font(max(6, int(h * 0.030)))
+
+    d.text((x0, int(h * 0.055)), "TESTDRUCK", font=f_title, fill=ink)
+    d.text((x0, int(h * 0.165)),
+           "Rahmen ringsum gleich breit? Eckwinkel vollständig? "
+           "Dann stimmen Format und Ränder.",
+           font=f_small, fill=soft)
+
+    media = (cfg.get("print_media") or "").strip() or "Treiber-Standard"
+    mode  = (cfg.get("print_mode") or "auto").lower()
+    def clip(text: str, font, limit: int) -> str:
+        """Kuerzt auf die Rahmenbreite. CUPS-Namen wie
+        'Canon_SELPHY_CP1500_5640_series__Dachboden_' sind laenger als das
+        Blatt breit ist, und der Text wuerde sonst stumm ins Nichts laufen."""
+        try:
+            if d.textlength(text, font=font) <= limit:
+                return text
+            while text and d.textlength(text + "…", font=font) > limit:
+                text = text[:-1]
+            return text + "…"
+        except (AttributeError, TypeError):   # Schrift ohne Laengenmessung
+            return text
+
+    lines = [
+        f"Drucker:   {printer or 'Standarddrucker'}",
+        f"Papier:    {long_mm:g} x {short_mm:g} mm · {dpi} dpi · Medium {media}",
+        f"Ausgabe:   {_MODE_LABEL.get(mode, mode)}",
+        f"Gedruckt:  {time.strftime('%d.%m.%Y %H:%M')}",
+    ]
+    for i, line in enumerate(lines):
+        d.text((x0, int(h * (0.27 + 0.055 * i))),
+               clip(line, f_body, x1 - x0), font=f_body, fill=ink)
+
+    # Farbfelder und Graukeil: zeigen leere Farbbaender und einen zugesetzten
+    # Druckkopf, bevor es das Gruppenfoto tut.
+    d.text((x0, int(h * 0.505)),
+           "Farben und Graustufen müssen sich klar voneinander abheben:",
+           font=f_small, fill=soft)
+    patches = [(230, 30, 40), (0, 160, 70), (30, 80, 200),
+               (0, 170, 210), (220, 0, 140), (250, 210, 0)]
+    greys = [(v, v, v) for v in (255, 204, 153, 102, 51, 0)]
+
+    def swatch_row(colors, top_frac, bottom_frac):
+        top, bottom = int(h * top_frac), int(h * bottom_frac)
+        span = (x1 - x0) / len(colors)
+        for i, col in enumerate(colors):
+            left = int(x0 + i * span)
+            right = int(x0 + (i + 1) * span) - max(1, px(0.5))
+            d.rectangle([left, top, right, bottom], fill=col, outline=soft)
+
+    swatch_row(patches, 0.565, 0.665)
+    swatch_row(greys,   0.675, 0.755)
+
+    # Massstab: der einzige Weg, eine falsche Skalierung wirklich zu belegen.
+    # Laenge nach Papier gewaehlt, damit er auch auf kleinem Format passt.
+    usable_mm = long_mm - 22.0
+    bar_mm = next((c for c in (100.0, 50.0, 20.0, 10.0) if c <= usable_mm),
+                  max(usable_mm, 1.0))
+    tick_mm = 10.0 if bar_mm >= 20.0 else bar_mm / 5.0
+    bar_y = int(h * 0.845)
+    d.rectangle([x0, bar_y, x0 + px(bar_mm), bar_y + max(1, px(0.5))], fill=ink)
+    pos = 0.0
+    while pos <= bar_mm + 1e-6:
+        long_tick = pos in (0.0, bar_mm) or abs(pos - bar_mm / 2) < 1e-6
+        tick_x = x0 + px(pos)
+        d.rectangle([tick_x, bar_y - px(4.0 if long_tick else 2.0),
+                     tick_x + max(1, px(0.5)), bar_y], fill=ink)
+        pos += tick_mm
+    d.text((x0, int(h * 0.885)),
+           f"Massstab: diese Linie muss genau {bar_mm:g} mm lang sein — nachmessen.",
+           font=f_small, fill=soft)
+
+    fd, tmp = tempfile.mkstemp(prefix="fotobox-testpage-", suffix=".jpg")
+    os.close(fd)
+    img.save(tmp, "JPEG", quality=95, dpi=(dpi, dpi))
+    logger.info("Testseite erzeugt: %dx%d px (%g x %g mm @ %d dpi)",
+                w, h, long_mm, short_mm, dpi)
+    return tmp
+
+
+def print_test(cfg: dict) -> tuple[bool, str]:
+    """Druckt eine Testseite ueber denselben Weg wie ein echtes Foto.
+
+    Immer genau EIN Blatt, egal was `print_copies` sagt: der Testdruck soll das
+    Papier pruefen, nicht verbrauchen — Thermosublimationspapier kommt in
+    gezaehlten Boegen, und 9 Testdrucke waeren ein teurer Vertipper.
+
+    Rueckgabe wie print_photo: (erfolgreich, Meldung).
+    """
+    st = refresh_status(cfg)
+    if not st["available"]:
+        return False, st["message"]
+
+    try:
+        path = test_page(cfg, st["printer"])
+    except ImportError:
+        return False, "Pillow fehlt — Testseite kann nicht erzeugt werden"
+    except Exception as exc:
+        logger.error("Testseite: %s", exc, exc_info=True)
+        return False, "Testseite konnte nicht erzeugt werden"
+
+    try:
+        ok, message = print_photo(path, dict(cfg, print_copies=1))
+        return ok, ("Testseite wird gedruckt" if ok else message)
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass

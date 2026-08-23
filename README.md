@@ -281,6 +281,21 @@ lpstat -p                      # muss "is idle. enabled" melden
 Danach im Admin-Panel unter **Drucken** das Zielgerät auswählen. Solange CUPS
 keinen bereiten Drucker meldet, blendet die Box den „Drucken"-Knopf aus.
 
+**Testdruck aus dem Panel:** auf derselben Seite unten „Testseite drucken". Das
+Blatt trägt einen Rahmen 5 mm vom Papierrand, Eckwinkel direkt am Rand und eine
+Maßstab-Linie mit angeschriebener Länge. Damit sind die drei Fragen beantwortet,
+die man einem gedruckten Gruppenfoto nicht ansieht:
+
+| Beobachtung | Bedeutung |
+|---|---|
+| Rahmen ringsum gleich breit | Format und Zentrierung stimmen |
+| Rahmen auf einer Seite dünner | Bild sitzt nicht mittig |
+| Eckwinkel fehlen | Treiber druckt randlos mit Überstand — so viel verliert jedes Foto am Rand |
+| Maßstab-Linie zu kurz/lang | `print_size_mm` passt nicht zum eingelegten Papier |
+
+Der Testdruck nimmt immer genau ein Blatt, unabhängig von `print_copies`, und
+ist auf einen alle 30 s begrenzt.
+
 **Welche Optionen der Treiber akzeptiert**, zeigt:
 
 ```bash

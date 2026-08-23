@@ -1,5 +1,6 @@
 """Galerie-Server: Routing, Löschen, Rollentrennung, Bind-Entscheidung."""
 import os
+import time
 
 import pytest
 
@@ -452,3 +453,84 @@ def test_public_api_exposes_owner_links(app, links, endpoint):
     assert data["booking_url"] == "https://example.com/buchen"
     assert data["booking_label"] == "Fotobox mieten"
     assert data["instagram_url"] == "https://instagram.com/foo"
+
+
+# ── Testdruck ──────────────────────────────────────────────────────────────────
+
+def test_print_test_is_admin_only(app, monkeypatch):
+    import printing
+    monkeypatch.setattr(printing, "print_test", lambda cfg: (True, "Testseite wird gedruckt"))
+    monkeypatch.setattr(gallery_server, "_last_test_print", None)
+    assert app.post("/api/admin/print-test").status_code == 401
+    assert _login(app, "host").post("/api/admin/print-test").status_code == 403
+    assert _login(app, "admin").post("/api/admin/print-test").status_code == 200
+
+
+def test_print_test_cooldown_blocks_second_sheet(app, monkeypatch):
+    """Doppelklick oder zweiter Tab darf kein zweites Blatt ziehen."""
+    import printing
+    calls = []
+    monkeypatch.setattr(printing, "print_test",
+                        lambda cfg: (calls.append(cfg) or (True, "Testseite wird gedruckt")))
+    monkeypatch.setattr(gallery_server, "_last_test_print", None)
+    client = _login(app)
+
+    assert client.post("/api/admin/print-test").get_json()["ok"] is True
+    second = client.post("/api/admin/print-test")
+    assert second.status_code == 429
+    assert len(calls) == 1
+
+
+def test_failed_print_test_allows_immediate_retry(app, monkeypatch):
+    """Ein abgelehnter Auftrag verbraucht kein Papier — wer Papier nachlegt,
+    soll sofort erneut testen koennen statt 30 s zu warten."""
+    import printing
+    monkeypatch.setattr(printing, "print_test", lambda cfg: (False, "Kein Papier"))
+    monkeypatch.setattr(gallery_server, "_last_test_print", None)
+    client = _login(app)
+
+    first = client.post("/api/admin/print-test")
+    assert first.status_code == 200
+    assert first.get_json() == {"ok": False, "message": None, "error": "Kein Papier"}
+    assert client.post("/api/admin/print-test").status_code == 200
+
+
+def test_first_test_print_after_boot_is_not_blocked(app, monkeypatch):
+    """`time.monotonic()` zaehlt ab Systemstart. Mit 0.0 als "noch nie
+    gedruckt" lief der erste Testdruck auf einer frisch gebooteten Box in die
+    Sperre — genau in dem Moment, in dem man den Drucker pruefen will."""
+    import printing
+    monkeypatch.setattr(printing, "print_test", lambda cfg: (True, "Testseite wird gedruckt"))
+    monkeypatch.setattr(gallery_server, "_last_test_print", None)
+    monkeypatch.setattr(gallery_server.time, "monotonic", lambda: 3.0)
+    assert _login(app).post("/api/admin/print-test").status_code == 200
+
+
+def test_concurrent_test_prints_pull_one_sheet(app, monkeypatch):
+    """Zwei gleichzeitige Anfragen (Doppelklick auf einem Thread-Server) duerfen
+    nicht beide durch die Zeitpruefung rutschen, bevor der Stempel steht."""
+    import printing
+    import threading
+    started = threading.Event()
+    calls = []
+
+    def slow_print(cfg):
+        calls.append(cfg)
+        started.set()
+        time.sleep(0.2)          # Fenster, in dem der zweite Klick ankommt
+        return True, "Testseite wird gedruckt"
+
+    monkeypatch.setattr(printing, "print_test", slow_print)
+    monkeypatch.setattr(gallery_server, "_last_test_print", None)
+    client = _login(app)
+
+    codes = []
+    first = threading.Thread(
+        target=lambda: codes.append(client.post("/api/admin/print-test").status_code))
+    first.start()
+    assert started.wait(2), "erster Testdruck startete nicht"
+    codes.append(client.post("/api/admin/print-test").status_code)
+    first.join()
+
+    assert len(calls) == 1, "zwei Blatt statt einem"
+    assert sorted(codes) == [200, 429]

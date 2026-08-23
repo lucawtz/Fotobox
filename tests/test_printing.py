@@ -279,3 +279,85 @@ def test_status_is_cached(cfg, cups, monkeypatch):
     monkeypatch.setattr(printing, "_STATUS_TTL_S", -1)
     printing.status(cfg)
     assert len(calls) > n1
+
+
+# ── Testdruck ──────────────────────────────────────────────────────────────────
+
+def test_test_page_matches_paper_size(cfg):
+    """Die Testseite muss exakt im Papierformat liegen — sonst wuerde prepare()
+    sie beschneiden, und der gedruckte Rahmen saesse nicht mehr am Blattrand."""
+    cfg["print_size_mm"] = [148, 100]
+    cfg["print_dpi"] = 300
+    page = printing.test_page(cfg, "Selphy")
+    try:
+        with Image.open(page) as im:
+            assert (im.width, im.height) == (1748, 1181)
+    finally:
+        os.remove(page)
+
+
+def test_test_page_survives_prepare_unchanged(cfg):
+    """Egal welcher print_mode: die Seite darf weder Rand bekommen noch
+    beschnitten werden, sonst misst man die Aufbereitung statt den Drucker."""
+    cfg["print_size_mm"] = [148, 100]
+    page = printing.test_page(cfg, "Selphy")
+    try:
+        for mode in ("auto", "cover", "fit"):
+            cfg["print_mode"] = mode
+            out = printing.prepare(page, cfg)
+            try:
+                with Image.open(out) as im:
+                    size = (im.width, im.height)
+                assert size == (1748, 1181), mode
+                # Der Eckwinkel sitzt am Blattrand; ein weisser Rand hier
+                # hiesse, dass 'fit' die Seite verkleinert hat.
+                with Image.open(out) as im:
+                    assert im.load()[2, 2] != (255, 255, 255), mode
+            finally:
+                if out != page:
+                    os.remove(out)
+    finally:
+        os.remove(page)
+
+
+@pytest.mark.parametrize("size", [[148, 100], [180, 130], [100, 148], [60, 40]])
+def test_test_page_renders_on_any_format(cfg, size):
+    """Kleines wie grosses Papier, quer wie hoch — die Seite darf nirgends
+    ueber den Rand laufen oder beim Zeichnen aussteigen."""
+    cfg["print_size_mm"] = size
+    page = printing.test_page(cfg, "Selphy")
+    try:
+        with Image.open(page) as im:
+            assert im.width >= im.height, "Testseite ist immer Querformat"
+    finally:
+        os.remove(page)
+
+
+def test_print_test_forces_single_copy(cfg, cups):
+    """print_copies gilt fuer Gaeste-Fotos, nicht fuer den Test: 9 Testblatt
+    waeren ein teurer Vertipper."""
+    calls = cups()
+    cfg["print_copies"] = 9
+    ok, msg = printing.print_test(cfg)
+    assert ok is True, msg
+    lp = next(c for c in calls if c[0] == "lp")
+    assert "-n" not in lp, f"Testdruck mit mehreren Kopien: {lp}"
+    assert cfg["print_copies"] == 9, "Config wurde veraendert statt kopiert"
+
+
+def test_print_test_without_printer_does_not_print(cfg, cups):
+    calls = cups(p_out="")
+    ok, msg = printing.print_test(cfg)
+    assert ok is False
+    assert "Kein Drucker" in msg
+    assert not [c for c in calls if c[0] == "lp"]
+
+
+def test_print_test_cleans_up_both_tempfiles(cfg, cups):
+    import glob
+    import tempfile as tf
+    cups()
+    pattern = os.path.join(tf.gettempdir(), "fotobox-*")
+    before = set(glob.glob(pattern))
+    printing.print_test(cfg)
+    assert set(glob.glob(pattern)) == before, "Testseite oder Druckbild blieb liegen"

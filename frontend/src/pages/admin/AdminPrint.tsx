@@ -11,10 +11,15 @@ import {
   TextField,
   Chip,
   FormControlLabel,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from "@mui/material";
 import PrintRoundedIcon from "@mui/icons-material/PrintRounded";
 import TuneRoundedIcon from "@mui/icons-material/TuneRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
+import FactCheckRoundedIcon from "@mui/icons-material/FactCheckRounded";
 import { api, AdminConfig, PrinterInfo } from "../../api";
 import SettingsCard from "./SettingsCard";
 
@@ -27,6 +32,30 @@ const MODES = [
     hint: "Zeigt das ganze Bild, lässt dafür einen weißen Rand." },
 ];
 
+// CUPS-Zustaende uebersetzen. printing._printer_states liefert das englische
+// Wort aus `lpstat -p` durch (idle | printing | disabled) — in einer deutschen
+// Oberflaeche stand da vorher schlicht "idle".
+//
+// Sonderfall "unknown": das heisst NICHT "Drucker kaputt", sondern "lpstat hat
+// nicht auf Englisch geantwortet, der Zustand ist nicht auslesbar" (siehe
+// printing.list_printers). Deshalb blieb `ready` dort bewusst true — der
+// gruene Erfolgs-Chip war trotzdem falsch, denn zugesichert ist hier nichts.
+// Neutral grau sagt das Richtige: unbekannt, wird aber angeboten.
+const STATE_LABEL: Record<string, { label: string; color: "success" | "warning" | "info" | "default"; title?: string }> = {
+  idle:     { label: "bereit",       color: "success" },
+  printing: { label: "druckt",       color: "info"    },
+  disabled: { label: "deaktiviert",  color: "warning",
+              title: "In CUPS deaktiviert — dieser Drucker nimmt keine Auftraege an." },
+  unknown:  { label: "Status unbekannt", color: "default",
+              title: "CUPS meldet den Zustand nicht auf Englisch, deshalb ist er "
+                   + "nicht auslesbar. Drucken wird trotzdem angeboten — ein "
+                   + "echter Fehler erscheint dann beim Druckversuch." },
+};
+
+/** Fallback fuer Zustaende, die CUPS ausser den vier bekannten liefert. */
+const stateChip = (state: string) =>
+  STATE_LABEL[state] ?? { label: state, color: "default" as const };
+
 export default function AdminPrint() {
   const [cfg, setCfg] = useState<AdminConfig | null>(null);
   const [info, setInfo] = useState<PrinterInfo | null>(null);
@@ -35,6 +64,8 @@ export default function AdminPrint() {
   const [copies, setCopies] = useState(1);
   const [mode, setMode] = useState("auto");
   const [busy, setBusy] = useState(false);
+  const [testOpen, setTestOpen] = useState(false);
+  const [testBusy, setTestBusy] = useState(false);
   const [toast, setToast] = useState<{ sev: "success" | "error"; msg: string } | null>(null);
 
   const loadPrinters = () => api.admin.printers().then(setInfo).catch(() => setInfo(null));
@@ -75,7 +106,34 @@ export default function AdminPrint() {
     } finally { setBusy(false); }
   };
 
+  const runTest = async () => {
+    setTestBusy(true);
+    try {
+      const r = await api.admin.printTest();
+      setToast(r.ok
+        ? { sev: "success", msg: r.message ?? "Testseite wird gedruckt" }
+        : { sev: "error", msg: r.error ?? "Testdruck fehlgeschlagen" });
+      // Nach einem Fehlschlag hat sich der Druckerzustand meist geaendert
+      // (Papier leer, Deckel offen) — die Anzeige oben soll das mitbekommen.
+      loadPrinters();
+    } catch (e) {
+      setToast({ sev: "error", msg: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setTestBusy(false);
+      setTestOpen(false);
+    }
+  };
+
   const st = info?.status;
+
+  // Der Testdruck nimmt die gespeicherte Config vom Server, nicht das Formular
+  // hier. Bei ungesicherten Aenderungen wuerde man also etwas anderes testen,
+  // als man gerade sieht — deshalb erst speichern.
+  const testBlocked =
+    dirty            ? "Erst speichern — getestet wird mit den gespeicherten Einstellungen."
+    : !enabled       ? "Drucken ist ausgeschaltet."
+    : !st?.available ? "Es ist kein Drucker bereit."
+    : null;
 
   return (
     <Stack spacing={3}>
@@ -89,6 +147,15 @@ export default function AdminPrint() {
       {/* Zustand zuerst: die häufigste Frage am Event-Tag ist "geht der Drucker?" */}
       {info === null ? (
         <Skeleton variant="rounded" height={64} />
+      ) : st?.available && st.state === "unknown" ? (
+        // Angeboten, aber nicht bestaetigt: gruen waere hier zu viel
+        // versprochen — CUPS hat den Zustand nicht preisgegeben.
+        <Alert severity="info">
+          Drucker <strong>{st.printer}</strong> ist eingerichtet, sein Zustand
+          lässt sich aber nicht auslesen (CUPS antwortet nicht auf Englisch).
+          Der „Drucken"-Knopf wird angezeigt — ob wirklich Papier kommt, zeigt
+          erst der erste Druckversuch.
+        </Alert>
       ) : st?.available ? (
         <Alert severity="success">
           Drucker <strong>{st.printer}</strong> ist bereit. Der „Drucken"-Knopf
@@ -131,13 +198,26 @@ export default function AdminPrint() {
               </MenuItem>
               {info.printers.map((p) => (
                 <MenuItem key={p.name} value={p.name}>
-                  {p.name}
-                  <Chip
-                    size="small"
-                    label={p.state}
-                    color={p.ready ? "success" : "warning"}
-                    sx={{ ml: 1 }}
-                  />
+                  {/* minWidth 0 + Ellipse: CUPS-Namen wie
+                      "Canon_SELPHY_CP1500_5640_series__Dachboden_" sind lang,
+                      und der Chip soll nicht aus der Zeile geschoben werden. */}
+                  <Box component="span" sx={{ minWidth: 0, flex: 1, overflow: "hidden",
+                                              textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {p.name}
+                  </Box>
+                  {(() => {
+                    const st = stateChip(p.state);
+                    return (
+                      <Chip
+                        size="small"
+                        label={st.label}
+                        color={st.color}
+                        variant={st.color === "default" ? "outlined" : "filled"}
+                        title={st.title}
+                        sx={{ ml: 1, flexShrink: 0 }}
+                      />
+                    );
+                  })()}
                 </MenuItem>
               ))}
             </TextField>
@@ -187,6 +267,34 @@ export default function AdminPrint() {
         ) : <Skeleton variant="rounded" height={56} />}
       </SettingsCard>
 
+      <SettingsCard
+        icon={<FactCheckRoundedIcon />}
+        title="Testdruck"
+        description="Ein Blatt zur Kontrolle, bevor der erste Gast davorsteht."
+      >
+        <Stack spacing={2} alignItems="flex-start">
+          <Typography variant="body2" color="text.secondary">
+            Druckt eine Seite mit Rahmen, Eckwinkeln, Maßstab und Farbfeldern.
+            Ist der Rahmen ringsum gleich breit und die Maßstab-Linie exakt so
+            lang wie angeschrieben, stimmen Papierformat und Ränder — das sieht
+            man einem Gruppenfoto nicht an.
+          </Typography>
+          <Button
+            variant="outlined"
+            startIcon={<PrintRoundedIcon />}
+            disabled={!!testBlocked || testBusy}
+            onClick={() => setTestOpen(true)}
+          >
+            {testBusy ? "Sende…" : "Testseite drucken"}
+          </Button>
+          {testBlocked && (
+            <Typography variant="caption" color="text.secondary">
+              {testBlocked}
+            </Typography>
+          )}
+        </Stack>
+      </SettingsCard>
+
       <Alert severity="info" variant="outlined">
         Papierformat und Treiberoptionen (z.&nbsp;B. randlos beim Canon Selphy)
         stehen in <code>config.py</code> unter <code>print_media</code>,
@@ -213,6 +321,40 @@ export default function AdminPrint() {
           {busy ? "Speichere…" : "Speichern"}
         </Button>
       </Box>
+
+      <Dialog
+        open={testOpen}
+        onClose={testBusy ? undefined : () => setTestOpen(false)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1.25 }}>
+          <FactCheckRoundedIcon color="primary" />
+          Testseite drucken?
+        </DialogTitle>
+        <DialogContent>
+          {/* Der Hinweis auf das Blatt ist kein Beiwerk: Selphy-Papier kommt in
+              gezaehlten Boegen, und die Kassette ist am Eventtag selten voll. */}
+          <Typography variant="body2" color="text.secondary">
+            Das verbraucht <strong>ein Blatt</strong> auf
+            {" "}<strong>{st?.printer ?? "dem Standarddrucker"}</strong> — unabhängig
+            davon, wie viele Kopien pro Druck eingestellt sind.
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+            Gedruckt wird mit den gespeicherten Einstellungen, also genau so,
+            wie die Box später ein Foto ausgibt.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, gap: 1 }}>
+          <Button onClick={() => setTestOpen(false)} disabled={testBusy}
+                  color="inherit" sx={{ flex: 1 }}>
+            Abbrechen
+          </Button>
+          <Button variant="contained" disabled={testBusy} onClick={runTest} sx={{ flex: 1 }}>
+            {testBusy ? "Sende…" : "Drucken"}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {toast && (
         <Alert severity={toast.sev} onClose={() => setToast(null)}>{toast.msg}</Alert>

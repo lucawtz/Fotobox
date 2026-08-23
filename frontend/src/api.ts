@@ -104,6 +104,9 @@ export interface AdminConfig {
   subtitle: string;
   countdown_duration: number;
   has_logo: boolean;
+  /** Ob nach dem Entfernen des Mieter-Logos ein Standard-Logo greift. Ist es
+   *  false, zeigt die Box danach die Initialen des Event-Namens. */
+  has_default_logo: boolean;
   role: AdminRole;
   theme: ThemeColors;
   instagram_url: string;
@@ -145,7 +148,16 @@ export interface PrinterInfo {
   error?: string;
   printers: Printer[];
   default: string | null;
-  status: { available: boolean; printer: string | null; message: string };
+  /** `state` ist der CUPS-Zustand des aufgeloesten Druckers oder null.
+   *  Noetig, weil `available` bei 'unknown' bewusst true ist — die UI soll
+   *  "geprueft bereit" trotzdem von "angeboten, aber nicht auslesbar"
+   *  unterscheiden koennen. */
+  status: {
+    available: boolean;
+    printer: string | null;
+    message: string;
+    state: "idle" | "printing" | "disabled" | "unknown" | null;
+  };
 }
 
 export interface AdminStatus {
@@ -165,6 +177,11 @@ const FETCH_OPTS: RequestInit = { credentials: "include" };
 // immer. Lieber ein klarer Fehler, den der Gast durch Neuladen loest.
 const TIMEOUT_MS = 12_000;
 const UPLOAD_TIMEOUT_MS = 60_000;   // Logo-Upload darf laenger brauchen
+// Der Testdruck rendert erst die Seite und wartet dann, bis CUPS den Auftrag
+// annimmt (printing.print_photo: lp-Timeout 20 s). Die regulaeren 12 s wuerden
+// genau dann abbrechen, wenn der Drucker langsam antwortet — und der Admin
+// haette einen Timeout-Fehler vor einem Blatt, das trotzdem kommt.
+const PRINT_TEST_TIMEOUT_MS = 45_000;
 
 /** fetch mit Zeitlimit. AbortController statt AbortSignal.timeout(), damit
  *  auch aeltere Handy-Browser (Safari < 16) mitspielen. */
@@ -256,12 +273,21 @@ export const api = {
     },
     printers: () =>
       xfetch("/api/admin/printers").then(json<PrinterInfo>),
+    // Druckt eine Testseite mit den GESPEICHERTEN Einstellungen.
+    printTest: () =>
+      xfetch("/api/admin/print-test", { method: "POST" }, PRINT_TEST_TIMEOUT_MS)
+        .then(json<{ ok: boolean; message?: string; error?: string }>),
     uploadLogo: async (file: File) => {
       const fd = new FormData();
       fd.set("logo", file);
       const res = await xfetch("/api/admin/logo", { method: "POST", body: fd }, UPLOAD_TIMEOUT_MS);
       return json<{ ok: boolean; error?: string }>(res);
     },
+    // Entfernt nur das hochgeladene Logo. Das Standard-Logo des Box-Besitzers
+    // bleibt liegen und greift danach wieder.
+    deleteLogo: () =>
+      xfetch("/api/admin/logo", { method: "DELETE" })
+        .then(json<{ ok: boolean; error?: string; has_logo: boolean; has_default_logo: boolean }>),
     reset: (confirm: string) =>
       postJson("/api/admin/reset", { confirm }).then(json<DeleteResult>),
     // confirm nur noetig, wenn `photos` angehakt ist — der Server prueft das.
