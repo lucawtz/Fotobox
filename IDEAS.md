@@ -61,6 +61,71 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
   nach Hause nimmt. Hängt eng am Stil-Punkt darüber — Stil und Vorlage sind
   dieselbe Entscheidung, einmal geometrisch und einmal grafisch.
 
+- **Greenscreen: Hintergrund gegen eine Vorlage tauschen**
+  *Die Idee:* Grüner Stoff hinter der Box, beim Auslösen ersetzt die Software
+  das Grün durch ein Motiv — Strand, Skyline, Eventgrafik. Der Gast nimmt ein
+  Bild mit, das nicht nach „Fotobox in einer Turnhalle" aussieht.
+  *Was schon da ist:* `opencv-python` und `numpy` stehen bereits in
+  `requirements.txt` (heute für den QR-Zuschnitt in `ui._crop_to_code`) — das
+  Keying selbst zieht also keine neue Abhängigkeit: nach HSV wandeln, Maske
+  über einen Farbbereich, Ränder weichzeichnen, per Maske komponieren. Die
+  Motive lägen als Dateien in `Layout/`, wo heute schon `logo.png` und die
+  beiden QR-Codes liegen.
+  *Wo es in den Ablauf gehört:* Direkt hinter `camera.capture` (`camera.py:200`)
+  und **vor** `collage.make_collage` (`collage.py:86`) — auf jede Einzelaufnahme,
+  nicht auf das fertige 2×2. Sonst müsste das Motiv über den weißen Steg
+  hinweg passen. Nebeneffekt und richtig so: die vier `collage_<gid>_n.jpg` in
+  der Galerie sind dann ebenfalls freigestellt.
+  *Der ehrliche Haken — es ist ein Licht-Problem, kein Code-Problem:*
+  Chroma-Key steht und fällt mit gleichmäßig ausgeleuchtetem, faltenfreiem
+  Grün. Falten, ein Schlagschatten vom Gast, ein Fenster mit Tageslicht
+  daneben — und die Maske frisst Löcher oder lässt grüne Säume stehen. Dazu
+  verschwindet alles Grüne am Gast gleich mit (Kleid, Brille, Deko). Der
+  Aufwand liegt also im **Aufbau** — Stoff mit Rahmen plus mindestens zwei
+  Lampen, mehr Platz, längeres Einrichten beim Mieter — und der wandert in den
+  Mietvorgang, nicht in den Code. Das ist die Entscheidung, nicht die
+  Implementierung.
+  *Rechenzeit, messen bevor gebaut wird:* Die 700D liefert volle Auflösung;
+  vier solche Bilder zu keyen kostet auf dem Pi genau dort Zeit, wo der Gast
+  vor dem Result-Screen wartet. `printing.py:266-271` skaliert für den Druck
+  ohnehin erst auf 10×15 bei `print_dpi` herunter — dort zu keyen wäre um ein
+  Vielfaches billiger, betrifft aber nur den Ausdruck und nicht das Bild in der
+  Galerie. Erst messen, dann entscheiden.
+  *Live-Vorschau wäre der billigste Teil, aber ein eigenes Thema:*
+  `ui._draw_live` (`ui.py:696`) hat den Frame bereits als numpy-Array, schneidet
+  ihn zu und skaliert ihn auf `live_view_rect` (`config.py:134`, 800×450)
+  herunter — eine Maske auf diesem kleinen Frame ist in der 30-fps-Schleife
+  (`main.py:465`) vermutlich unproblematisch. Nur: Vorschau und Foto sind
+  **zwei verschiedene Kameras** — die Vorschau kommt von der HDMI-Capture-Card,
+  das Foto von der 700D. Weißabgleich und Ausschnitt unterscheiden sich, die
+  Vorschau zeigt also nicht, was hinterher gedruckt wird. Entweder man
+  akzeptiert sie als grobe Anzeige „so ungefähr wirst du am Strand stehen" —
+  oder man lässt sie unangetastet und überrascht den Gast im Result-Screen.
+  *Die Variante ohne Stoff:* Personensegmentierung per Modell (MediaPipe,
+  `rembg`) braucht keinen Greenscreen, dafür ein Modell auf dem Pi, deutlich
+  mehr Rechenzeit pro Bild und liefert bei Gruppen und ausgestreckten Armen
+  ausgefranste Kanten. Reizvoll, weil der ganze Aufbau-Haken entfällt — aber
+  eine andere Baustelle als der Zehnzeiler mit `cv2.inRange`, und keine, die
+  man nebenbei aufmacht.
+  *Offen bleibt:*
+  (1) **Wer wählt das Motiv?** Dieselbe Frage wie beim Collage-Stil. Der
+  Gastgeber im Admin-Panel wäre konsistent und ließe die Zwei-Knopf-Bedienung
+  intakt — nur ist beim Hintergrund die Auswahl durch den Gast gerade der Reiz,
+  und der kostet genau den Auswahlbildschirm, den der Stil-Punkt bewusst
+  abgelehnt hat. Kompromiss wäre: Der Gastgeber schaltet drei Motive frei,
+  die Box rotiert sie.
+  (2) **Aus heißt aus.** Hängt kein Stoff, muss das Feature vollständig
+  abschaltbar sein und darf nicht halb greifen — eine Maske, die im
+  Wohnzimmerhintergrund zufällig Grüntöne findet, ruiniert jedes Foto.
+  (3) **Gemeinsame Sache mit dem Vorlagen-Layer** weiter oben: Hintergrund
+  (unterste Ebene) und Rahmen (oberste Ebene) sind zwei Ebenen desselben
+  Bildes. Sie sollten aus demselben Ordner und derselben Auswahl kommen, sonst
+  pflegt man zwei Vorlagensysteme nebeneinander.
+  (4) **Toleranz-Regler.** Farbbereich und Kantenweichheit müssen am
+  Eventabend nachstellbar sein, sonst steht man vor einem Stoff, den der fest
+  verdrahtete Grünbereich nicht trifft. Gehört ins Admin-Panel mit
+  Live-Vorschau — ohne die ist so ein Regler unbedienbar.
+
 - **Anzahl der Aufnahmen konfigurierbar** (3 / 4 / 6 statt fest 4)
   Klein, solange das Raster mitzieht — `COLLAGE_SHOTS` ist heute an das
   2×2-Layout gekoppelt und darf nicht allein verstellt werden.
@@ -184,6 +249,52 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
   nur warnen? Sperren schützt den Vorrat für den späteren Abend, nimmt dem
   Gastgeber aber die Entscheidung aus der Hand. Warnen ist der sanftere
   Anfang.
+
+- **Fernwartung: an die vermietete Box kommen, ohne hinzufahren**
+  *Der Anlass:* Steht die Box beim Mieter und klemmt etwas, ist die einzige
+  Antwort heute Hinfahren. Ein Fernzugang wäre die Abkürzung.
+  *Der Haken, der alles bestimmt:* **Die Box hat im Betrieb kein Internet.**
+  Sie *ist* der Access-Point (`hotspot_enabled: True`, `config.py:93`);
+  `hotspot.py` legt `wlan0` als AP mit `ipv4.method=shared` an und trennt in
+  `_free_interface` (`hotspot.py:102`) sogar bestehende Client-Verbindungen auf
+  demselben Interface, damit der Hotspot sauber hochkommt. Ohne Uplink kein
+  Zugriff von außen — das, nicht der SSH-Daemon, ist die eigentliche Aufgabe.
+  *Wege zu einem Uplink:*
+  (1) **Zweites WLAN-Interface.** `hotspot_interface` ist konfigurierbar
+  (`config.py:95`) — der AP läuft auf einem USB-Stick als `wlan1`, `wlan0`
+  hängt sich ins Location-WLAN. Setzt voraus, dass es dort eins gibt und
+  jemand das Passwort herausrückt.
+  (2) **LTE-Stick oder Handy-Tethering über USB** — unabhängig vom Gastgeber,
+  kostet aber Hardware und Datentarif.
+  (3) **Ethernet**, wenn zufällig eine Dose in Reichweite liegt. Selten.
+  *Wie der Zugang aussähe:* Portfreigabe plus DynDNS scheidet praktisch aus —
+  an den Router einer fremden Location kommt man nicht. Realistisch ist nur ein
+  **ausgehender** Tunnel, den die Box selbst aufbaut (Tailscale, WireGuard auf
+  einen eigenen Server, Cloudflare Tunnel). Dann genügt irgendein Internet,
+  egal hinter welchem NAT.
+  *Was der Anlass schon halb erledigt hat:* Der häufigste Grund für „ich müsste
+  jetzt per SSH ran" war der Absturz ohne Neustart. `fotobox.service:17` steht
+  inzwischen auf `Restart=on-failure` mit `RestartSec=5`, gebremst durch
+  `StartLimitBurst` — offen ist nur noch die Gegenprüfung am echten Gerät
+  (Roadmap P0, Punkt 4). Was danach bleibt, ist der seltenere Rest: Logs lesen,
+  `config.json` korrigieren, Dienst gezielt neu starten.
+  *Der billigere Zwischenschritt:* **Log-Ansicht und Neustart-Knopf im
+  Admin-Panel.** Das erreicht der Gastgeber über den Box-Hotspot ganz ohne
+  Internet, und ich lotse ihn am Telefon hin. `/api/admin/status`
+  (`gallery_server.py:1223`) ist der Anfang, Logs und Neustart fehlen. Deckt
+  vermutlich die Mehrzahl der Fälle ab — ohne Uplink, ohne Tunnel, ohne
+  Fremddienst im Netz. Ein echter SSH-Zugang wäre dann nur noch für das
+  gedacht, was auch das Panel nicht mehr rettet.
+  *Offen bleibt:*
+  (1) **Vertrauen.** Fernzugriff auf die Box heißt Zugriff auf die Gästefotos
+  des laufenden Abends. Key-Auth statt Passwort ist Pflicht, und ehrlich wäre,
+  dem Mieter zu sagen, dass es den Zugang überhaupt gibt.
+  (2) **Wer schaltet ihn scharf?** Dauerhaft an ist bequem und riskant; nur auf
+  Zuruf an ist sauber, braucht aber jemanden vor Ort, der genau diesen Knopf
+  drückt — also wieder das Admin-Panel, und damit hängt Punkt 2 an dem
+  Zwischenschritt darüber.
+  (3) **Fremdabhängigkeit.** Tailscale & Co. sind Dienste Dritter. Wenn der im
+  entscheidenden Moment eine Neuanmeldung verlangt, ist nichts gewonnen.
 
 - **Abendbilanz** — Fotos gesamt, Drucke, Spitzenzeit, längste Pause. Die Daten
   liegen ohnehin im Event-Ordner und in den Logs; nützlich für die Frage, wie

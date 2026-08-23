@@ -4,10 +4,10 @@
 Gäste erreichen die Galerie per QR-Code, Drucken funktioniert sichtbar, und ein
 Absturz beendet nicht den Abend.
 
-**Stand:** Der Working Tree liegt deutlich vor dem letzten Commit `6bff061` —
-P0 ist vollständig abgeräumt, von P1 stehen noch drei Punkte offen: P1-5 (braucht
-Hardware), der Rest von P1-9 (Admin-Oberfläche + README) und P1-15 (Pi-Lockfile,
-geht erst auf dem Pi). P2 ist unangetastet.
+**Stand (23.08.):** Alles committet bis `7804745`. Am Schreibtisch ist nur noch
+**P1-15** offen (exakte Pins, gehen erst auf dem Pi). P0 vollständig abgeräumt,
+P1 bis auf P1-15 umgesetzt, P2 komplett. Was bleibt, ist Nachweis statt Code:
+sieben `[~]`-Punkte warten auf die Hardware-Gegenprüfung.
 Nächster Schritt ist der Hardware-Smoke-Test, sobald die Hardware da ist.
 
 **Rahmen:** Nur eigene Events bis Oktober (keine Vermietung an Dritte) · Drucker
@@ -33,8 +33,9 @@ Drucker, Hotspot, Kamera, Capture-Card, GPIO, Speicher und Abhängigkeiten
 durch und sagt zu jedem Fehler, was zu tun ist. Exit-Code 0 = keine Fehler.
 Es ändert nichts und fasst belegte Geräte nicht an.
 
-Stand 22.08.2026: alles umgesetzt, was ohne angeschlossene Hardware möglich
-ist. **205 Tests, alle grün** — `venv/bin/python -m pytest`.
+Stand 23.08.2026: alles umgesetzt, was ohne angeschlossene Hardware möglich
+ist. **266 Tests, alle grün** — `venv/bin/python -m pytest`; `tsc -b` im
+`frontend/` ebenfalls grün.
 
 **Was noch fehlt:**
 * **P1-15** — `venv/bin/pip freeze > requirements.pi.txt` muss auf dem Pi
@@ -53,7 +54,7 @@ ist. **205 Tests, alle grün** — `venv/bin/python -m pytest`.
 |---|---|---|
 | ~~**22.–30. Aug**~~ ✅ | P0 komplett + P1-13, P1-14, P1-15 (alles ohne Hardware) | erledigt 22.08. — Blocker gefixt, `tsc -b` grün, Routen getestet |
 | **31. Aug – 6. Sep** | Hardware-Smoke-Test des Ist-Zustands, **dann** P1-5 · P1-6/P1-7 sind gebaut, hier nur noch am Monitor verifizieren | Box startet nach Reboot allein und bleibt an |
-| **7.–20. Sep** | P1-9 abschließen (Admin-Oberfläche + README) · P1-10 und P1-11 erledigt, an der Hardware gegenprüfen | 10 Drucke am Stück, Kamera-Fehler sichtbar |
+| **7.–20. Sep** | P1-9 ist gebaut (Backend, Admin-Panel, README) — hier nur noch am echten Selphy gegenprüfen · P1-10 und P1-11 erledigt, an der Hardware gegenprüfen | 10 Drucke am Stück, Kamera-Fehler sichtbar |
 | **21.–27. Sep** | Betriebs-Härtung: P2-17, P2-18, P2-19 · P1-8 und P1-12 sind erledigt | Ein Abend Dauerlauf ohne Eingriff |
 | **28. Sep – 4. Okt** | Rest P2, Doku, Tests ausbauen | README stimmt mit Code überein |
 | **5.–11. Okt** | **Generalprobe** — voller Aufbau, mind. 2 h, echte Gäste-Handys | Abnahme-Checkliste unten vollständig |
@@ -195,12 +196,15 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       *Auf dem Pi einmal `locale` prüfen — bei `en_GB` war der Bug ohnehin
       unsichtbar, bei `de_DE` hätte er den Druck am Eventabend gekostet.*
 
-      **Offen — README.** Weiterhin kein Wort zu Selphy, `lpadmin` oder
-      Druckereinrichtung. `install.sh` installiert CUPS, richtet aber nie einen
-      Drucker ein — ab Werk scheitert `lp` mit „no default destination". Der neue
-      Code meldet das jetzt sauber, behebt es aber nicht: ohne die Anleitung
-      steht der Nutzer vor einer korrekten Fehlermeldung und weiß trotzdem nicht
-      weiter. Gehört mit P2-19 zusammen erledigt.
+      **Erledigt — README (22.08., `ab33dfa`).** `README.md:256` „Drucker
+      einrichten (Canon Selphy)" führt den ganzen Weg vor: `lpinfo -v` zum
+      Finden, `lpinfo -m | grep -i selphy` für den Treiber, `lpadmin` mit
+      `gutenprint.5.3://canon-selphy-cp1500/expert`, `lpoptions -d` als
+      Standard, dann die Auswahl im Admin-Panel. Dazu `lpoptions -p … -l` für
+      die Medien-Namen und `cancel -a` fürs Leeren der Warteschlange.
+      `install.sh` richtet weiterhin bewusst keinen Drucker ein — welches Gerät
+      an welchem USB-Pfad hängt, weiß der Installer nicht —, aber die korrekte
+      Fehlermeldung steht jetzt nicht mehr ohne Anleitung da.
       **Offen — Verifikation.** Noch kein einziger echter Druck. Randlos 10×15 auf
       der Selphy, Einzelfoto *und* 2×2-Collage (verschiedene Seitenverhältnisse,
       genau dafür ist `print_mode: auto` da) — steht auf der Generalprobe-Liste.
