@@ -17,11 +17,16 @@ class Buttons:
         self._left_btn = None
         self._trigger_btn = None
         self._right_btn = None
+        # Ob echte Taster da sind. Die UI blendet danach die Tastenkuerzel
+        # ein oder aus: am Gast-Screen sind "[ Q ]" und "[ Space ]" sinnlos,
+        # weil an der Box keine Tastatur haengt.
+        self.has_gpio = False
         try:
             from gpiozero import Button
             self._left_btn    = Button(pin_left,    pull_up=True, bounce_time=0.1)
             self._trigger_btn = Button(pin_trigger, pull_up=True, bounce_time=0.1)
             self._right_btn   = Button(pin_right,   pull_up=True, bounce_time=0.1)
+            self.has_gpio = True
             logger.info("Buttons: left=GPIO%d  trigger=GPIO%d  right=GPIO%d",
                         pin_left, pin_trigger, pin_right)
         except Exception as exc:

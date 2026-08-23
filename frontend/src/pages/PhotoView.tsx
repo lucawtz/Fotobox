@@ -80,6 +80,23 @@ export default function PhotoView() {
 
   const backTo = event ? `/event/${encodeURIComponent(event)}` : "/";
 
+  // Esc schliesst die Detailansicht. Swiper belegt per Keyboard-Modul nur die
+  // Pfeiltasten; Esc lief bisher ins Leere, obwohl die Ansicht als Vollbild-
+  // Overlay genau danach aussieht.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Steht der Loeschdialog offen, gehoert Esc ihm: MUI schliesst ihn
+      // selbst darauf. Ohne diese Sperre wuerde beides passieren — Dialog zu
+      // UND zurueck zur Galerie. Waehrend des Loeschens ist confirmDel
+      // ebenfalls true, dann traegt die Sperre zusaetzlich.
+      if (confirmDel) return;
+      navigate(backTo);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmDel, backTo, navigate]);
+
   const onDeleted = () => {
     if (!current) return;
     const remaining = photos.filter((p) => photoKey(p) !== photoKey(current));

@@ -276,6 +276,11 @@ def main():
         pin_right   = pins.get("right",   22),
     )
 
+    # Tastenkuerzel auf dem Result-Screen nur zeigen, wenn die Tastatur
+    # wirklich die Eingabe ist. An der Box mit Tastern waere "[ Space ]"
+    # eine Anleitung fuer etwas, das der Gast gar nicht hat.
+    show_hints = not btns.has_gpio
+
     # UI
     try:
         ui = UI(cfg, cfg.get("capture_device", 0))

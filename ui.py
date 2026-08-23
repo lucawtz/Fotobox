@@ -1075,6 +1075,8 @@ class UI:
     _f_normal_pt      = 38
     _header_cache     = None
     _cfg_mtime        = 0.0
+    # Von main.py auf False gesetzt, sobald echte GPIO-Taster da sind.
+    show_key_hints    = True
     _social_cache     = None
     _HEADER_LINE_GAP  = 2     # zwischen umgebrochenen Zeilen eines Blocks
     _HEADER_BLOCK_GAP = 8     # zwischen Event-Name und Untertitel
@@ -1456,12 +1458,11 @@ class UI:
                                      True, C_WHITE)
         self._screen.blit(timer, timer.get_rect(centerx=W // 2, bottom=by - 10))
 
-        # Pfeile werden gezeichnet statt als '←'/'→' gesetzt: pygame findet
-        # fuer SysFont('sans-serif') keinen Treffer (weder in Sysfonts noch in
-        # Sysalias — nur 'sans' waere ein Alias) und faellt deshalb auf das
-        # gebundelte freesansbold.ttf zurueck. Dem fehlen die Pfeil-Glyphen,
-        # es erschien nur ein .notdef-Kaestchen — auf dem Pi genauso wie auf
-        # der Dev-Maschine, weil die Fontdatei im pygame-Paket liegt.
+        # Pfeile werden gezeichnet statt als '←'/'→' gesetzt. Urspruenglich
+        # war der Grund die Fallback-Schrift ohne Pfeil-Glyphen; die ist
+        # inzwischen weg (siehe _font). Gezeichnet bleiben sie trotzdem,
+        # damit sie auf Pi und Dev-Maschine deckungsgleich sind, egal
+        # welche Schrift dort gefunden wird.
         ARROW_SIZE, ARROW_GAP = 22, 14
         defs = [
             ("Zurück",  "left",  "Q",     keys[pygame.K_q]),
@@ -1491,8 +1492,14 @@ class UI:
                     self._draw_arrow(gx + lbl.get_width() + ARROW_GAP + ARROW_SIZE // 2,
                                      ly, ARROW_SIZE, fg, "right")
 
-            hint = self._f_small.render(f"[ {key_hint} ]", True, C_DIM)
-            self._screen.blit(hint, hint.get_rect(centerx=rect.centerx, centery=rect.centery + 20))
+            # Tastenkuerzel nur ohne echte Taster. An der Box haengt keine
+            # Tastatur — dort waere "[ Space ]" eine Anleitung fuer etwas,
+            # das der Gast nicht hat. main.py setzt das Flag aus
+            # Buttons.has_gpio.
+            if self.show_key_hints:
+                hint = self._f_small.render(f"[ {key_hint} ]", True, C_DIM)
+                self._screen.blit(hint, hint.get_rect(
+                    centerx=rect.centerx, centery=rect.centery + 20))
 
     def _draw_arrow(self, cx: int, cy: int, size: int, color, pointing: str):
         """Gefuelltes Dreieck als Pfeil — schriftunabhaengig und damit auf
