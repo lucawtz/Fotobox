@@ -156,6 +156,13 @@ _DEFAULTS: dict = {
     # in Layout/ und wird nicht mitcommittet — auf einer frischen Kopie
     # fehlt sie, dann faellt ui.py auf das Glyph zurueck und sagt es im Log.
     "booking_qr_path": "Layout/booking_qr.png",
+    # Taster-Pins. Ein Wert darf null sein — dann ist dieser Taster nicht
+    # verbaut, und die UI blendet seine Aktionen aus statt einen toten Knopf
+    # zu zeigen. Mit zwei Tastern ist trigger+right die bessere Wahl: dann
+    # bleiben Foto, Collage, Nochmal und Drucken erreichbar, und "Zurueck"
+    # erledigt der 10-Sekunden-Timer des Result-Screens. Fehlt left, weckt
+    # trigger+right gleichzeitig die Kamera.
+    "gpio_pins": {"left": 17, "trigger": 27, "right": 22},
     "disk_warn_mb": 500,
     # Harte Grenze: darunter wird die Aufnahme verweigert, statt gphoto2
     # ins Leere laufen zu lassen. Ein RAW+JPEG-Paar der 700D braucht ~30 MB,

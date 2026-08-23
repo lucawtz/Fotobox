@@ -1077,6 +1077,11 @@ class UI:
     _cfg_mtime        = 0.0
     # Von main.py auf False gesetzt, sobald echte GPIO-Taster da sind.
     show_key_hints    = True
+    # Welche Taster wirklich erreichbar sind. main.py setzt das aus
+    # Buttons.wired(); der Result-Screen zeigt danach nur Aktionen an, die
+    # der Gast auch ausloesen kann. Ein Knopf auf dem Schirm, den niemand
+    # druecken kann, ist schlimmer als gar keiner.
+    wired_buttons     = frozenset(("left", "trigger", "right"))
     _social_cache     = None
     _HEADER_LINE_GAP  = 2     # zwischen umgebrochenen Zeilen eines Blocks
     _HEADER_BLOCK_GAP = 8     # zwischen Event-Name und Untertitel
@@ -1445,10 +1450,23 @@ class UI:
         keys = pygame.key.get_pressed()
         btn_w, btn_h = 340, 72
         gap = 60
-        # Der Druck-Knopf erscheint nur, wenn CUPS einen bereiten Drucker
-        # kennt. Vorher stand "Drucken" immer da und tat sichtbar nichts,
-        # solange kein Drucker eingerichtet war — schlimmer als kein Knopf.
-        n_btn = 3 if self.print_ready else 2
+        # Welche Knoepfe es gibt, entscheidet sich VOR der Geometrie —
+        # sonst zentriert sie auf eine Anzahl, die gar nicht gezeichnet
+        # wird. Der Druck-Knopf erscheint nur, wenn CUPS einen bereiten
+        # Drucker kennt: vorher stand "Drucken" immer da und tat sichtbar
+        # nichts, solange keiner eingerichtet war.
+        #
+        # "Zurück" braucht keinen eigenen Taster — der Timer darueber tut
+        # dasselbe und sagt als "Zurück in 7s" auch, wann. Fehlt der linke
+        # Taster, faellt der Knopf deshalb ersatzlos weg.
+        defs = []
+        if "left" in self.wired_buttons:
+            defs.append(("Zurück", "left", "Q", keys[pygame.K_q]))
+        defs.append(("Nochmal", None, "Space", keys[pygame.K_SPACE]))
+        if self.print_ready and "right" in self.wired_buttons:
+            defs.append(("Drucken", "right", "E", keys[pygame.K_e]))
+
+        n_btn = len(defs)
         total_w = n_btn * btn_w + (n_btn - 1) * gap
         sx = (W - total_w) // 2
         by = H - btn_h - 20
@@ -1464,12 +1482,6 @@ class UI:
         # damit sie auf Pi und Dev-Maschine deckungsgleich sind, egal
         # welche Schrift dort gefunden wird.
         ARROW_SIZE, ARROW_GAP = 22, 14
-        defs = [
-            ("Zurück",  "left",  "Q",     keys[pygame.K_q]),
-            ("Nochmal", None,    "Space", keys[pygame.K_SPACE]),
-        ]
-        if self.print_ready:
-            defs.append(("Drucken", "right", "E", keys[pygame.K_e]))
         for i, (label, arrow, key_hint, hl) in enumerate(defs):
             rect = pygame.Rect(sx + i * (btn_w + gap), by, btn_w, btn_h)
             color = C_BTN_HL if hl else C_BTN_BG

@@ -268,8 +268,10 @@ def main():
             output_mode=str(cfg.get("camera_output_mode", "3")),
         )
 
-    # Buttons (GPIO + Tastatur-Fallback)
-    pins = cfg.get("gpio_pins", {})
+    # Taster (GPIO + Tastatur-Fallback). Ein Pin darf in gpio_pins auf null
+    # stehen — dann ist der Taster nicht verbaut, und die UI blendet seine
+    # Aktionen aus, statt einen toten Knopf anzuzeigen.
+    pins = cfg.get("gpio_pins") or {}
     btns = Buttons(
         pin_left    = pins.get("left",    17),
         pin_trigger = pins.get("trigger", 27),
@@ -285,6 +287,8 @@ def main():
     try:
         ui = UI(cfg, cfg.get("capture_device", 0))
         ui.show_key_hints = show_hints
+        ui.wired_buttons  = frozenset(
+            n for n in Buttons.NAMES if btns.wired(n))
     except Exception as exc:
         logger.error("UI konnte nicht gestartet werden: %s", exc)
         camera.close()
@@ -359,10 +363,14 @@ def main():
                     right   = right   or action_key == "right"
                     left    = left    or action_key == "left"
 
-                # Linker Knopf (Q) auf dem Homescreen = Kamera-Display aufwecken.
+                # Kamera-Display aufwecken. Normalerweise der linke Taster;
+                # ist der nicht verbaut, beide vorhandenen gleichzeitig. Das
+                # findet kein Gast zufaellig, und es spart den dritten
+                # Taster, solange keiner da ist.
                 # Async ausführen damit die UI nicht 8-18 s blockiert während
                 # gphoto2 läuft.
-                if left and not (trigger or right):
+                combo_wake = not btns.wired("left") and trigger and right
+                if combo_wake or (left and not (trigger or right)):
                     idle_since = now
                     if camera.available:
                         logger.info("Manueller Wake — Live-View einschalten")

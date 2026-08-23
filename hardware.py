@@ -7,13 +7,20 @@ logger = logging.getLogger(__name__)
 
 
 class Buttons:
-    """3 GPIO-Buttons (left, trigger, right) mit Tastatur-Fallback.
+    """Bis zu 3 GPIO-Taster (left, trigger, right) mit Tastatur-Fallback.
 
     Tasten: Q = links, Space = auslösen, E = rechts
     GPIO:   Pin 17 = links, Pin 27 = auslösen, Pin 22 = rechts
+
+    Ein Pin darf None sein — dann ist dieser Taster schlicht nicht verbaut.
+    `wired` sagt, welche es gibt; die UI zeigt danach nur Aktionen an, die
+    auch erreichbar sind. Ohne GPIO (Dev-Maschine) gelten alle drei als
+    vorhanden, dort ist die Tastatur die Bedienung.
     """
 
-    def __init__(self, pin_left: int, pin_trigger: int, pin_right: int):
+    NAMES = ("left", "trigger", "right")
+
+    def __init__(self, pin_left, pin_trigger, pin_right):
         self._left_btn = None
         self._trigger_btn = None
         self._right_btn = None
@@ -21,14 +28,26 @@ class Buttons:
         # ein oder aus: am Gast-Screen sind "[ Q ]" und "[ Space ]" sinnlos,
         # weil an der Box keine Tastatur haengt.
         self.has_gpio = False
+        pins = dict(zip(self.NAMES, (pin_left, pin_trigger, pin_right)))
         try:
             from gpiozero import Button
-            self._left_btn    = Button(pin_left,    pull_up=True, bounce_time=0.1)
-            self._trigger_btn = Button(pin_trigger, pull_up=True, bounce_time=0.1)
-            self._right_btn   = Button(pin_right,   pull_up=True, bounce_time=0.1)
+            made = {}
+            for name, pin in pins.items():
+                if pin is None:
+                    continue
+                made[name] = Button(pin, pull_up=True, bounce_time=0.1)
+            if not made:
+                raise RuntimeError("kein Pin konfiguriert")
+            self._left_btn    = made.get("left")
+            self._trigger_btn = made.get("trigger")
+            self._right_btn   = made.get("right")
             self.has_gpio = True
-            logger.info("Buttons: left=GPIO%d  trigger=GPIO%d  right=GPIO%d",
-                        pin_left, pin_trigger, pin_right)
+            logger.info("Taster: %s", "  ".join(
+                f"{n}=GPIO{pins[n]}" for n in self.NAMES if n in made))
+            missing = [n for n in self.NAMES if n not in made]
+            if missing:
+                logger.info("Nicht verbaut: %s — die UI blendet die "
+                            "zugehoerigen Aktionen aus", ", ".join(missing))
         except Exception as exc:
             logger.warning("GPIO-Buttons nicht verfügbar (%s) — nur Tastatur (Q/Space/E)", exc)
 
@@ -46,6 +65,12 @@ class Buttons:
         hw = bool(self._right_btn and self._right_btn.is_pressed)
         kb = bool(pygame.key.get_pressed()[pygame.K_e])
         return hw or kb
+
+    def wired(self, name: str) -> bool:
+        """Ist dieser Taster erreichbar? Ohne GPIO zaehlt die Tastatur."""
+        if not self.has_gpio:
+            return True
+        return getattr(self, f"_{name}_btn") is not None
 
     def any_pressed(self) -> bool:
         return self.left_pressed() or self.trigger_pressed() or self.right_pressed()
