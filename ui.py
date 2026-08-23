@@ -1415,7 +1415,7 @@ class UI:
         # Creme statt Weiss: der Code bringt seine Quiet-Zone jetzt selbst
         # in dieser Farbe mit, ein weisser Rahmen zöge eine sichtbare Kante
         # genau um sie herum.
-        bg.fill(self._theme["logo_circle"])
+        bg.fill(self._qr_card_color())
         self._screen.blit(bg, (x - PAD, y - PAD))
         self._screen.blit(self._qr_surf, (x, y))
 
@@ -1767,7 +1767,7 @@ class UI:
         QR, PAD = self._qr_surf.get_width(), 12
         x, y = W - QR - PAD, H - QR - PAD
         bg = pygame.Surface((QR + PAD * 2, QR + PAD * 2))
-        bg.fill(self._theme["logo_circle"])   # siehe _draw_qr_result
+        bg.fill(self._qr_card_color())        # siehe _draw_qr_result
         bg.set_alpha(220)
         self._screen.blit(bg, (x - PAD, y - PAD))
         self._screen.blit(self._qr_surf, (x, y))
@@ -1924,6 +1924,27 @@ class UI:
     _QR_EYE_KEYS      = ("accent", "logo_text", "accent_dim", "panel_border")
     _QR_EYE_MIN_DELTA = 60
 
+    def _qr_card_color(self) -> tuple:
+        """Grundfarbe der Code-Karten — bewusst nicht immer logo_circle.
+
+        QR-Codes brauchen dunkle Module auf hellem Grund und eine helle
+        Ruhezone. In dunklen Themes war beides verletzt: bei "Royal Night"
+        (logo_circle #1A2540) fiel der Galerie-Code auf Schwarz-auf-Weiss
+        zurueck und sass als weisser Block auf dunkelblauem Rand, der als
+        Ruhezone nichts taugt. Instagrams Code verlor seinen Kontrast ganz,
+        weil _white_to_alpha sein Weiss durchsichtig macht und darunter das
+        Dunkelblau stand.
+
+        Ist logo_circle hell genug, bleibt es dabei — dann behalten helle
+        Themes ihren Cremeton. Sonst wird die Karte hell, auch wenn sie
+        sich damit vom Theme absetzt. Ein Code, den niemand scannt, ist
+        teurer als eine Karte, die auffaellt.
+        """
+        card = self._theme["logo_circle"]
+        if UI._contrast(card, (0, 0, 0)) >= self.QR_CARD_MIN_CONTRAST:
+            return card
+        return (245, 245, 245)
+
     def _qr_colors(self) -> dict:
         """Theme-Farben für den Galerie-QR: Module im Sidebar-Ton, Grund in
         der Cremefarbe der Karte — so verschwindet die Quiet-Zone in ihr,
@@ -1932,7 +1953,7 @@ class UI:
         der Modulfarbe als auch vom Grund abhebt.
         """
         fg  = self._theme["sidebar_bg"]
-        bg  = self._theme["logo_circle"]
+        bg  = self._qr_card_color()
         eye = next((c for c in (self._theme[k] for k in self._QR_EYE_KEYS)
                     if UI._contrast(c, bg) >= UI.QR_MIN_CONTRAST
                     and UI._color_distance(c, fg) >= self._QR_EYE_MIN_DELTA),
@@ -2016,7 +2037,7 @@ class UI:
         y = self._sidebar_qr_y()
 
         card = pygame.Rect(cx - card_w // 2, y, card_w, card_h)
-        pygame.draw.rect(self._screen, self._theme["logo_circle"],
+        pygame.draw.rect(self._screen, self._qr_card_color(),
                          card, border_radius=10)
 
         if qr is not None:
@@ -2128,7 +2149,7 @@ class UI:
                 card_w = surf.get_width() + pad * 2
                 card_h = surf.get_height() + pad * 2
                 card = pygame.Rect(cx - card_w // 2, ry, card_w, card_h)
-                pygame.draw.rect(self._screen, self._theme["logo_circle"],
+                pygame.draw.rect(self._screen, self._qr_card_color(),
                                  card, border_radius=8)
                 self._screen.blit(surf, (card.x + pad, card.y + pad))
                 ty = card.bottom + 6
@@ -2456,6 +2477,10 @@ class UI:
     QR_SIZE         = SOCIAL_QR_SIZE
     QR_BOX          = 10     # Rendergrösse je Modul vor dem Herunterskalieren.
     QR_MIN_CONTRAST = 3.0    # WCAG-Verhältnis Modul zu Grund, sonst s/w.
+    # Ab welcher Helligkeit logo_circle als Kartengrund taugt (Verhältnis
+    # gegen Schwarz). Cremetoene liegen bei 15-17:1, das dunkle Navy von
+    # "Royal Night" (#1A2540) bei 1,6:1.
+    QR_CARD_MIN_CONTRAST = 8.0
 
     @staticmethod
     def _contrast(a, b) -> float:
