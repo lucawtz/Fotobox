@@ -186,6 +186,30 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
   sind **mehr und bessere Presets** (heute acht) plus die Live-Vorschau, nicht
   mehr Einzelregler. Wenn Einzelregler, dann hinter einem „Erweitert"-Bereich.
 
+- **Ton: Countdown-Piep und Auslösegeräusch**
+  *Heute:* Die Box ist stumm. Im ganzen Projekt steht kein einziger
+  `pygame.mixer`-Aufruf — der Countdown existiert nur auf dem Bildschirm.
+  *Warum das am Eventabend zählt:* Der Gast schaut in die Kamera, nicht auf
+  den Monitor — also genau dann nicht hin, wenn der Countdown läuft. Ein Tick
+  pro Sekunde und ein Auslösegeräusch sagen ihm ohne Blickwechsel, wann er
+  lächeln muss und dass das Bild im Kasten ist. Von allen Punkten dieser Liste
+  ist das vermutlich der beste Wirkung-pro-Zeile.
+  *Wie klein das wäre:* `pygame.init()` (`ui.py:415`) startet den Mixer
+  ohnehin mit. Es fehlen eine Handvoll kurzer Dateien und ein `play()` an drei
+  Stellen — Countdown-Tick, Auslöser, Fehlermeldung. Keine neue Abhängigkeit.
+  *Offen bleibt:*
+  (1) **Woher kommt der Ton überhaupt?** Der Pi hängt am HDMI-Monitor; ob der
+  Lautsprecher hat und ob der in einer lauten Feier durchdringt, ist ungeprüft.
+  Wahrscheinlich braucht es einen kleinen Aktivlautsprecher — dann ist es auch
+  ein Punkt auf der Packliste, nicht nur Software.
+  (2) **Lautstärke ins Panel, mit „aus" als echter Stellung.** Steht die Box
+  während der Trauung im Nebenraum, will niemand einen piependen Kasten.
+  (3) **Sauber ausfallen.** Findet SDL kein Audiogerät, darf das die Box nicht
+  anhalten — `pygame.init()` meldet so etwas nicht laut, ein fehlender Sound
+  muss stillschweigend übersprungen werden.
+  (4) **Welcher Ton.** Kamera-Klack oder dezenter Ton ist Geschmack — aber
+  einmal falsch gewählt, hört man ihn den ganzen Abend.
+
 ## Gäste
 
 - **Mehrsprachigkeit**
@@ -211,6 +235,45 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
   und das Admin-Panel sieht ohnehin nur der Gastgeber, der Deutsch kann.
   Der ehrliche Zuschnitt ist vermutlich: **Box-UI und Galerie ja, Admin nein.**
 
+- **QR direkt auf das eben aufgenommene Foto**
+  *Heute:* Der Result-Screen zeigt zehn Sekunden lang das fertige Bild und
+  oben rechts einen QR-Code — aber `_draw_qr_result` (`ui.py:1408`) blittet
+  dieselbe Surface wie die Sidebar (`self._qr_surf`, erzeugt aus
+  `gallery_url`). Der Code führt also in die Galerie, nicht auf das Foto. Wer
+  sein Bild will, sucht es dort selbst.
+  *Was schon da ist:* Die Deep-Link-Route existiert —
+  `/photo/:event/:filename` (`frontend/src/App.tsx:24`), inklusive
+  SPA-Fallback (Roadmap P0-2). `_make_qr` (`ui.py:2571`) erzeugt Codes in
+  Theme-Farben mit Kontrastprüfung, und Event-Ordner wie Dateiname kennt
+  `main.py` im Moment des Result-Screens ohnehin.
+  *Der Haken, an dem die Idee hängt — die Modulzahl:* Der Galerie-Code trägt
+  `http://192.168.4.1/`, das sind 33 Module und bei 132 px Kachel 4 px pro
+  Modul. Der Kommentar an `QR_SIZE` (`ui.py:2459-2472`) hält den gemessenen
+  Preis fest: im Decodertest mit Verkleinerung und Unschärfe reicht das für
+  1 von 6 Stufen, bei 231 px wären es 4 von 6. **Die Größe ist eine bewusste
+  Gestaltungsentscheidung und kein Fehler, der „korrigiert" werden will.**
+  Eine Foto-URL ist aber ein Vielfaches länger —
+  `/photo/2026-10-17_hochzeit-anna-und-tim/collage_1760000000000.jpg` sind über
+  sechzig Zeichen. Das hebt den Code um mehrere Versionen und drückt die
+  Modulbreite bei gleicher Kachel unter das, was ein Handy aus einem Meter
+  Entfernung noch liest. **Ohne Kurz-Link wird das nichts.**
+  *Also: Kurz-Link zuerst.* Etwas wie `/f/<code>` mit vier, fünf Zeichen. Die
+  Mechanik dafür steht schon in `/go/<slug>` (`gallery_server.py:706`), wo ein
+  kurzer Slug auf eine lange Ziel-URL zeigt — inklusive der Lehre, nur echte
+  http(s)-Ziele durchzulassen.
+  *Offen bleibt:*
+  (1) **Die zehn Sekunden.** Der Result-Screen läuft nach 10 s ab
+  (`main.py:416`). Handy zücken, entsperren, scannen, laden — das ist knapp.
+  Entweder die Zeit hochsetzen (dann wartet die Schlange) oder den Code
+  zusätzlich am Foto in der Polaroid-Wand anbieten.
+  (2) **Lesbarkeit über dem Bild.** Der Code sitzt auf dem Foto
+  (`ui.py:1413`) und bringt seine Cremekarte mit — geprüft ist das aber nur
+  für die ruhige Sidebar, nicht über einem hellen Brautkleid.
+  (3) **Lebensdauer.** `disk_monitor` räumt nach `photo_max_age_days` (7) und
+  ab `max_photos` (500) auf (`config.py:82,165`). Wer den Code am nächsten
+  Wochenende scannt, landet im Leeren — die Seite muss das erklären, statt
+  wortlos auf die Startseite zu werfen.
+
 - **Nachdruck aus der Galerie** — heute druckt nur die Box selbst. Ein
   Druckknopf am Foto in der Galerie bräuchte eine Freigabe (sonst leert der
   erste Spaßvogel die Farbbandkassette) und eine sichtbare Warteschlange.
@@ -220,6 +283,39 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
 - **Bewegtbild (GIF / Boomerang)** — reizvoll, aber gphoto2 liefert Einzelbilder;
   die Serienaufnahme müsste über die Capture-Card laufen, deren Bild deutlich
   schlechter ist als das der Kamera. Vermutlich mehr Aufwand als Ertrag.
+
+- **Gäste laden ihre eigenen Handyfotos in die Galerie**
+  *Heute:* In den Event-Ordner schreibt ausschließlich die Box. Für den Gast
+  ist die Galerie lesend; das Einzige, was er verändern darf, ist Löschen —
+  und auch das nur mit Admin- oder Host-PIN
+  (`gallery_server.py:1020-1043`). Einen Upload gibt es nur im Adminbereich
+  für das Logo (`/api/admin/logo`, `gallery_server.py:1507`).
+  *Warum reizvoll:* Die besten Bilder des Abends liegen am Ende auf fremden
+  Handys — Tanzfläche, Rede, Tortenanschnitt. Alle Gäste sind ohnehin schon im
+  Hotspot und kennen die Adresse; der Upload wäre der kürzeste denkbare Weg,
+  den Abend an einer Stelle zu sammeln.
+  *Was der Code fast fertig hat:* Der Prüfweg für hochgeladene Bilder
+  existiert — `/api/admin/logo` nimmt eine Datei entgegen und lässt sie durch
+  `PIL.Image.verify()` laufen. Und die Galerie unterscheidet Bildarten bereits
+  am Dateinamen (`collage.classify`, `collage.py:40`); Gästebilder bräuchten
+  ein eigenes Präfix, damit sie nicht als Box-Einzelfoto durchgehen und in der
+  Polaroid-Wand landen.
+  *Offen bleibt — und das ist deutlich mehr als der Upload selbst:*
+  (1) **Moderation.** Ein offener Upload im Gäste-WLAN heißt: irgendwann liegt
+  irgendetwas in der Galerie. Entweder alles in einen Warteraum, den der
+  Gastgeber freigibt, oder man akzeptiert es und gibt ihm einen schnellen
+  Löschweg — den gibt es mit dem Host-PIN schon.
+  (2) **Speicher.** `max_photos` steht auf 500, `disk_monitor` räumt ab
+  `photo_max_age_days` auf (`config.py:82,165`), und ab `disk_block_mb`
+  blockiert der Auslöser (`main.py:388-391`). Zwanzig Gäste mit vollen
+  Kamerarollen sprengen das — Uploads brauchen ein eigenes Kontingent, sonst
+  wirft die Automatik Box-Fotos weg, um Handybilder zu behalten. **Der
+  Auslöser der Box darf nie wegen fremder Uploads blockieren.**
+  (3) **Gehören sie in dieselbe Galerie?** Ein eigener Reiter „Von Gästen"
+  wäre ehrlicher als eine Mischung und hielte den Filter „Collagen /
+  Einzelbilder" sauber.
+  (4) **Nicht druckbar.** Handybilder am Drucker freizugeben leert die
+  Farbbandkassette vor Mitternacht — hängt am Nachdruck-Punkt darüber.
 
 ## Betrieb
 
@@ -249,6 +345,67 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
   nur warnen? Sperren schützt den Vorrat für den späteren Abend, nimmt dem
   Gastgeber aber die Entscheidung aus der Hand. Warnen ist der sanftere
   Anfang.
+
+- **Druck-Warteschlange sichtbar machen**
+  *Heute:* `printing.refresh_status` fragt `lpstat -p`, `-e` und `-d` ab
+  (`printing.py:67,98,131`) — also *welche* Drucker es gibt und ob der
+  gewünschte bereit ist. **Die Jobliste (`lpstat -o`) fragt niemand ab.** Der
+  Gast sieht 0,8 s „Wird gedruckt…" und 2,5 s „Foto wird gedruckt"
+  (`main.py:132-137`), danach ist er wieder auf dem Homescreen und weiß nichts
+  mehr.
+  *Was daraus am Eventabend wird:* Der Selphy zieht das Blatt für die
+  Farbdurchgänge mehrfach durch und braucht spürbar länger als diese drei
+  Sekunden — wie viel genau, ist nicht gemessen; die Generalprobe („20 Drucke
+  am Stück") liefert die Zahl. Wer nichts herauskommen sieht, drückt noch
+  einmal. Am Ende liegen vier gleiche Bilder in der Kassette, und der nächste
+  Gast steht vor einer Schlange, die er nicht sieht.
+  *Was fehlt:* Eine Zeile auf dem Result-Screen und im Admin-Panel — „3
+  Aufträge vor dir" — plus die Entscheidung, ob der Druck-Knopf ab einer
+  gewissen Länge zumacht.
+  *Wo das hingehört:* `printing.py` hat den passenden Mechanismus schon, samt
+  Begründung: Der Zustand wird gecacht, weil die Renderschleife sonst ~30
+  `lpstat`-Forks pro Sekunde auslöst (`printing.py:30-32`, `_STATUS_TTL_S`).
+  Eine Queue-Abfrage muss in denselben Cache — nicht als zweiter, ungebremster
+  Aufruf daneben.
+  *Offen bleibt:*
+  (1) **Was „fertig" heißt.** `print_photo` meldet nur, dass CUPS den Auftrag
+  angenommen hat (`printing.py:308-313`) — dieselbe Einschränkung wie beim
+  Papierzähler darüber. Eine Restzeit aus der Jobzahl ist geschätzt, nicht
+  gemessen, und darf nicht als Minutenangabe auftreten, die dann nicht stimmt.
+  (2) **Sperren oder nur zeigen?** Gleiche Frage wie beim Kontingent, und
+  vermutlich dieselbe Antwort: erst zeigen.
+  (3) **Papierstau.** Ein hängender Job blockiert die Schlange dauerhaft.
+  Dann braucht es „Warteschlange leeren" im Panel — sonst hilft nur SSH, und
+  damit hängt der Punkt am Fernwartungs-Eintrag weiter unten.
+
+- **Der Gastgeber bekommt am Ende alles — ohne dass jemand daran denkt**
+  *Heute:* Es gibt zwei Wege aus der Box heraus, und beide braucht jemanden,
+  der sie aktiv geht: der USB-Stick (`scripts/usb_export.py`, per udev beim
+  Einstecken) und der ZIP-Download in der Galerie (`/api/download-zip`,
+  `gallery_server.py:921`, bewusst nur eventweise). Nach einer Feier um drei
+  Uhr nachts ist „jemand denkt daran" eine optimistische Annahme — und das
+  Panel bietet im selben Atemzug „Alle Fotos löschen" an
+  (`AdminMaintenance.tsx`).
+  *Denkbar:* Die Box schiebt die Bilder nach dem Event selbst irgendwohin —
+  Nextcloud, WebDAV, ein Ordner beim Gastgeber, notfalls eine Mail mit Link.
+  Angestoßen aus „Box vorbereiten", das ohnehin der Moment ist, in dem gelöscht
+  wird: **löschen darf erst, wer vorher übertragen hat.**
+  *Hängt an derselben Frage wie die Fernwartung darunter:* Im Betrieb hat die
+  Box kein Internet, sie *ist* der Access-Point. Entweder ein zweiter Uplink —
+  oder, viel einfacher, ein Job, der beim nächsten Start im Heim-WLAN
+  nachholt, was liegen geblieben ist. Dann braucht es am Eventabend gar nichts.
+  *Abgrenzung:* Das automatische Backup (rsync/NAS) in der Roadmap (P3) ist
+  etwas anderes — Sicherung gegen Datenverlust, nicht Übergabe an den Kunden.
+  Derselbe Transportweg, aber andere Antworten auf „wohin" und „wann darf
+  gelöscht werden".
+  *Offen bleibt:*
+  (1) **Wohin genau?** Eigener Server heißt Pflegeaufwand, Fremddienst heißt
+  Abhängigkeit, Mail-Link heißt Speicher trotzdem irgendwo.
+  (2) **Datenschutz.** Damit verlassen Gästefotos das Gerät. Bei Vermietung
+  gehört das in die Absprache, nicht in ein stilles Häkchen im Panel.
+  (3) **Wann darf die Box löschen?** Erst nach bestätigtem, vollständigem
+  Transfer — sonst ersetzt ein halb hochgeladener Ordner den vollständigen auf
+  der SD-Karte, und das fällt erst auf, wenn niemand mehr etwas retten kann.
 
 - **Fernwartung: an die vermietete Box kommen, ohne hinzufahren**
   *Der Anlass:* Steht die Box beim Mieter und klemmt etwas, ist die einzige
