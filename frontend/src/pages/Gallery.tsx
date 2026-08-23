@@ -135,10 +135,14 @@ export default function Gallery() {
               display: "grid",
               gap: { xs: 1.25, sm: 2 },
               gridTemplateColumns: {
-                xs: "repeat(2, 1fr)",
-                sm: "repeat(3, 1fr)",
-                md: "repeat(4, 1fr)",
-                lg: "repeat(5, 1fr)",
+                // minmax(0, …), weil in jeder Kachel ein noWrap-Titel steht:
+                // `1fr` = minmax(auto, 1fr) laesst die Spalte nicht unter
+                // dessen Min-Content-Breite, ein langer Eventname sprengt
+                // dann die Zeile statt mit Ellipse zu enden.
+                xs: "repeat(2, minmax(0, 1fr))",
+                sm: "repeat(3, minmax(0, 1fr))",
+                md: "repeat(4, minmax(0, 1fr))",
+                lg: "repeat(5, minmax(0, 1fr))",
               },
             }}
           >

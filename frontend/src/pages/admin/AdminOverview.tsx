@@ -28,9 +28,14 @@ interface StatCardProps {
   hint?: React.ReactNode;
   accent?: "primary" | "success" | "warning" | "error";
   loading?: boolean;
+  /** Freitext statt Kennzahl: darf auf zwei Zeilen umbrechen und kleiner
+   *  werden. Eine Ellipse waere hier nutzlos — von einem 40 Zeichen langen
+   *  Event-Namen bliebe in einer Viertelspalte nur der Anfang stehen. */
+  wrapValue?: boolean;
 }
 
-function StatCard({ icon, label, value, hint, accent = "primary", loading }: StatCardProps) {
+function StatCard({ icon, label, value, hint, accent = "primary", loading,
+                    wrapValue }: StatCardProps) {
   const accentBg =
     accent === "success" ? "#e6f4ea" :
     accent === "warning" ? "#fef7e0" :
@@ -85,12 +90,34 @@ function StatCard({ icon, label, value, hint, accent = "primary", loading }: Sta
           </Typography>
           <Typography
             variant="h5"
-            noWrap
+            // Bewusst KEIN noWrap: in einer Viertelspalte bleiben neben Icon
+            // und Innenabstand rund 160 px, und "Nicht erkannt" braucht bei
+            // 1.5rem etwa 170 px. Mit noWrap wurde daraus "Nicht erka…" —
+            // ausgerechnet die Meldung, die der Betreiber lesen muss. Zwei
+            // Zeilen sind hier besser als eine abgeschnittene.
+            title={typeof value === "string" ? value : undefined}
             sx={{
               mt: 0.25,
               fontWeight: 600,
-              lineHeight: 1.1,
-              fontSize: { xs: "1.1rem", sm: "1.5rem" },
+              lineHeight: 1.2,
+              // Freitext startet kleiner — 40 Zeichen passen sonst auch auf
+              // zwei Zeilen nicht. Kurze Statuswerte behalten die Kennzahl-
+              // Groesse, damit die Zeile einheitlich aussieht.
+              fontSize: wrapValue
+                ? { xs: ".95rem", sm: "1.15rem" }
+                : { xs: "1.1rem", sm: "1.5rem" },
+              // Hoechstens zwei Zeilen, Rest mit Ellipse — sonst waechst eine
+              // Karte in der Hoehe und zieht die ganze Zeile mit.
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+              // "anywhere" auch fuer kurze Werte — als Netz, nicht als Regel:
+              // Browser nehmen zuerst die Wortluecke, "Nicht erkannt" bricht
+              // also weiterhin in "Nicht" / "erkannt". Erst wenn ein einzelnes
+              // Wort selbst zu breit ist, greift der Bruch im Wort. Ohne das
+              // wurde bei schmaler Kachel mitten im Buchstaben abgeschnitten.
+              overflowWrap: "anywhere",
             }}
           >
             {loading ? <Skeleton width={60} /> : value}
@@ -192,13 +219,25 @@ export default function AdminOverview() {
         sx={{
           display: "grid",
           gap: { xs: 1.25, sm: 2 },
-          gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(2, 1fr)", lg: "repeat(4, 1fr)" },
+          // minmax(0, 1fr) statt 1fr: `1fr` ist die Kurzform von
+          // minmax(auto, 1fr), und dieses auto-Minimum laesst eine Spalte
+          // nicht unter die Min-Content-Breite ihres Inhalts schrumpfen. Ein
+          // langer Event-Name steht in einem noWrap-Typography und hat damit
+          // eine Min-Content-Breite von mehreren hundert Pixeln — die Spalte
+          // sprengte die Zeile und quetschte die drei anderen Karten aus dem
+          // Bild. Mit 0 als Minimum greifen Umbruch und Ellipse wieder.
+          gridTemplateColumns: {
+            xs: "repeat(2, minmax(0, 1fr))",
+            sm: "repeat(2, minmax(0, 1fr))",
+            lg: "repeat(4, minmax(0, 1fr))",
+          },
         }}
       >
         <StatCard
           icon={<CelebrationRoundedIcon />}
           label="Event"
           value={status?.event_name ?? "—"}
+          wrapValue
           loading={loading}
           hint={
             <Typography variant="caption" color="text.secondary">

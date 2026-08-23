@@ -322,11 +322,11 @@ export default function EventGallery() {
               gap: { xs: 0.5, sm: 1, md: 1.25 },
               p: { xs: 0.5, sm: 1, md: 1.5 },
               gridTemplateColumns: {
-                xs: "repeat(3, 1fr)",
-                sm: "repeat(4, 1fr)",
-                md: "repeat(5, 1fr)",
-                lg: "repeat(6, 1fr)",
-                xl: "repeat(8, 1fr)",
+                xs: "repeat(3, minmax(0, 1fr))",
+                sm: "repeat(4, minmax(0, 1fr))",
+                md: "repeat(5, minmax(0, 1fr))",
+                lg: "repeat(6, minmax(0, 1fr))",
+                xl: "repeat(8, minmax(0, 1fr))",
               },
             }}
           >

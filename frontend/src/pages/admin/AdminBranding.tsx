@@ -302,9 +302,11 @@ export default function AdminBranding() {
             sx={{
               display: "grid",
               gridTemplateColumns: {
-                xs: "repeat(2, 1fr)",
-                sm: "repeat(3, 1fr)",
-                md: "repeat(4, 1fr)",
+                // Preset-Namen sind ellipsiert, Beschreibungen geklemmt —
+                // ohne 0-Minimum bestimmt der laengste Name die Spaltenbreite.
+                xs: "repeat(2, minmax(0, 1fr))",
+                sm: "repeat(3, minmax(0, 1fr))",
+                md: "repeat(4, minmax(0, 1fr))",
               },
               gap: { xs: 1, sm: 1.25 },
               mb: 2.5,
@@ -482,9 +484,9 @@ export default function AdminBranding() {
               // "Hintergrund unten" oder "Polaroid-Pin" nicht abgeschnitten
               // werden. Ab sm 2 Spalten, ab md 3 Spalten.
               gridTemplateColumns: {
-                xs: "1fr",
-                sm: "repeat(2, 1fr)",
-                md: "repeat(3, 1fr)",
+                xs: "minmax(0, 1fr)",
+                sm: "repeat(2, minmax(0, 1fr))",
+                md: "repeat(3, minmax(0, 1fr))",
               },
               gap: { xs: 1.25, sm: 2 },
             }}
