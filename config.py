@@ -273,4 +273,45 @@ def save_config(data: dict):
     logger.info("config.json gespeichert")
 
 
+def reload_persisted(target: dict) -> bool:
+    """Liest config.json neu und uebernimmt die Mieter-/Box-Felder in
+    `target`. Rueckgabe: ob sich etwas geaendert hat.
+
+    Gebraucht, weil Admin-Panel und Box nicht zwingend derselbe Prozess
+    sind. Im Dev-Setup laeuft das Panel unter dev_server.py, die Box unter
+    main.py — jeder haelt sein eigenes cfg im Speicher, und eine Aenderung
+    im einen erreicht den anderen nur ueber die Datei. Das Logo fiel dabei
+    nie auf, weil es am Datei-Zeitstempel erkannt wird; das Theme lebt
+    dagegen ausschliesslich im Dict.
+
+    Nur persistierte Felder werden uebernommen. Laufzeitwerte wie
+    gallery_url bleiben unberuehrt — die kann preflight() auf einen
+    Fallback-Port gezogen haben, und ein Neuaufbau aus hotspot_ip und
+    gallery_port wuerde das stillschweigend zuruecksetzen.
+    """
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            stored = json.load(f)
+    except FileNotFoundError:
+        return False
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("config.json nicht lesbar (%s) — behalte den "
+                       "aktuellen Stand", exc)
+        return False
+    if not isinstance(stored, dict):
+        return False
+
+    changed = False
+    for key, value in stored.items():
+        if key not in _PERSISTED_FIELDS:
+            continue
+        if key in ("logo_path", "instagram_qr_path", "booking_qr_path"):
+            if isinstance(value, str) and value and not os.path.isabs(value):
+                value = os.path.join(BASE_DIR, value)
+        if target.get(key) != value:
+            target[key] = value
+            changed = True
+    return changed
+
+
 cfg: dict = load_config()

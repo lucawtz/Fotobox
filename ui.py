@@ -12,6 +12,7 @@ import numpy as np
 import pygame
 import pygame.gfxdraw
 
+import config
 import display_env
 
 logger = logging.getLogger(__name__)
@@ -479,6 +480,7 @@ class UI:
         self._booking_qr_seen   = cfg.get("booking_qr_path", "")
         self._booking_qr_mtime  = self._mtime(self._booking_qr_seen)
         self._qr_url_seen       = cfg.get("gallery_url", "")
+        self._cfg_mtime         = self._mtime(config.CONFIG_PATH)
         self._theme_seen        = dict(cfg.get("theme") or {})
         # Von main.py gesetzt (gecachter CUPS-Zustand aus printing.status()).
         # Steuert, ob der Result-Screen einen Druck-Knopf anbietet.
@@ -594,6 +596,18 @@ class UI:
         if now - self._last_reload_check < 1.0:
             return
         self._last_reload_check = now
+
+        # config.json — die Box und das Admin-Panel sind nicht zwingend
+        # derselbe Prozess. Im Dev-Setup laeuft das Panel unter
+        # dev_server.py und die Box unter main.py; dann erreicht eine
+        # Aenderung im einen den anderen nur ueber die Datei. Das Logo
+        # fiel dabei nie auf, weil es ohnehin am Zeitstempel haengt — das
+        # Theme lebte dagegen nur im Dict des anderen Prozesses.
+        cfg_mt = self._mtime(config.CONFIG_PATH)
+        if cfg_mt != self._cfg_mtime:
+            self._cfg_mtime = cfg_mt
+            if config.reload_persisted(self._cfg):
+                logger.info("Live-Reload: config.json neu eingelesen")
 
         # Logo — Path und/oder mtime können sich ändern (Upload überschreibt
         # die gleiche Datei, daher reicht Path-Vergleich allein nicht).
@@ -1060,6 +1074,7 @@ class UI:
     _f_medium_pt      = 46
     _f_normal_pt      = 38
     _header_cache     = None
+    _cfg_mtime        = 0.0
     _social_cache     = None
     _HEADER_LINE_GAP  = 2     # zwischen umgebrochenen Zeilen eines Blocks
     _HEADER_BLOCK_GAP = 8     # zwischen Event-Name und Untertitel
