@@ -284,6 +284,7 @@ def main():
     # UI
     try:
         ui = UI(cfg, cfg.get("capture_device", 0))
+        ui.show_key_hints = show_hints
     except Exception as exc:
         logger.error("UI konnte nicht gestartet werden: %s", exc)
         camera.close()
