@@ -35,7 +35,7 @@ def action_rects(cfg: dict) -> list:
     n = len(actions)
     total_h = n * ACTION_H + (n - 1) * ACTION_GAP
 
-    live = cfg.get("live_view_rect", [440, 600, 1040, 450])
+    live = cfg.get("live_view_rect") or config.default_value("live_view_rect")
     center_y = live[1] + live[3] // 2
     y0 = max(80, center_y - total_h // 2)
 
@@ -538,13 +538,22 @@ class UI:
         self._RESULT_CACHE_MAX = 8
 
         # Live-Reader (Capture-Card)
-        # _live_dst ist die wiederverwendete Ziel-Surface aus _live_surface.
+        # _live_dst ist die wiederverwendete Ziel-Surface aus _live_surface,
+        # _live_aspect das Format, nach dem sich der Rahmen richtet.
         self._live_dst: Optional[pygame.Surface] = None
+        self._live_aspect: float = self._LIVE_FALLBACK_ASPECT
         self._live: Optional[_LiveReader] = None
         try:
             self._live = _LiveReader(capture_device)
         except Exception as exc:
             logger.warning("Kein Live-Feed: %s", exc)
+
+        # Selbsttaetiges Wecken des Live-Views. Gesetzt wird der Rueckruf von
+        # main.py (camera.request_liveview) — die UI kennt die Kamera nicht.
+        self._wake_cb = None
+        self._live_dark_since: Optional[float] = None
+        self._live_wake_last: float = 0.0
+        self._autowake_paused = False
 
         # Crop-Cache: Letterbox-Ränder ändern sich praktisch nie, deshalb
         # nur alle CROP_REFRESH_S neu vermessen statt auf jedem Frame.
@@ -739,31 +748,107 @@ class UI:
             self._screen.blit(surf, rect)
         self._draw_live_frame(rect)
 
+    # So lange muss das HDMI-Signal am Stueck schwarz sein, bevor die Box den
+    # Live-View von sich aus weckt. Kurze Luecken — Spiegelhub, Umschalten der
+    # Capture-Card — sollen das gerade nicht ausloesen.
+    _LIVE_DEAD_S = 4.0
+    # Sperrzeit zwischen zwei Weckversuchen. Ohne sie klappert eine
+    # ausgeschaltete Kamera im Sekundentakt, weil das Bild ja schwarz bleibt.
+    _LIVE_WAKE_COOLDOWN_S = 20.0
+
+    def set_liveview_waker(self, callback) -> None:
+        """Was gerufen wird, wenn ueber Sekunden kein Live-Bild ankommt.
+
+        Die UI ist die einzige Stelle, die das ueberhaupt bemerken kann: die
+        Kamera kennt nur ihre eigenen gphoto2-Erfolge, und aus einem
+        erfolgreichen 'viewfinder=1' folgt nicht, dass auf HDMI auch etwas
+        herauskommt. Gesehen wird es hier, erledigt wird es dort.
+        """
+        self._wake_cb = callback
+
+    def pause_live_autowake(self, paused: bool) -> None:
+        """Waehrend Countdown und Aufnahme kein Wecken — ein Spiegelhub
+        mittendrin waere genau der Ruckler, den das Ganze vermeiden soll.
+
+        Die Dunkel-Uhr laeuft dabei weiter: war der Schirm schon vor der
+        Aufnahme schwarz, wird direkt danach geweckt statt erst vier Sekunden
+        spaeter nochmal von vorn.
+        """
+        self._autowake_paused = paused
+
+    def _note_live_signal(self, ok: bool) -> None:
+        """Bucht das Ergebnis eines Frame-Versuchs und weckt notfalls.
+
+        Geweckt wird nur bei echtem Schwarzbild. Ein von Hand am
+        Kamera-Display aktivierter Live-View liefert Frames und wird deshalb
+        nie ueberfahren — genau daran scheiterte frueher jeder Versuch, das
+        im Watchdog zu erledigen.
+        """
+        now = time.monotonic()
+        if ok:
+            self._live_dark_since = None
+            return
+        if self._live_dark_since is None:
+            self._live_dark_since = now
+        if self._wake_cb is None or self._autowake_paused:
+            return
+        if now - self._live_dark_since < self._LIVE_DEAD_S:
+            return
+        if now - self._live_wake_last < self._LIVE_WAKE_COOLDOWN_S:
+            return
+        self._live_wake_last = now
+        self._live_dark_since = None
+        logger.info("Seit %.0f s kein Live-Bild — Live-View wird geweckt",
+                    self._LIVE_DEAD_S)
+        try:
+            self._wake_cb()
+        except Exception as exc:
+            logger.warning("Selbsttaetiges Wecken fehlgeschlagen: %s", exc)
+
     def _live_box(self) -> pygame.Rect:
         """Der konfigurierte Platz der Live-Vorschau — Obergrenze fuer das
         Bild, nicht dessen tatsaechliche Groesse."""
-        x, y, w, h = self._cfg.get("live_view_rect", [440, 600, 1040, 450])
+        x, y, w, h = (self._cfg.get("live_view_rect")
+                      or config.default_value("live_view_rect"))
         return pygame.Rect(x, y, w, h)
+
+    # Seitenverhaeltnis, das der Rahmen annimmt, solange noch kein Bild
+    # gekommen ist. 16:9, weil jede HDMI-Quelle das liefert — und weil
+    # _live_box breiter ist als jedes reale Signal: in voller Breite saehe
+    # der Rahmen beim Start aus wie ein Briefkasten statt wie ein Monitor.
+    _LIVE_FALLBACK_ASPECT = 16 / 9
 
     def _live_geometry(self):
         """(Rect, Bild oder None, Meldung oder None).
 
         Das Rect ist der Ausschnitt von _live_box, den das Kamerabild
         seitenverhaeltnistreu wirklich fuellt, zentriert auf dessen Mitte.
-        Ohne Signal bleibt es die volle Box — dann traegt sie die Meldung.
+
+        Bei Signalverlust behaelt der Rahmen das zuletzt gesehene Format,
+        statt auf die Fallback-Form zu springen: ein kurz gezogenes
+        HDMI-Kabel liesse ihn sonst sichtbar die Groesse wechseln.
         """
         box = self._live_box()
         frame, msg = self._live_frame_rgb()
         if frame is None:
-            return box, None, msg
+            return self._fit_rect(box, self._live_aspect), None, msg
 
         fh, fw = frame.shape[:2]
-        scale  = min(box.w / fw, box.h / fh)
-        nw, nh = max(1, int(fw * scale)), max(1, int(fh * scale))
-        frame  = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
-        rect   = pygame.Rect(0, 0, nw, nh)
+        self._live_aspect = fw / fh
+        rect  = self._fit_rect(box, self._live_aspect)
+        frame = cv2.resize(frame, (rect.w, rect.h),
+                           interpolation=cv2.INTER_LINEAR)
+        return rect, self._live_surface(frame, rect.w, rect.h), None
+
+    @staticmethod
+    def _fit_rect(box: pygame.Rect, aspect: float) -> pygame.Rect:
+        """Groesstes Rechteck dieses Seitenverhaeltnisses in `box`,
+        zentriert auf dessen Mitte."""
+        w = min(box.w, int(box.h * aspect))
+        h = min(box.h, int(round(w / aspect)))
+        rect = pygame.Rect(0, 0, max(1, w), max(1, h))
         rect.center = box.center
-        return rect, self._live_surface(frame, nw, nh), None
+        return rect
 
     def _live_frame_rgb(self):
         """(RGB-Frame, Meldung) — genau eins von beiden ist None.
@@ -775,10 +860,13 @@ class UI:
             return None, "Warte auf Kamera…"
         frame = self._live.latest()
         if frame is None or frame.max() < 20:
+            self._note_live_signal(False)
             return None, "Bitte Display an der Kamera einschalten"
         frame = self._crop_black_borders(frame)
         if frame is None:
+            self._note_live_signal(False)
             return None, "Bitte Display an der Kamera einschalten"
+        self._note_live_signal(True)
         return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), None
 
     def _live_surface(self, frame, w: int, h: int) -> pygame.Surface:
@@ -1274,28 +1362,78 @@ class UI:
 
     # ── Countdown-Screen (blockierend) ─────────────────────────────────────────
 
+    # Wie lange "Lächeln!" mindestens steht, damit es nicht bloss aufblitzt,
+    # wenn die Kamera ungewoehnlich schnell meldet.
+    _LAECHELN_MIN_MS = 350
+    # Und wie lange hoechstens — fuer den Fall, dass der Ausloese-Marker gar
+    # nicht kommt (altes gphoto2, fehlendes stdbuf, geaenderte Ausgabe).
+    # Danach uebernimmt der Uebertragungs-Screen, der ohnehin ein Lebenszeichen
+    # zeigt; verloren ist dabei nichts.
+    _LAECHELN_MAX_MS = 5000
+
     def run_countdown(self, on_capture, seconds: int = 3,
-                      photo_num: int = 1, total: int = 1) -> None:
-        """Zeigt Countdown, löst on_capture() danach aus, zeigt 'Lächeln!'.
+                      photo_num: int = 1, total: int = 1,
+                      lead_s: float = 0.0, shutter=None) -> None:
+        """Zeigt Countdown, löst aus, zeigt 'Lächeln!' bis der Verschluss faellt.
 
         on_capture wird als Callback in einem Thread gestartet.
         Aufrufer wartet nach dieser Methode auf das done-Event.
+
+        `lead_s` zieht diesen Start um Sekunden vor das Ende des Countdowns.
+        Grund: zwischen dem gphoto2-Aufruf und der Belichtung liegen auf der
+        EOS 700D rund 1,1 s (gemessen ueber EXIF, erster Schuss nach Ruhe eher
+        1,9 s) — ohne Vorlauf faellt der Verschluss also erst, wenn "Lächeln!"
+        schon wieder weg ist. Der Wert steht als capture_lead_s in der Config.
+
+        `shutter` ist ein Event, das die Kamera setzt, sobald ausgeloest wurde.
+        Damit endet "Lächeln!" am echten Ereignis statt nach blind gesetzten
+        1200 ms, und der Blitz sitzt auf dem Moment, den er behauptet. Ohne
+        Event bleibt es beim festen Fenster.
         """
-        for i in range(seconds, 0, -1):
-            deadline = pygame.time.get_ticks() + 1000
-            while pygame.time.get_ticks() < deadline:
-                self._draw_countdown_frame(i, photo_num, total)
-                pygame.event.pump()
-                pygame.time.wait(30)
+        started = False
 
-        self._flash()
-        threading.Thread(target=on_capture, daemon=True).start()
+        def _start():
+            threading.Thread(target=on_capture, daemon=True).start()
 
-        deadline = pygame.time.get_ticks() + 1200
-        while pygame.time.get_ticks() < deadline:
+        end = pygame.time.get_ticks() + max(0, seconds) * 1000
+        lead_ms = int(max(0.0, lead_s) * 1000)
+        while True:
+            left = end - pygame.time.get_ticks()
+            if left <= 0:
+                break
+            if not started and left <= lead_ms:
+                started = True
+                _start()
+            # Aufrunden: die letzte Sekunde zeigt die 1, nicht die 0.
+            self._draw_countdown_frame(-(-left // 1000), photo_num, total)
+            pygame.event.pump()
+            pygame.time.wait(30)
+
+        if not started:
+            _start()
+
+        start_ms = pygame.time.get_ticks()
+        while True:
+            waited = pygame.time.get_ticks() - start_ms
+            if shutter is None:
+                if waited >= 1200:
+                    break
+            elif waited >= self._LAECHELN_MIN_MS and shutter.is_set():
+                break
+            elif waited >= self._LAECHELN_MAX_MS:
+                logger.warning("Kein Ausloese-Signal nach %d ms — "
+                               "'Lächeln!' laeuft ins Zeitfenster",
+                               self._LAECHELN_MAX_MS)
+                break
             self._draw_laecheln_frame(photo_num, total)
             pygame.event.pump()
             pygame.time.wait(30)
+
+        # Der Blitz kommt jetzt NACH dem Verschluss statt davor. Vorher war er
+        # das Startsignal fuer eine Aufnahme, die erst gut eine Sekunde spaeter
+        # stattfand — er meldete dem Gast "fertig", waehrend das Foto noch
+        # bevorstand, und kostete zusaetzlich 300 ms Vorlauf.
+        self._flash()
 
     def wait_for_capture(self, done, timeout: float = 35.0,
                          message: str = "Foto wird übertragen…") -> bool:

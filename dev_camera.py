@@ -51,7 +51,7 @@ class DevCamera:
         LiveReader) erst nach der Kamera konstruiert wird."""
         self._frame_provider = provider
 
-    def capture(self, directory: str) -> str:
+    def capture(self, directory: str, on_shutter=None) -> str:
         if self._frame_provider is None:
             raise RuntimeError("Dev-Kamera: kein Live-View verbunden")
 
@@ -70,6 +70,11 @@ class DevCamera:
         # Collage-Shots in derselben Sekunde sich nicht ueberschreiben.
         filename = f"foto_{int(time.time() * 1000)}.jpg"
         path = os.path.join(directory, filename)
+        # Der Ausloesemoment der Webcam ist der gegriffene Frame — hier ist er
+        # schon vorbei, also sofort melden. Die UI beendet daraufhin ihr
+        # "Lächeln!", genau wie an der echten Kamera.
+        if on_shutter is not None:
+            on_shutter()
         if not cv2.imwrite(path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 92]):
             raise RuntimeError(f"Dev-Kamera: konnte {path} nicht schreiben")
 

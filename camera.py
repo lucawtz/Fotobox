@@ -1,5 +1,6 @@
 import logging
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -98,6 +99,7 @@ class Camera:
         # sich auf dem _cmd_lock stauen und die Kamera vier Mal klappern
         # lassen, obwohl einmal reicht.
         self._wake_gate = threading.Semaphore(1)
+        self._stdbuf = shutil.which("stdbuf")
         self._init()
         threading.Thread(target=self._watchdog, daemon=True).start()
 
@@ -287,12 +289,79 @@ class Camera:
 
     # ── Capture ────────────────────────────────────────────────────────────────
 
-    def capture(self, directory: str) -> str:
+    # Diese Zeile schreibt gphoto2, sobald die Kamera die Datei angelegt hat —
+    # die Belichtung ist damit durch. Auf der EOS 700D gemessen liegt sie rund
+    # 0,7 s hinter dem EXIF-Ausloesezeitpunkt: als "es ist passiert"-Signal
+    # taugt sie, als Vorhersage nicht. Fuer den Vorlauf vor dem Ausloesen gibt
+    # es deshalb capture_lead_s in der Config.
+    _SHUTTER_MARKER = "New file is in location"
+
+    def _run_capture(self, filename: str, directory: str, on_shutter):
+        """Startet gphoto2 und meldet den Ausloesemoment, sobald er kommt.
+
+        Rueckgabe: (Returncode, gesammelte Ausgabe).
+
+        Statt subprocess.run, weil hier die Ausgabe waehrend des Laufs
+        gebraucht wird und nicht erst danach — subprocess.run gibt sie
+        geschlossen am Ende zurueck, und dann ist der Moment vorbei.
+
+        stderr laeuft in denselben Strom: gphoto2 verteilt seine Meldungen auf
+        beide, und zwei Pipes einzeln leerzupumpen waere ein Verklemmungsrisiko
+        fuer nichts — die Fehlermeldung entsteht ohnehin aus dem Gesamttext.
+        """
+        cmd = ["gphoto2", "--capture-image-and-download", "--filename", filename]
+        # Ohne Zeilenpufferung schiebt gphoto2 seine Ausgabe blockweise raus,
+        # sobald sie in eine Pipe geht — die Marker-Zeile kaeme dann erst zum
+        # Prozessende und waere als Signal wertlos. Fehlt stdbuf, laeuft die
+        # Aufnahme normal weiter, nur eben ohne frueheren Marker.
+        if self._stdbuf:
+            cmd = [self._stdbuf, "-oL"] + cmd
+
+        proc = subprocess.Popen(
+            cmd, cwd=directory, text=True, bufsize=1,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+
+        lines = []
+
+        def _read():
+            for line in proc.stdout:
+                lines.append(line.rstrip())
+                if on_shutter is None or self._SHUTTER_MARKER not in line:
+                    continue
+                try:
+                    on_shutter()
+                except Exception as exc:      # der Callback gehoert der UI
+                    logger.warning("on_shutter fehlgeschlagen: %s", exc)
+
+        reader = threading.Thread(target=_read, daemon=True)
+        reader.start()
+        try:
+            proc.wait(timeout=self.CAPTURE_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+            raise RuntimeError("Aufnahme Timeout")
+        finally:
+            # Der Lesethread haengt an der Pipe und endet mit ihr. Nach einem
+            # kill kann das einen Wimpernschlag dauern, deshalb ueberhaupt ein
+            # join — und deshalb einer mit Grenze.
+            reader.join(timeout=2.0)
+        return proc.returncode, "\n".join(lines)
+
+
+    def capture(self, directory: str, on_shutter=None) -> str:
         """Nimmt genau ein Foto auf und gibt dessen Pfad zurueck.
 
         Bewusst NUR die Aufnahme: kein Live-View davor, keiner danach. Der
         Live-View wird dort geweckt, wo er wieder sichtbar wird — siehe
         request_liveview() und main._capture_sequence.
+
+        `on_shutter` wird aufgerufen, sobald die Kamera die Belichtung hinter
+        sich hat — daran haengt die UI ihr "Lächeln!". Der Aufruf kommt aus
+        dem Lese-Thread, muss also selbst thread-sicher sein und darf nicht
+        blockieren. Bleibt der Marker aus, kommt der Callback gar nicht; die
+        UI braucht dafuer eine eigene Obergrenze.
         """
         if not self.available:
             raise RuntimeError("Kamera nicht verfügbar")
@@ -312,23 +381,16 @@ class Camera:
             if not self._cmd_lock.acquire(timeout=self.BUSY_TIMEOUT_S):
                 raise RuntimeError("Kamera ist noch beschäftigt")
             try:
-                result = subprocess.run(
-                    ["gphoto2", "--capture-image-and-download",
-                     "--filename", filename],
-                    capture_output=True, text=True,
-                    timeout=self.CAPTURE_TIMEOUT_S,
-                    cwd=directory,
-                )
-            except subprocess.TimeoutExpired:
-                raise RuntimeError("Aufnahme Timeout")
+                rc, output = self._run_capture(filename, directory, on_shutter)
             finally:
                 self._cmd_lock.release()
         finally:
             self._capturing = False
 
-        if result.returncode != 0:
+        if rc != 0:
+            tail = " / ".join(output.split("\n")[-3:]).strip()
             raise RuntimeError(
-                f"Aufnahme fehlgeschlagen: {(result.stderr or '').strip()}")
+                f"Aufnahme fehlgeschlagen: {tail or '(kein Fehlertext)'}")
 
         after = set(os.listdir(directory))
         new_files = after - before

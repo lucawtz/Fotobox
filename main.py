@@ -48,16 +48,22 @@ def _do_countdown(ui: UI, camera: Camera, cfg: dict,
                   photo_num: int, total: int) -> Optional[str]:
     result: dict = {"path": None, "error": None}
     done = threading.Event()
+    # Wird gesetzt, sobald die Kamera belichtet hat — daran haengt die UI ihr
+    # "Lächeln!". Auch im finally, damit ein Fehlschlag den Bildschirm nicht
+    # bis zur Obergrenze auf "Lächeln!" stehen laesst.
+    shutter = threading.Event()
 
     def _capture():
         try:
-            result["path"] = camera.capture(events.current_event_dir(cfg))
+            result["path"] = camera.capture(events.current_event_dir(cfg),
+                                            on_shutter=shutter.set)
             if not result["path"]:
                 result["error"] = "Kamera lieferte kein Bild"
         except Exception as exc:
             logger.error("Capture fehlgeschlagen: %s", exc)
             result["error"] = str(exc)
         finally:
+            shutter.set()
             done.set()
 
     ui.run_countdown(
@@ -65,6 +71,8 @@ def _do_countdown(ui: UI, camera: Camera, cfg: dict,
         seconds=cfg["countdown_duration"],
         photo_num=photo_num,
         total=total,
+        lead_s=cfg.get("capture_lead_s", 0.9),
+        shutter=shutter,
     )
 
     # Warten MIT laufender Render-Schleife: sonst steht der Bildschirm bis zum
@@ -106,10 +114,15 @@ def _capture_sequence(ui: UI, camera, cfg: dict, mode: str) -> Optional[str]:
     Ablauf ausserdem ohne Kamera und ohne Display testen —
     siehe tests/test_capture_flow.py.
     """
+    # Waehrend Countdown und Aufnahme weckt die UI keinen Live-View — ein
+    # Spiegelhub mittendrin waere genau der Ruckler, den der ganze Umbau
+    # vermeiden soll.
+    ui.pause_live_autowake(True)
     try:
         return (_do_countdown(ui, camera, cfg, 1, 1) if mode == "single"
                 else _collage(ui, camera, cfg))
     finally:
+        ui.pause_live_autowake(False)
         # Live-View zurueckholen, sobald die Aufnahme durch ist — aber im
         # Hintergrund. Als naechstes kommt der Result-Screen, der zehn
         # Sekunden lang gar kein Live-Bild zeigt; bis der Homescreen wieder
@@ -324,6 +337,11 @@ def main():
     # von dort, statt das Capture-Device ein zweites Mal zu oeffnen.
     if args.dev_camera:
         camera.set_frame_provider(ui.latest_live_frame)
+
+    # Bleibt das HDMI-Signal schwarz, holt sich die UI den Live-View selbst
+    # zurueck. Sehen kann das nur sie, wecken nur die Kamera.
+    if cfg.get("camera_auto_wake", True):
+        ui.set_liveview_waker(camera.request_liveview)
 
     logger.info("Fotobox bereit. Space=Einzelfoto  E=Collage  "
                 "Q=Wake-Camera/Zurück  I=Status-Leiste  Esc=Beenden  "

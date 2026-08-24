@@ -131,7 +131,21 @@ _DEFAULTS: dict = {
     "polaroid_frames": [[567, 255, -5], [1098, 256, 5], [1633, 257, 12]],
     "polaroid_photo_size": [310, 295],
     # 16:9 — passt zum HDMI-Output der Kamera, sodass kein Letterbox entsteht.
-    "live_view_rect": [510, 540, 800, 450],
+    # Der Platz, den die Live-Vorschau hoechstens einnehmen darf — nicht
+    # ihre Groesse: ui._live_geometry legt das Kamerabild
+    # seitenverhaeltnistreu hinein und zieht den Rahmen um das Ergebnis.
+    # Die Zahlen sind der freie Bereich des Homescreens, ausgemessen gegen
+    # seine Nachbarn und beidseitig um gut 10 px Luft eingerueckt:
+    #
+    #   links   Sidebar bis x=320          rechts  Action-Buttons ab x=1530
+    #   oben    Polaroids bis y=485        unten   Status-Bar ab y=1042
+    #
+    # (Polaroid-Unterkante inklusive Drehung und Schattenversatz, Status-Bar
+    # aus der Schrifthoehe — beides in ui.py, nicht frei waehlbar.)
+    # LIVE_OUTER_W=12 fuer den Rahmen ist in der Luft schon eingerechnet.
+    # Die Hoehe ist der bindende Wert: ein 16:9-Signal wird 906x510 gross,
+    # die Breite bleibt Reserve fuer breitere Formate.
+    "live_view_rect": [345, 508, 1160, 510],
     "instagram_url": "https://www.instagram.com/lucawtz",
     # Instagrams eigener QR-Code, in der App im eigenen Profil exportierbar.
     # Leer = ui.py zeichnet stattdessen das Instagram-Glyph.
@@ -197,6 +211,18 @@ _DEFAULTS: dict = {
     # bis zu 8 s. Haelt die Kamera den Live-View auch ohne, spart `false`
     # beides — auf der echten Box ausprobieren, das Log sagt was passiert.
     "camera_preview_pull": True,
+    # Wie viele Sekunden vor dem Ende des Countdowns ausgeloest wird. Zwischen
+    # dem gphoto2-Aufruf und der Belichtung liegt eine Verzoegerung, die die
+    # Kamera vorgibt und die Box nicht wegbekommt — auf der EOS 700D per EXIF
+    # gemessen 1,1 s im Betrieb, rund 1,9 s beim ersten Schuss nach Ruhe. Ohne
+    # Vorlauf faellt der Verschluss erst, wenn "Lächeln!" schon wieder weg ist.
+    # Etwas unter der gemessenen Verzoegerung ist Absicht: lieber kurz nach dem
+    # "Lächeln!" ausloesen als davor.
+    "capture_lead_s": 0.9,
+    # Holt den Live-View selbsttaetig zurueck, wenn ueber Sekunden kein Bild
+    # ueber HDMI kommt. Auf false bleibt es beim manuellen Wecken per Q bzw.
+    # Tasterkombination.
+    "camera_auto_wake": True,
 }
 
 

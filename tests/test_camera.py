@@ -19,32 +19,68 @@ class FakeResult:
         self.stderr = stderr
 
 
+# So meldet gphoto2 eine fertige Aufnahme. Die erste Zeile ist der Marker, an
+# dem die UI ihr "Lächeln!" abraeumt.
+CAPTURE_OUTPUT = [
+    "New file is in location /capt0000.jpg on the camera",
+    "Saving file as foto_1.jpg",
+    "Deleting file /capt0000.jpg on the camera",
+]
+
+
+class FakePopen:
+    """Ersetzt den gphoto2-Prozess: Ausgabezeilen, Returncode, sonst nichts.
+
+    capture() liest die Ausgabe waehrend des Laufs statt danach — deshalb
+    braucht die Attrappe ein iterierbares stdout und kein fertiges Ergebnis.
+    """
+
+    def __init__(self, lines, returncode):
+        self.stdout = iter(line + chr(10) for line in lines)
+        self.returncode = returncode
+        self.killed = False
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def kill(self):
+        self.killed = True
+
+
 @pytest.fixture
 def cam(monkeypatch):
-    """Camera ohne _init und ohne Watchdog, mit protokolliertem subprocess.run.
+    """Camera ohne _init und ohne Watchdog, mit protokolliertem subprocess.
 
-    `cam.calls` sammelt die gphoto2-Argumentlisten, `cam.on_capture` darf ein
-    Callback setzen, das die heruntergeladene Datei schreibt (oder eben nicht).
+    `cam.calls` sammelt die gphoto2-Argumentlisten, `cam.state["on_capture"]`
+    darf ein Callback setzen, das die heruntergeladene Datei schreibt (oder
+    eben nicht), `cam.state["lines"]` bestimmt die Ausgabe des Prozesses.
     """
     monkeypatch.setattr(camera_mod.Camera, "_init", lambda self: None)
     monkeypatch.setattr(camera_mod.Camera, "_watchdog", lambda self: None)
 
     calls = []
-    state = {"on_capture": None, "returncode": 0, "stderr": ""}
+    state = {"on_capture": None, "returncode": 0, "stderr": "",
+             "lines": list(CAPTURE_OUTPUT)}
 
     def fake_run(args, **kwargs):
         calls.append(list(args))
-        if "--capture-image-and-download" in args:
-            cb = state["on_capture"]
-            if cb is not None:
-                cb(kwargs.get("cwd"), args[args.index("--filename") + 1])
-            return FakeResult(state["returncode"], stderr=state["stderr"])
-        return FakeResult()
+        return FakeResult(stderr=state["stderr"])
+
+    def fake_popen(args, **kwargs):
+        calls.append(list(args))
+        cb = state["on_capture"]
+        if cb is not None:
+            cb(kwargs.get("cwd"), args[args.index("--filename") + 1])
+        return FakePopen(state["lines"], state["returncode"])
 
     monkeypatch.setattr(camera_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(camera_mod.subprocess, "Popen", fake_popen)
 
     c = camera_mod.Camera()
     c.available = True
+    # Ob stdbuf auf dem Testrechner liegt, darf die Aufrufliste nicht
+    # veraendern — der Zeilenpuffer hat seinen eigenen Test.
+    c._stdbuf = None
     c.calls = calls
     c.state = state
     return c
@@ -104,10 +140,59 @@ def test_capture_without_a_file_is_an_error_not_a_phantom_path(cam, tmp_path):
 
 def test_capture_reports_the_gphoto_error(cam, tmp_path):
     cam.state["returncode"] = 1
-    cam.state["stderr"] = "ERROR: Could not claim the USB device"
+    cam.state["lines"] = ["*** Error ***",
+                          "ERROR: Could not claim the USB device"]
 
     with pytest.raises(RuntimeError, match="Could not claim"):
         cam.capture(str(tmp_path))
+
+
+# ── Ausloesemoment ─────────────────────────────────────────────────────────────
+
+def test_capture_reports_the_shutter_moment(cam, tmp_path):
+    """Der Callback kommt, sobald gphoto2 die Datei auf der Kamera meldet.
+
+    Daran haengt die UI ihr "Lächeln!". Vorher stand das Wort blind 1200 ms
+    lang da, waehrend der Verschluss auf der EOS 700D erst nach gut einer
+    Sekunde faellt — der Gast wurde also regelmaessig fotografiert, waehrend
+    er schon auf den Uebertragungs-Screen schaute.
+    """
+    cam.state["on_capture"] = _write
+    fired = []
+
+    cam.capture(str(tmp_path), on_shutter=lambda: fired.append(True))
+
+    assert fired == [True], "genau einmal, beim Marker"
+
+
+def test_capture_survives_a_missing_shutter_marker(cam, tmp_path):
+    """Ohne Marker keine Meldung — aber auch kein Fehler.
+
+    Ein aelteres gphoto2 oder ein fehlendes stdbuf darf die Aufnahme nicht
+    scheitern lassen; die UI hat fuer diesen Fall ihre eigene Obergrenze.
+    """
+    cam.state["on_capture"] = _write
+    cam.state["lines"] = ["Saving file as foto_1.jpg"]
+    fired = []
+
+    path = cam.capture(str(tmp_path), on_shutter=lambda: fired.append(True))
+
+    assert os.path.isfile(path)
+    assert fired == []
+
+
+def test_capture_asks_for_line_buffering_when_stdbuf_exists(cam, tmp_path):
+    """Ohne stdbuf kaeme die Marker-Zeile erst am Prozessende.
+
+    gphoto2 puffert blockweise, sobald stdout eine Pipe ist. Dann waere der
+    Marker exakt so wertlos wie das feste Zeitfenster, das er ersetzt.
+    """
+    cam._stdbuf = "/usr/bin/stdbuf"
+    cam.state["on_capture"] = _write
+
+    cam.capture(str(tmp_path))
+
+    assert cam.calls[0][:3] == ["/usr/bin/stdbuf", "-oL", "gphoto2"]
 
 
 def test_unavailable_camera_refuses_before_touching_usb(cam, tmp_path):

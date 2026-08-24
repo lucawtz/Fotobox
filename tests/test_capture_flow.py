@@ -24,16 +24,28 @@ class FakeUI:
     def __init__(self):
         self.notices = []
         self.countdowns = []
+        self.leads = []
+        self.shutter_set = []
+        # Auto-Wake muss waehrend der Aufnahme aus und danach wieder an sein.
+        self.autowake = []
 
-    def run_countdown(self, on_capture, seconds=3, photo_num=1, total=1):
+    def run_countdown(self, on_capture, seconds=3, photo_num=1, total=1,
+                      lead_s=0.0, shutter=None):
         self.countdowns.append((photo_num, total))
+        self.leads.append(lead_s)
         on_capture()
+        # Die echte UI wartet hier auf genau dieses Event, bevor sie
+        # "Lächeln!" abraeumt — dass es gesetzt wird, sichert der Test unten.
+        self.shutter_set.append(shutter.is_set() if shutter else None)
 
     def wait_for_capture(self, done, timeout=35.0, message=""):
         return done.is_set()
 
     def show_notice(self, title, detail="", seconds=3.5, error=True):
         self.notices.append((title, detail))
+
+    def pause_live_autowake(self, paused):
+        self.autowake.append(paused)
 
 
 class FakeCamera:
@@ -55,8 +67,10 @@ class FakeCamera:
     def request_liveview(self):
         self.wakes.append(self.shots)
 
-    def capture(self, directory):
+    def capture(self, directory, on_shutter=None):
         self.shots += 1
+        if on_shutter is not None:
+            on_shutter()
         if self.fail_at == self.shots:
             return None
         os.makedirs(directory, exist_ok=True)
@@ -198,3 +212,57 @@ def test_aborted_collage_leaves_no_orphans(cfg, flow):
     assert _photos_in(event_dir) == [], "angefangene Collage muss aufgeraeumt werden"
     assert ui.notices, "der Gast muss erfahren, dass die Collage verworfen wurde"
     assert "2 von 4" in ui.notices[-1][1]
+
+
+# ── Ausloese-Zeitpunkt und Live-View ───────────────────────────────────────────
+
+def test_countdown_gets_a_lead_from_the_config(cfg, flow):
+    """Der Verschluss soll fallen, waehrend "Lächeln!" steht — nicht danach.
+
+    Zwischen dem gphoto2-Aufruf und der Belichtung liegen auf der EOS 700D
+    rund 1,1 s. Ohne Vorlauf loest die Box also erst aus, wenn der Bildschirm
+    laengst auf "Foto wird uebertragen" umgeschaltet hat.
+    """
+    ui, _ = flow
+    cfg["capture_lead_s"] = 1.4
+
+    main._capture_sequence(ui, FakeCamera(), cfg, "single")
+
+    assert ui.leads == [1.4]
+
+
+def test_every_collage_shot_gets_the_same_lead(cfg, flow):
+    ui, _ = flow
+
+    main._capture_sequence(ui, FakeCamera(), cfg, "collage")
+
+    assert len(ui.leads) == 4
+    assert len(set(ui.leads)) == 1
+
+
+def test_ui_learns_when_the_shutter_fired(cfg, flow):
+    """Die Kamera meldet den Ausloesemoment, die UI haengt daran ihr Wort."""
+    ui, _ = flow
+
+    main._capture_sequence(ui, FakeCamera(), cfg, "single")
+
+    assert ui.shutter_set == [True]
+
+
+def test_autowake_is_off_while_the_photo_is_taken(cfg, flow):
+    """Ein Spiegelhub mitten im Countdown waere genau der Ruckler, den das
+    selbsttaetige Wecken vermeiden soll — und er kaeme zum denkbar
+    schlechtesten Zeitpunkt."""
+    ui, _ = flow
+
+    main._capture_sequence(ui, FakeCamera(), cfg, "collage")
+
+    assert ui.autowake == [True, False], "waehrend der Aufnahme aus, danach wieder an"
+
+
+def test_autowake_comes_back_even_when_the_shot_fails(cfg, flow):
+    ui, _ = flow
+
+    main._capture_sequence(ui, FakeCamera(fail_at=1), cfg, "single")
+
+    assert ui.autowake[-1] is False, "sonst bliebe das Live-Bild dauerhaft sich selbst ueberlassen"
