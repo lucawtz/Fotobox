@@ -249,6 +249,20 @@ class _LiveReader:
     _RECONNECT_INTERVAL_S = 3.0
     _MAX_CONSEC_READ_FAILS = 30
 
+    # Ab wieviel mittlerer Pixelaenderung je Frame ein Bild als "lebt" gilt.
+    # Auf der Box gemessen: ein Live-Bild rauscht auch bei voellig stillem
+    # Motiv mit rund 0,8, das Info-Display der Kamera steht mit exakt 0,0.
+    # Dazwischen ist viel Luft, der Schwellwert muss nicht genau sitzen.
+    _MOTION_THRESHOLD = 0.35
+    # Ueber wieviele Frames der Median gebildet wird. Median und nicht Mittel:
+    # beim Wechsel vom Live-Bild zum Menue steht ein einzelner riesiger
+    # Sprung in der Reihe, den ein Mittelwert sekundenlang mitschleppt — und
+    # so lange saehe der Gast genau das Menue, das hier verhindert werden
+    # soll. Der Median kippt nach der Haelfte des Fensters, also rund 0,15 s,
+    # und laesst sich umgekehrt von einem einzelnen Wiederholframe der
+    # Capture-Card nicht beirren.
+    _MOTION_WINDOW = 9
+
     def __init__(self, device: int):
         self._device = device
         self._cap = cv2.VideoCapture(device)
@@ -258,6 +272,8 @@ class _LiveReader:
         self._frame = None
         self._lock = threading.Lock()
         self._running = True
+        self._prev_gray = None
+        self._motion = deque(maxlen=self._MOTION_WINDOW)
         self._fail_count = 0
         self._last_reconnect = 0.0
         threading.Thread(target=self._loop, daemon=True).start()
@@ -291,6 +307,7 @@ class _LiveReader:
                 ok, frame = False, None
 
             if ok and frame is not None:
+                self._measure_motion(frame)
                 with self._lock:
                     self._frame = frame
                 self._fail_count = 0
@@ -303,6 +320,34 @@ class _LiveReader:
             rest = interval - elapsed
             if rest > 0:
                 time.sleep(rest)
+
+    def _measure_motion(self, frame):
+        """Haelt fest, wie stark sich der Frame vom vorigen unterscheidet.
+
+        Damit laesst sich ein Live-Bild von einem stehenden Bild
+        unterscheiden — und genau das ist der Unterschied zwischen "die
+        Kamera zeigt den Gast" und "die Kamera zeigt ihr Aufnahmemenue".
+        Ueber die Helligkeit ginge das nicht: das Menue ist ueberwiegend
+        schwarz und damit genauso dunkel wie mancher Raum.
+        """
+        # Bewusst auf dem vollen Frame und ohne Verkleinern: jedes Mitteln
+        # beim Skalieren daempft genau das Rauschen weg, an dem ein Live-Bild
+        # zu erkennen ist. Der Schwellwert oben ist am vollen Frame gemessen.
+        # Kosten sind kein Argument — Graustufen und Differenz auf 640x480
+        # liegen deutlich unter einer Millisekunde.
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        prev, self._prev_gray = self._prev_gray, gray
+        if prev is None or prev.shape != gray.shape:
+            return
+        self._motion.append(float(np.mean(cv2.absdiff(gray, prev))))
+
+    def moving(self) -> bool:
+        """True, wenn das Signal lebt (rauscht) statt stillzustehen."""
+        if len(self._motion) < self._MOTION_WINDOW:
+            # Noch keine Aussage moeglich — im Zweifel ist das Bild echt,
+            # sonst faengt jede Box mit einem eingefrorenen Bild an.
+            return bool(self._motion)
+        return float(np.median(self._motion)) > self._MOTION_THRESHOLD
 
     def latest(self):
         with self._lock:
@@ -552,6 +597,11 @@ class UI:
         # main.py (camera.request_liveview) — die UI kennt die Kamera nicht.
         self._wake_cb = None
         self._live_dark_since: Optional[float] = None
+        # Letztes brauchbares Live-Bild und wann es kam. Solange die Kamera
+        # kein echtes Bild liefert — waehrend einer Aufnahme etwa —, bleibt
+        # dieses stehen, statt Menue oder Schwarz durchzureichen.
+        self._live_hold = None
+        self._live_hold_at: float = 0.0
         self._live_wake_last: float = 0.0
         self._autowake_paused = False
 
@@ -850,24 +900,59 @@ class UI:
         rect.center = box.center
         return rect
 
+    # So lange bleibt das letzte echte Live-Bild stehen, wenn keins mehr
+    # nachkommt. Eine Aufnahme dauert gut zwei Sekunden, der Wechsel der
+    # Halte-Sitzung gut eine — beides soll der Gast nicht sehen. Laenger
+    # waere es eine Luege: ein eingefrorenes Bild sieht aus wie ein lebendes.
+    _LIVE_HOLD_S = 8.0
+
     def _live_frame_rgb(self):
         """(RGB-Frame, Meldung) — genau eins von beiden ist None.
 
-        Schneidet automatisch schwarze Letterbox-Raender aus dem
-        HDMI-Signal weg.
+        Schneidet schwarze Letterbox-Raender weg und haelt das letzte echte
+        Bild fest, wenn gerade keins ankommt.
+
+        Das Festhalten ist der Unterschied zwischen einer Aufnahme, die
+        aussieht wie geplant, und einer, bei der zwischen Countdown und
+        Ergebnis das Aufnahmemenue der Kamera und ein schwarzes Bild
+        aufblitzen: waehrend der Aufnahme gehoert das USB-Geraet gphoto2,
+        der Live-View ist beendet, und die Kamera zeigt derweil ihr eigenes
+        Display. Zu sehen bekommt der Gast davon nichts.
         """
         if self._live is None:
             return None, "Warte auf Kamera…"
+
+        frame = self._fresh_live_frame()
+        if frame is not None:
+            self._note_live_signal(True)
+            self._live_hold = frame
+            self._live_hold_at = time.monotonic()
+            return frame, None
+
+        self._note_live_signal(False)
+        if (self._live_hold is not None
+                and time.monotonic() - self._live_hold_at < self._LIVE_HOLD_S):
+            return self._live_hold, None
+        return None, "Bitte Display an der Kamera einschalten"
+
+    def _fresh_live_frame(self):
+        """Ein echtes, verwertbares Live-Bild — oder None.
+
+        None heisst dreierlei: kein Frame, ein schwarzer Frame, oder ein
+        stehendes Bild. Der letzte Fall ist das Aufnahmemenue der Kamera,
+        das ueber HDMI kommt, sobald der Live-View nicht laeuft — hell genug,
+        um jede Helligkeitspruefung zu bestehen, und deshalb nur an seiner
+        Bewegungslosigkeit zu erkennen.
+        """
         frame = self._live.latest()
         if frame is None or frame.max() < 20:
-            self._note_live_signal(False)
-            return None, "Bitte Display an der Kamera einschalten"
+            return None
+        if not self._live.moving():
+            return None
         frame = self._crop_black_borders(frame)
         if frame is None:
-            self._note_live_signal(False)
-            return None, "Bitte Display an der Kamera einschalten"
-        self._note_live_signal(True)
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), None
+            return None
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
     def _live_surface(self, frame, w: int, h: int) -> pygame.Surface:
         """Frame als Surface mit runden Ecken im Radius des Rahmens.
@@ -1004,10 +1089,23 @@ class UI:
                              special_flags=pygame.BLEND_RGBA_MIN)
                 self._screen.blit(outline, rect.topleft)
 
-            # Label zentriert
+            # Label zentriert — mit Taster-Beschriftung darunter, sofern es
+            # etwas zu unterscheiden gibt. Sie steht auf beiden Screens an
+            # derselben Stelle, damit der Gast sie einmal liest und danach
+            # weiss, welcher Taster ihm gehoert.
             label = action.get("label", "Aktion")
             lbl = self._f_medium.render(label, True, label_color)
-            self._screen.blit(lbl, lbl.get_rect(center=rect.center))
+            sub = self._switch_hint(action.get("key"))
+            if sub:
+                lbl_rect = lbl.get_rect(
+                    center=(rect.centerx, rect.centery - 12))
+                self._screen.blit(lbl, lbl_rect)
+                hint = self._f_label.render(sub, True, label_color)
+                hint.set_alpha(170)
+                self._screen.blit(hint, hint.get_rect(
+                    centerx=rect.centerx, top=lbl_rect.bottom + 2))
+            else:
+                self._screen.blit(lbl, lbl.get_rect(center=rect.center))
 
             # Chevron rechts — kleiner und dünner als vorher, nur als Akzent.
             cx = rect.right - 28
@@ -1248,9 +1346,39 @@ class UI:
     # der Gast auch ausloesen kann. Ein Knopf auf dem Schirm, den niemand
     # druecken kann, ist schlimmer als gar keiner.
     wired_buttons     = frozenset(("left", "trigger", "right"))
+    # Wie der Gast die verbauten Taster von links nach rechts sieht. Die
+    # logischen Namen taugen dafuer nicht: an einer Box mit zwei Tastern
+    # (trigger+right, siehe gpio_pins) ist `trigger` fuer ihn schlicht der
+    # linke, obwohl er intern in der Mitte steht.
+    _SWITCH_WORDS = {
+        2: ("linker Taster", "rechter Taster"),
+        3: ("linker Taster", "mittlerer Taster", "rechter Taster"),
+    }
     _social_cache     = None
     _HEADER_LINE_GAP  = 2     # zwischen umgebrochenen Zeilen eines Blocks
     _HEADER_BLOCK_GAP = 8     # zwischen Event-Name und Untertitel
+
+    def _switch_hint(self, key: Optional[str]) -> Optional[str]:
+        """Beschriftung "linker/mittlerer/rechter Taster" zu einer Aktion.
+
+        Ohne sie war an der Box nicht zu erkennen, welcher der beiden
+        Taster welchen Knopf ausloest: die Knoepfe stehen auf dem
+        Homescreen uebereinander und auf dem Result-Screen nebeneinander,
+        also sagt schon die Position auf beiden Screens etwas anderes.
+
+        None heisst "nicht beschriften" — und zwar in drei Faellen: an der
+        Dev-Maschine (dort steht das Tastenkuerzel an derselben Stelle),
+        bei nur einem verbauten Taster (nichts zu unterscheiden) und bei
+        einer Aktion, deren Taster gar nicht verbaut ist.
+        """
+        if self.show_key_hints or not key:
+            return None
+        order = [n for n in ("left", "trigger", "right")
+                 if n in self.wired_buttons]
+        words = self._SWITCH_WORDS.get(len(order))
+        if not words or key not in order:
+            return None
+        return words[order.index(key)]
 
     def _header_height(self) -> int:
         h = 0
@@ -1435,6 +1563,12 @@ class UI:
         # bevorstand, und kostete zusaetzlich 300 ms Vorlauf.
         self._flash()
 
+    # Wie stark der Uebertragungs-Screen das Bild dahinter abdunkelt, und wie
+    # lange er dafuer braucht. Kurz genug, dass niemand darauf wartet, lang
+    # genug, dass es kein Schnitt ist.
+    _SHADE_ALPHA = 150
+    _SHADE_FADE_S = 0.35
+
     def wait_for_capture(self, done, timeout: float = 35.0,
                          message: str = "Foto wird übertragen…") -> bool:
         """Haelt die Render-Schleife am Leben, waehrend gphoto2 laeuft.
@@ -1446,21 +1580,38 @@ class UI:
         Rueckgabe: True wenn `done` rechtzeitig gesetzt wurde, sonst False.
         """
         deadline = time.monotonic() + timeout
+        start = time.monotonic()
         dots = 0
+
+        # Einmal angelegt statt 30x/s: die Flaeche aendert sich nicht, nur
+        # ihre Deckkraft.
+        shade = pygame.Surface((W, H))
+        shade.fill(C_BLACK)
+        lbl = self._f_medium.render(message, True, C_WHITE)
+        lbl_rect = lbl.get_rect(center=(W // 2, H // 2 - 30))
+
         while not done.is_set():
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            if now >= deadline:
                 return False
+
+            # Aufziehen statt umschalten. Hinter dem Schleier steht das
+            # eingefrorene letzte Live-Bild, also der Gast selbst — ein
+            # harter Schnitt darauf sah aus wie ein Fehler, ein weicher
+            # Uebergang sieht aus wie Absicht.
+            fade = min(1.0, (now - start) / self._SHADE_FADE_S)
+
             self._draw_live_fullscreen()
-            shade = pygame.Surface((W, H), pygame.SRCALPHA)
-            shade.fill((0, 0, 0, 150))
+            shade.set_alpha(int(self._SHADE_ALPHA * fade))
             self._screen.blit(shade, (0, 0))
-            lbl = self._f_medium.render(message, True, C_WHITE)
-            self._screen.blit(lbl, lbl.get_rect(center=(W // 2, H // 2 - 30)))
+            lbl.set_alpha(int(255 * fade))
+            self._screen.blit(lbl, lbl_rect)
             # Laufende Punkte als Lebenszeichen — reicht, um "arbeitet" von
             # "eingefroren" zu unterscheiden.
             dots = (dots + 1) % 60
             pips = "•" * (1 + dots // 20)
             pip = self._f_large.render(pips, True, C_GOLD)
+            pip.set_alpha(int(255 * fade))
             self._screen.blit(pip, pip.get_rect(center=(W // 2, H // 2 + 70)))
             pygame.display.flip()
             pygame.event.pump()
@@ -1673,10 +1824,10 @@ class UI:
         # Taster, faellt der Knopf deshalb ersatzlos weg.
         defs = []
         if "left" in self.wired_buttons:
-            defs.append(("Zurück", "left", "Q", keys[pygame.K_q]))
-        defs.append(("Nochmal", None, "Space", keys[pygame.K_SPACE]))
+            defs.append(("Zurück", "left", "left", "Q", keys[pygame.K_q]))
+        defs.append(("Nochmal", None, "trigger", "Space", keys[pygame.K_SPACE]))
         if self.print_ready and "right" in self.wired_buttons:
-            defs.append(("Drucken", "right", "E", keys[pygame.K_e]))
+            defs.append(("Drucken", "right", "right", "E", keys[pygame.K_e]))
 
         n_btn = len(defs)
         total_w = n_btn * btn_w + (n_btn - 1) * gap
@@ -1694,7 +1845,7 @@ class UI:
         # damit sie auf Pi und Dev-Maschine deckungsgleich sind, egal
         # welche Schrift dort gefunden wird.
         ARROW_SIZE, ARROW_GAP = 22, 14
-        for i, (label, arrow, key_hint, hl) in enumerate(defs):
+        for i, (label, arrow, key_name, key_hint, hl) in enumerate(defs):
             rect = pygame.Rect(sx + i * (btn_w + gap), by, btn_w, btn_h)
             color = C_BTN_HL if hl else C_BTN_BG
             pygame.draw.rect(self._screen, color, rect, border_radius=12)
@@ -1702,11 +1853,14 @@ class UI:
 
             fg  = C_WHITE if hl else C_GOLD
             lbl = self._f_normal.render(label, True, fg)
-            # Die 10 px nach oben machen Platz fuer das Tastenkuerzel, das
-            # 20 px unter der Mitte sitzt. Ohne Kuerzel — und an der Box mit
-            # ihren Tastern gibt es nie eins — bleibt darunter nur Leere,
-            # und die Beschriftung stand sichtbar zu hoch im Knopf.
-            ly  = rect.centery - 10 if self.show_key_hints else rect.centery
+            # Zweite Zeile: an der Dev-Maschine das Tastenkuerzel, an der
+            # Box der Taster. Beide sitzen 20 px unter der Mitte, wofuer die
+            # Beschriftung 10 px nach oben rueckt. Gibt es keine zweite
+            # Zeile, entfaellt auch das Rueckem — sonst stuende die
+            # Beschriftung sichtbar zu hoch ueber leerem Platz.
+            sub = (f"[ {key_hint} ]" if self.show_key_hints
+                   else self._switch_hint(key_name))
+            ly  = rect.centery - 10 if sub else rect.centery
             # Pfeil + Text als Gruppe zentrieren, damit die Beschriftung nicht
             # gegenueber den Buttons ohne Pfeil verrutscht.
             group_w = lbl.get_width() + (ARROW_SIZE + ARROW_GAP if arrow else 0)
@@ -1720,12 +1874,8 @@ class UI:
                     self._draw_arrow(gx + lbl.get_width() + ARROW_GAP + ARROW_SIZE // 2,
                                      ly, ARROW_SIZE, fg, "right")
 
-            # Tastenkuerzel nur ohne echte Taster. An der Box haengt keine
-            # Tastatur — dort waere "[ Space ]" eine Anleitung fuer etwas,
-            # das der Gast nicht hat. main.py setzt das Flag aus
-            # Buttons.has_gpio.
-            if self.show_key_hints:
-                hint = self._f_small.render(f"[ {key_hint} ]", True, C_DIM)
+            if sub:
+                hint = self._f_small.render(sub, True, C_DIM)
                 self._screen.blit(hint, hint.get_rect(
                     centerx=rect.centerx, centery=rect.centery + 20))
 
