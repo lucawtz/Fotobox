@@ -303,7 +303,7 @@ def main():
         camera = Camera(
             keepalive_s=cfg.get("camera_keepalive_s", 25),
             output_mode=str(cfg.get("camera_output_mode", "3")),
-            preview_pull=bool(cfg.get("camera_preview_pull", True)),
+            hold_session_s=int(cfg.get("camera_hold_session_s", 1800)),
         )
 
     # Taster (GPIO + Tastatur-Fallback). Ein Pin darf in gpio_pins auf null

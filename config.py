@@ -208,12 +208,11 @@ _DEFAULTS: dict = {
     # falsche drin, kommt aus der Kamera weder auf HDMI noch auf dem Display
     # ein Bild.
     "camera_output_mode": "3",
-    # Zieht nach jedem Live-View-Wake einen Preview-Frame ueber USB. Die EOS
-    # 700D faellt ohne diesen Pull sofort wieder aus dem Live-View heraus.
-    # Kostet aber einen zusaetzlichen Spiegelhub (das hoerbare Klicken) und
-    # bis zu 8 s. Haelt die Kamera den Live-View auch ohne, spart `false`
-    # beides — auf der echten Box ausprobieren, das Log sagt was passiert.
-    "camera_preview_pull": True,
+    # Wie lange ein Halte-Prozess laeuft, bevor er sich beendet und sofort neu
+    # gestartet wird. Er haelt die PTP-Sitzung und damit den Live-View offen;
+    # gphoto2 braucht dafuer eine Obergrenze. Beim Wechsel fehlt das Live-Bild
+    # fuer einen Prozessstart lang, also gut eine Sekunde.
+    "camera_hold_session_s": 1800,
     # Wie viele Sekunden vor dem Ende des Countdowns ausgeloest wird. Zwischen
     # dem gphoto2-Aufruf und der Belichtung liegt eine Verzoegerung, die die
     # Kamera vorgibt und die Box nicht wegbekommt — auf der EOS 700D per EXIF

@@ -1702,7 +1702,11 @@ class UI:
 
             fg  = C_WHITE if hl else C_GOLD
             lbl = self._f_normal.render(label, True, fg)
-            ly  = rect.centery - 10
+            # Die 10 px nach oben machen Platz fuer das Tastenkuerzel, das
+            # 20 px unter der Mitte sitzt. Ohne Kuerzel — und an der Box mit
+            # ihren Tastern gibt es nie eins — bleibt darunter nur Leere,
+            # und die Beschriftung stand sichtbar zu hoch im Knopf.
+            ly  = rect.centery - 10 if self.show_key_hints else rect.centery
             # Pfeil + Text als Gruppe zentrieren, damit die Beschriftung nicht
             # gegenueber den Buttons ohne Pfeil verrutscht.
             group_w = lbl.get_width() + (ARROW_SIZE + ARROW_GAP if arrow else 0)

@@ -47,6 +47,30 @@ class FakePopen:
         self.killed = True
 
 
+class FakeHolder:
+    """Der Halte-Prozess: lebt, bis ihn jemand beendet.
+
+    Genau das ist im echten Betrieb sein einziger Zweck — er haelt die
+    PTP-Sitzung offen, damit der Live-View nicht zusammenfaellt.
+    """
+
+    def __init__(self):
+        self.stopped = False
+
+    def poll(self):
+        return 0 if self.stopped else None
+
+    def terminate(self):
+        self.stopped = True
+
+    def kill(self):
+        self.stopped = True
+
+    def wait(self, timeout=None):
+        self.stopped = True
+        return 0
+
+
 @pytest.fixture
 def cam(monkeypatch):
     """Camera ohne _init und ohne Watchdog, mit protokolliertem subprocess.
@@ -66,8 +90,14 @@ def cam(monkeypatch):
         calls.append(list(args))
         return FakeResult(stderr=state["stderr"])
 
+    holders = []
+
     def fake_popen(args, **kwargs):
         calls.append(list(args))
+        if any(a.startswith("--wait-event") for a in args):
+            h = FakeHolder()
+            holders.append(h)
+            return h
         cb = state["on_capture"]
         if cb is not None:
             cb(kwargs.get("cwd"), args[args.index("--filename") + 1])
@@ -78,6 +108,8 @@ def cam(monkeypatch):
 
     c = camera_mod.Camera()
     c.available = True
+    c.HOLD_GRACE_S = 0          # im Test nicht auf den Prozessstart warten
+    c.holders = holders         # jeder je gestartete Halte-Prozess
     # Ob stdbuf auf dem Testrechner liegt, darf die Aufrufliste nicht
     # veraendern — der Zeilenpuffer hat seinen eigenen Test.
     c._stdbuf = None
@@ -203,9 +235,29 @@ def test_unavailable_camera_refuses_before_touching_usb(cam, tmp_path):
     assert cam.calls == []
 
 
-# ── Live-View ──────────────────────────────────────────────────────────────────
+# ── Live-View: die offene Sitzung ──────────────────────────────────────────────
 
-def test_wake_sets_output_after_the_viewfinder(cam):
+def _holder_cmd(calls):
+    """Das Kommando des zuletzt gestarteten Halte-Prozesses."""
+    for args in reversed(calls):
+        if any(a.startswith("--wait-event") for a in args):
+            return args
+    return None
+
+
+def test_the_holder_keeps_the_session_open(cam):
+    """Der Live-View lebt nur, solange ein gphoto2-Prozess die PTP-Sitzung
+    haelt — gemessen: bei offener Sitzung trug HDMI durchgehend ein
+    Live-Bild, drei Sekunden nach Prozessende stand wieder das Info-Menue der
+    Kamera. Genau dafuer gibt es diesen Prozess.
+    """
+    cam.wake_liveview()
+
+    assert _holder_cmd(cam.calls) is not None
+    assert cam._hold_alive()
+
+
+def test_holder_sets_output_after_the_viewfinder(cam):
     """Die Reihenfolge ist der ganze Punkt.
 
     gphoto2 zieht beim Einschalten des Viewfinders den Ausgang selbst auf
@@ -214,64 +266,103 @@ def test_wake_sets_output_after_the_viewfinder(cam):
     meldete danach 'PC' und gab auf HDMI nichts aus, wo die Capture-Card
     haengt. Umgekehrt herum meldet sie 'TFT + PC', und das Bild kommt an.
     """
-    cam.wake_liveview(with_preview=False)
+    cam.wake_liveview()
 
-    assert _gphoto_verbs(cam.calls) == [
-        "--set-config viewfinder=1",
-        "--set-config-index output=3",
-    ]
+    cmd = _holder_cmd(cam.calls)
+    assert cmd.index("viewfinder=1") < cmd.index("output=3")
 
 
-def test_output_is_set_by_index_not_by_value(cam):
+def test_holder_sets_output_by_index_not_by_value(cam):
     """'output=3' allein ist mehrdeutig — Nummer aus der Liste oder Wert 3.
 
-    Die 700D landete damit auf 'PC' statt auf 'TFT + PC'. --set-config-index
-    laesst die Frage gar nicht erst offen.
+    Die 700D landete damit auf 'PC' statt auf 'TFT + PC'.
     """
-    cam.wake_liveview(with_preview=False)
-
-    assert any(v.startswith("--set-config-index output=") for v in
-               _gphoto_verbs(cam.calls))
-    assert not any(v == "--set-config output=3" for v in
-                   _gphoto_verbs(cam.calls))
-
-
-def test_every_wake_sets_output_again(cam):
-    """output haelt nicht ueber das Prozessende hinaus.
-
-    Nach dem Ende des gphoto2-Prozesses liest es sich wieder als 'Off' —
-    gemessen. Es einmalig beim Start zu setzen und darauf zu vertrauen, war
-    genau der Fehler, der das Live-Bild verschwinden liess.
-    """
-    cam.wake_liveview(with_preview=False)
-    cam.wake_liveview(with_preview=False)
-
-    assert _gphoto_verbs(cam.calls).count("--set-config-index output=3") == 2
-
-
-def test_preview_pull_follows_the_configuration(monkeypatch, cam):
-    cam._preview_pull = False
     cam.wake_liveview()
-    assert not any("--capture-preview" in v for v in _gphoto_verbs(cam.calls))
 
+    cmd = _holder_cmd(cam.calls)
+    assert cmd[cmd.index("output=3") - 1] == "--set-config-index"
+
+
+def test_a_wake_replaces_the_running_holder(cam):
+    """Wecken heisst neu aufsetzen — der alte Prozess muss dabei weg sein,
+    sonst streiten sich zwei um dasselbe USB-Geraet."""
+    cam.wake_liveview()
+    first = cam.holders[-1]
+
+    cam.wake_liveview()
+
+    assert first.stopped
+    assert cam.holders[-1] is not first
+    assert cam._hold_alive()
+
+
+def test_no_preview_pull_anymore(cam):
+    """Der capture-preview-Pull sollte den Live-View am Leben halten — was er
+    nie konnte, weil auch er nur ein Prozess war, der sich beendet. Mit der
+    offenen Sitzung ist er ueberfluessig und kostete nur einen Spiegelhub."""
+    cam.wake_liveview()
+
+    assert not any("--capture-preview" in " ".join(a) for a in cam.calls)
+
+
+def test_background_wake_does_nothing_while_the_holder_runs(cam):
+    """Der Normalfall — und er muss gratis sein, weil request_liveview aus
+    der Renderschleife heraus gerufen wird."""
+    cam.wake_liveview()
     cam.calls.clear()
-    cam._preview_pull = True
-    cam.wake_liveview()
-    assert any("--capture-preview" in v for v in _gphoto_verbs(cam.calls))
-
-
-def test_background_wake_actually_wakes(cam):
-    cam._preview_pull = False
 
     cam.request_liveview()
-    # Der Wake laeuft in einem Thread — er ist durch, sobald er das Gate
-    # wieder freigibt.
+
+    assert cam.calls == []
+
+
+def test_background_wake_revives_a_dead_holder(cam):
+    cam.wake_liveview()
+    cam.holders[-1].stopped = True     # Sitzung abgelaufen oder Kamera zickte
+    cam.calls.clear()
+
+    cam.request_liveview()
     assert cam._wake_gate.acquire(timeout=5), "Hintergrund-Wake wurde nie fertig"
 
-    assert _gphoto_verbs(cam.calls) == [
-        "--set-config viewfinder=1",
-        "--set-config-index output=3",
-    ]
+    assert _holder_cmd(cam.calls) is not None
+
+
+# ── Der Halter muss dem Rest aus dem Weg gehen ─────────────────────────────────
+
+def test_capture_stops_the_holder_and_brings_it_back(cam, tmp_path):
+    """gphoto2 kann sich das USB-Geraet nicht teilen: liefe der Halter
+    weiter, bekaeme die Aufnahme "Could not claim the USB device". Danach
+    muss er von selbst zurueckkommen, sonst bliebe das Live-Bild fuer immer
+    weg."""
+    cam.wake_liveview()
+    holder = cam.holders[-1]
+    cam.state["on_capture"] = _write
+
+    cam.capture(str(tmp_path))
+
+    assert holder.stopped, "waehrend der Aufnahme darf kein Halter laufen"
+    assert cam._hold_alive(), "danach muss das Live-Bild von selbst wiederkommen"
+
+
+def test_plain_commands_also_yield_the_device(cam):
+    """Auch ein simples --set-config muss am Halter vorbei."""
+    cam.wake_liveview()
+    holder = cam.holders[-1]
+
+    cam._set_config("reviewtime=0")
+
+    assert holder.stopped
+    assert cam._hold_alive()
+
+
+def test_closing_stops_the_holder_for_good(cam):
+    cam.wake_liveview()
+    holder = cam.holders[-1]
+
+    cam.close()
+
+    assert holder.stopped
+    assert not cam._hold_wanted, "sonst startet der Supervisor ihn wieder nach"
 
 
 def test_background_wake_stays_out_of_a_running_capture(cam):
