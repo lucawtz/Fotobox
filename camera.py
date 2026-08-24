@@ -97,6 +97,16 @@ class Camera:
     # Luecke beim Wechsel ist ein Prozessstart lang (gut eine Sekunde).
     DEFAULT_HOLD_SESSION_S = 1800
 
+    # AF-Methode als Index aus `gphoto2 --get-config afmethod`:
+    # 0 LiveFace, 1 LiveMulti, 2 Live, 3 Quick.
+    # Voreinstellung 2 (Live): ein kleines festes Feld in der Bildmitte.
+    # LiveFace zeichnet stattdessen einen Rahmen um jedes erkannte Gesicht und
+    # laesst ihn mitwandern — auf einem 1920x1080-Schirm vor einer Warteschlange
+    # ist das der unruhigste Teil des ganzen Bildes. LiveMulti ist noch
+    # groesser. Ganz ohne Rahmen geht keine der Methoden, das zeichnet die
+    # Kamera in ihr HDMI-Signal.
+    DEFAULT_AF_METHOD = "2"
+
     # Wie lange nach dem Start gewartet wird, bevor der Halter als "steht"
     # gilt. Scheitert gphoto2 am belegten USB-Geraet, beendet es sich in
     # dieser Zeit — ohne die Pause meldeten wir Erfolg fuer einen Prozess,
@@ -106,7 +116,8 @@ class Camera:
     def __init__(self, keepalive_s: int = DEFAULT_KEEPALIVE_S,
                  output_mode: str = DEFAULT_OUTPUT_MODE,
                  preview_pull: bool = True,   # entfallen, siehe wake_liveview
-                 hold_session_s: int = DEFAULT_HOLD_SESSION_S):
+                 hold_session_s: int = DEFAULT_HOLD_SESSION_S,
+                 af_method: str = DEFAULT_AF_METHOD):
         self.available = False
         self.error_message = ""
         self._running = True
@@ -125,6 +136,7 @@ class Camera:
         self._holder = None
         self._hold_wanted = False
         self._hold_session_s = max(30, int(hold_session_s))
+        self._af_method = str(af_method)
         self._init()
         threading.Thread(target=self._hold_supervisor, daemon=True).start()
         threading.Thread(target=self._watchdog, daemon=True).start()
@@ -217,6 +229,10 @@ class Camera:
         # Bildkontrolle aus: sonst blendet die Kamera nach jeder Aufnahme das
         # Foto ins Display und damit auch auf HDMI.
         self._set_config("reviewtime=0", timeout=10)
+
+        # AF-Methode. Steht hier und nicht im Halter, weil sie — anders als
+        # output — ueber das Prozessende hinaus in der Kamera stehen bleibt.
+        self._set_config(f"afmethod={self._af_method}", by_index=True)
 
         # Auto-Power-Off best effort. Welcher Wert "aus" bedeutet, ist
         # modellabhaengig: 0 bei den einen, 65535 bei den anderen. Bisher

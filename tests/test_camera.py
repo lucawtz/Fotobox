@@ -11,6 +11,10 @@ import pytest
 
 import camera as camera_mod
 
+# Vor allen Fixtures festgehalten: die cam-Fixture ersetzt _init durch
+# einen No-op, und genau das echte _init soll hier laufen.
+_REAL_INIT = camera_mod.Camera._init
+
 
 class FakeResult:
     def __init__(self, returncode=0, stdout="", stderr=""):
@@ -389,3 +393,36 @@ def test_capture_budget_covers_lock_wait_and_capture(cam):
     tatsaechlichen Dauer hinterher, verwuerfe die UI wieder Fotos, die es
     laengst gibt."""
     assert cam.capture_budget_s == cam.CAPTURE_TIMEOUT_S + cam.BUSY_TIMEOUT_S
+
+
+# ── Kamera-Einstellungen beim Start ────────────────────────────────────────────
+
+@pytest.fixture
+def cam_init(monkeypatch, cam):
+    """Wie `cam`, aber _init laeuft wirklich durch — mit gefundener Kamera."""
+    monkeypatch.setattr(camera_mod.Camera, "_detect", lambda self: True)
+    cam.calls.clear()
+    _REAL_INIT(cam)
+    return cam
+
+
+def test_init_turns_face_detection_off(cam_init):
+    """LiveFace zeichnet einen Rahmen um jedes erkannte Gesicht und laesst ihn
+    mitwandern — auf dem grossen Schirm der unruhigste Teil des Live-Bildes.
+    'Live' ist ein kleines festes Feld in der Mitte. Ganz ohne Rahmen geht
+    keine der Methoden, den zeichnet die Kamera in ihr HDMI-Signal.
+    """
+    assert "--set-config-index afmethod=2" in _gphoto_verbs(cam_init.calls)
+
+
+def test_init_turns_the_image_review_off(cam_init):
+    """Sonst blendet die Kamera nach jeder Aufnahme das Foto ins Display —
+    und damit auf HDMI, wo die Box es fuer ein Live-Bild haelt."""
+    assert any(v.startswith("--set-config reviewtime=0")
+               for v in _gphoto_verbs(cam_init.calls))
+
+
+def test_init_leaves_a_holder_running(cam_init):
+    """Ohne ihn faellt der Live-View sofort wieder zusammen."""
+    assert cam_init._hold_wanted
+    assert cam_init._hold_alive()
