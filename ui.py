@@ -2226,17 +2226,49 @@ class UI:
         """
         return SIDEBAR_PAD + LOGO_CIRCLE_R * 2 + 24 + self._header_height()
 
+    def _gallery_address(self) -> str:
+        """Die Galerie-Adresse zum Abtippen — ohne 'http://', weil das
+        niemand mittippt und jeder Browser es selbst ergaenzt.
+
+        Mit gesetztem gallery_hostname ist das ein Name (config.py:
+        gallery_host), sonst die nackte IP.
+        """
+        return (self._cfg.get("gallery_url") or "").strip().split("://")[-1].rstrip("/")
+
+    def _wifi_rows(self) -> list:
+        """Zeilen der WLAN-Box: (Label, Wert, Font).
+
+        Eine Stelle fuer Hoehenrechnung und Zeichnen — standen die
+        auseinander, sass die QR-Gruppe darueber an einer Oberkante, die
+        es nicht gab.
+
+        Die Adresse traegt bewusst die kleinere Schrift. Sie ist der Weg
+        fuer den Gast, der schon im WLAN haengt und vom QR-Code nichts
+        mehr hat; SSID und Passwort bleiben trotzdem die grossen Zeilen,
+        und jede Zeile hier nimmt der QR-Gruppe darueber Platz weg
+        (_qr_group_bounds).
+        """
+        rows = []
+        ssid = (self._cfg.get("wifi_ssid")     or "").strip()
+        pwd  = (self._cfg.get("wifi_password") or "").strip()
+        if ssid:
+            rows.append(("WLAN", ssid, self._f_normal))
+        if pwd:
+            rows.append(("Passwort", pwd, self._f_normal))
+        addr = self._gallery_address()
+        if addr:
+            rows.append(("Galerie", addr, self._f_sub))
+        return rows
+
     def _wifi_box_metrics(self) -> tuple:
         """Liefert (top_y, height) der WLAN-Box. Nicht-konfigurierte Box
         liefert (H, 0) — dann gibt es nichts zu vermeiden."""
-        ssid = (self._cfg.get("wifi_ssid")     or "").strip()
-        pwd  = (self._cfg.get("wifi_password") or "").strip()
-        rows = (1 if ssid else 0) + (1 if pwd else 0)
-        if rows == 0:
+        rows = self._wifi_rows()
+        if not rows:
             return (H, 0)
-        line_h  = self._f_normal.get_height()
         label_h = self._f_label.get_height()
-        box_h   = 22 + rows * (label_h + 4 + line_h + 14)
+        box_h   = 22 + sum(label_h + 4 + f.get_height() + 14
+                           for _, _, f in rows)
         # Knapp ueber der Status-Bar: die ist seit der echten Schrift
         # hoeher, und ein fester Randwert liess die WLAN-Box in sie
         # hineinlaufen. 12 px Luft dazwischen reichen optisch.
@@ -2709,10 +2741,10 @@ class UI:
         return "Instagram"
 
     def _draw_wifi_box(self):
-        """WLAN+Passwort als eigene Box mit Border-Akzent unten in der Sidebar."""
-        ssid = (self._cfg.get("wifi_ssid")     or "").strip()
-        pwd  = (self._cfg.get("wifi_password") or "").strip()
-        if not ssid and not pwd:
+        """WLAN, Passwort und Galerie-Adresse als eigene Box mit
+        Border-Akzent unten in der Sidebar."""
+        rows = self._wifi_rows()
+        if not rows:
             return
 
         box_w = SIDEBAR_W - 40
@@ -2732,13 +2764,11 @@ class UI:
                          box, width=2, border_radius=10)
 
         ty = y + 14
-        for label, value in (("WLAN", ssid), ("Passwort", pwd)):
-            if not value:
-                continue
+        for label, value, font in rows:
             lbl = self._f_label.render(label, True, self._theme["sidebar_dim"])
             self._screen.blit(lbl, (x + 16, ty))
             ty += lbl.get_height() + 2
-            val = self._f_normal.render(value, True, self._theme["sidebar_text"])
+            val = font.render(value, True, self._theme["sidebar_text"])
             # Falls zu breit: skalieren.
             if val.get_width() > box_w - 32:
                 scale = (box_w - 32) / val.get_width()

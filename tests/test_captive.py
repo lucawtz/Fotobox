@@ -108,3 +108,97 @@ def test_ohne_erkennbare_adresse_wird_niemand_freigeschaltet(app):
     assert r.status_code == 200
     r = _probe(app, "/hotspot-detect.html", ip=None)
     assert r.status_code == 302
+
+
+# ── Der eigene Name darf nicht im Kreis laufen ─────────────────────────────────
+
+NAME = "fotobox.internal"
+
+
+@pytest.fixture
+def named_app(app, monkeypatch):
+    """Galerie unter einem Namen statt unter der IP."""
+    monkeypatch.setitem(config.cfg, "hotspot_enabled", True)
+    monkeypatch.setitem(config.cfg, "gallery_hostname", NAME)
+    monkeypatch.setitem(config.cfg, "gallery_url", f"http://{NAME}")
+    return app
+
+
+def test_eigener_name_wird_nicht_umgeleitet(named_app):
+    """Der Kern der Sache: zeigt gallery_url auf einen Namen, ist das
+    Redirect-Ziel selbst ein Hostname. Ohne Ausnahme leitet die Box ihn auf
+    sich selbst um — und zwar endlos."""
+    r = named_app.get("/api/count", base_url=f"http://{NAME}",
+                      environ_base={"REMOTE_ADDR": PHONE})
+    assert r.status_code == 200
+
+
+def test_fremder_name_landet_weiterhin_in_der_galerie(named_app):
+    r = named_app.get("/irgendwas", base_url="http://apple.com",
+                      environ_base={"REMOTE_ADDR": PHONE})
+    assert r.status_code == 302
+    assert r.headers["Location"] == f"http://{NAME}/"
+
+
+def test_probe_fuehrt_zum_namen_nicht_zur_ip(named_app):
+    """Was der Gast im Anmeldefenster in der Adresszeile liest."""
+    r = _probe(named_app, "/hotspot-detect.html")
+    assert r.headers["Location"] == f"http://{NAME}/?cna=1"
+
+
+# ── Portal-Ansage nach RFC 8908 ────────────────────────────────────────────────
+
+def _portal(app, ip=PHONE):
+    return app.get("/api/captive/portal", base_url=GALLERY,
+                   environ_base={"REMOTE_ADDR": ip})
+
+
+def test_portal_api_meldet_das_portal(app):
+    r = _portal(app)
+    assert r.status_code == 200
+    # Der Medientyp ist Teil des Vertrags — mit application/json ignorieren
+    # die Handys die Antwort.
+    assert r.mimetype == "application/captive+json"
+    body = r.get_json(force=True)
+    assert body["captive"] is True
+    assert body["user-portal-url"] == f"{GALLERY}/"
+
+
+def test_portal_api_traegt_den_namen(named_app):
+    assert _portal(named_app).get_json(force=True)["user-portal-url"] == \
+        f"http://{NAME}/"
+
+
+def test_portal_api_nach_freigabe_nicht_mehr_captive(app):
+    """Wer gerade aus dem Anmeldefenster herausgegangen ist, darf nicht vom
+    naechsten Banner wieder hineingeholt werden."""
+    _release(app)
+    body = _portal(app).get_json(force=True)
+    assert body["captive"] is False
+    assert body["seconds-remaining"] == gallery_server._CAPTIVE_RELEASE_TTL_S
+
+
+def test_portal_api_gilt_je_geraet(app):
+    _release(app)
+    assert _portal(app, ip=OTHER_PHONE).get_json(force=True)["captive"] is True
+
+
+# ── Was in der captive.conf landet ─────────────────────────────────────────────
+
+def test_captive_conf_traegt_dns_hijack_und_option_114(monkeypatch):
+    import hotspot
+    monkeypatch.setitem(config.cfg, "gallery_port", 80)
+    conf = hotspot.captive_conf_content("192.168.4.1")
+    assert "address=/#/192.168.4.1" in conf
+    # Die Option zeigt auf die IP, nicht auf den Namen: der Aufruf ist der
+    # erste nach dem Beitritt und darf kein DNS brauchen.
+    assert 'dhcp-option=114,"http://192.168.4.1/api/captive/portal"' in conf
+
+
+def test_captive_conf_kennt_den_ausweichport(monkeypatch):
+    """Faellt die Galerie auf 5000 zurueck, muss die Option mitziehen —
+    sonst zeigt sie auf einen Port, den niemand bedient."""
+    monkeypatch.setitem(config.cfg, "gallery_port", 5000)
+    import hotspot
+    assert '"http://192.168.4.1:5000/api/captive/portal"' in \
+        hotspot.captive_conf_content("192.168.4.1")

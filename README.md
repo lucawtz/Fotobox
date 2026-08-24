@@ -102,6 +102,7 @@ Diese Tabelle wird aus `config.py` gepflegt — bei Änderungen dort bitte mitzi
 | `hotspot_enabled` | Box als WLAN-Access-Point betreiben | `true` |
 | `hotspot_ip` | IP des Pi im Hotspot | `"192.168.4.1"` |
 | `hotspot_interface` | WLAN-Interface für den Hotspot | `"wlan0"` |
+| `gallery_hostname` | Name, unter dem die Galerie im Fotobox-WLAN läuft (leer = nackte IP) | `"fotobox.internal"` |
 | `event_session_hours` | Dauer einer Event-Session, bevor ein neuer Ordner beginnt | `18` |
 | `picture_dir` | Verzeichnis für Fotos | `"Picture_Box"` |
 | `capture_device` | OpenCV-Index der Capture-Card (Live-Vorschau) | `0` |
@@ -267,6 +268,67 @@ verwerfen — und der Gast ist in Safari/Chrome, wo Speichern funktioniert.
 Die Freigabe gilt 3 Stunden pro Gerät; andere Hostnamen landen weiterhin in
 der Galerie, damit `fotobox.box` auch danach noch funktioniert.
 
+### Zwei Wege ins Anmeldefenster
+
+Der DNS-Hijack allein reicht nicht. Er fängt die Verbindungstests der Handys
+ab — **aber nur, wenn das Handy überhaupt welche schickt.** Wer das
+Anmeldefenster einmal mit „Abbrechen" weggetippt hat oder mit dem Netz schon
+einmal verbunden war, schickt beim nächsten Beitritt keine mehr. Das Handy
+verbindet sich, und dann passiert nichts. Genau diese Sackgasse.
+
+Deshalb sagt die Box es zusätzlich **ausdrücklich**, und zwar schon im
+DHCP-Handshake: `hotspot.py` schreibt neben dem `address=/#/…` eine
+`dhcp-option=114` in die `captive.conf` (RFC 8910, die Adresse der
+Captive-Portal-API). iOS ab 14 und Android ab 11 lesen sie bei **jedem**
+Beitritt und zeigen den Anmelden-Banner, unabhängig davon, was sie sich über
+das Netz gemerkt haben.
+
+Die Option zeigt bewusst auf die **IP** — dieser Aufruf ist der erste nach dem
+Beitritt und darf nicht davon abhängen, dass DNS schon läuft. Dahinter
+antwortet `/api/captive/portal` nach RFC 8908 mit
+`application/captive+json`:
+
+```json
+{"captive": true, "user-portal-url": "http://fotobox.internal/"}
+```
+
+Erst diese Antwort trägt den schönen Namen — sie ist es, die bestimmt, was der
+Gast später in der Adresszeile liest. Und wer sich über
+`POST /api/captive/release` in den echten Browser verabschiedet hat, bekommt
+hier `"captive": false` samt Restlaufzeit: sonst holt ihn der nächste Banner
+in das Fenster zurück, aus dem er gerade herausgegangen ist.
+
+Beide Wege sind unabhängig voneinander. Fällt einer aus — altes Handy ohne
+RFC-8910, oder ein Gerät, das keine Verbindungstests schickt — trägt der
+andere.
+
+### Warum die Galerie einen Namen hat
+
+`gallery_hostname` (Standard `fotobox.internal`) ist die Adresse, unter der die
+Galerie im Fotobox-WLAN läuft; sie steht als dritte Zeile in der WLAN-Box auf
+dem Boxschirm. Sie ist für den Gast da, **der schon verbunden ist**: der
+WLAN-QR-Code nützt ihm nichts mehr, und eine IP tippt niemand freiwillig ab.
+
+Auflösen tut der Name über denselben Hijack, der auch die Verbindungstests
+fängt — `address=/#/<ip>` beantwortet jeden Namen mit der Box. Außerhalb des
+Fotobox-WLANs löst er deshalb **nicht** auf; das ist keine echte Domain.
+
+Zwei Fallstricke stecken darin:
+
+* **Die Endung.** `.internal` hat die ICANN 2024 ausdrücklich für private Netze
+  reserviert — sie wird nie an jemanden vergeben. Ein echter Name wie `.box`
+  gehörte dagegen einem fremden Registry und könnte außerhalb des Hotspots
+  eines Tages irgendwo landen. Auf einer Mietbox steht der Name gedruckt.
+* **Der eigene Name muss aus der Umleitung heraus.** Zeigt `gallery_url` auf
+  einen Hostnamen, ist das Redirect-Ziel selbst einer — und
+  `_captive_portal_redirect` leitet ohne Ausnahme jeden Hostnamen um, also auch
+  diesen. Die Box drehte sich endlos im Kreis. Deshalb steht
+  `config.gallery_host()` in der Ausnahmeliste neben `_looks_like_ip`.
+
+Die Box selbst erreicht ihre Galerie **nicht** über den Namen: ihr Resolver
+hängt am Uplink, nicht am dnsmasq des Hotspots. `scripts/smoke_test.py` prüft
+deshalb über die IP und meldet den Namen nur zusätzlich.
+
 ### Warum der QR-Code das WLAN trägt und nicht den Link
 
 Der selbst erzeugte Code in der Sidebar enthält die **WLAN-Zugangsdaten**
@@ -295,9 +357,9 @@ Zwei Dinge, die dabei bewusst so sind:
 * **Die Klartext-Daten in der WLAN-Box bleiben stehen.** Ältere Kameras lesen
   keine WLAN-Codes, und ein Laptop hat gar keine.
 * **Wer schon verbunden ist, kommt über den Code nicht in die Galerie.** Sein
-  Handy meldet nur „bereits verbunden". Für ihn ist der Weg die Galerie-Adresse
-  aus der WLAN-Box oder das Anmeldefenster, das beim nächsten Verbinden erneut
-  aufgeht.
+  Handy meldet nur „bereits verbunden". Für ihn steht die Adresse als dritte
+  Zeile in der WLAN-Box (`gallery_hostname`, siehe oben) — abtippbar, statt
+  einer IP.
 
 Der Payload kostet Modulgröße: `Fotobox` + zehnstelliges Passwort ergeben 29
 Module gegenüber 25 beim Link. Ein langer Eventname als SSID treibt das auf 33

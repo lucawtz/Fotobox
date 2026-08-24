@@ -17,9 +17,42 @@ CONN_NAME = "fotobox-hotspot"
 CAPTIVE_CONF_PATH = "/etc/NetworkManager/dnsmasq-shared.d/captive.conf"
 
 
+def captive_conf_content(ip: str) -> str:
+    """Inhalt der captive.conf fuer diese Hotspot-IP.
+
+    Eigene Funktion, weil install.sh die Datei beim ersten Boot schreibt
+    und hotspot.py bei jedem Start. Liefen die beiden auseinander, faende
+    _write_captive_conf jedes Mal einen abweichenden Inhalt, schriebe neu
+    und startete den Hotspot einmal zusaetzlich durch.
+    """
+    # Die Option traegt bewusst die IP und nicht den Hostnamen: dieser
+    # Aufruf ist der erste, den das Handy nach dem Beitritt macht, und er
+    # darf nicht davon abhaengen, dass DNS schon funktioniert. Den schoenen
+    # Namen liefert erst die Antwort (gallery_server.api_captive_portal).
+    api = config.build_gallery_url(
+        ip, config.cfg.get("gallery_port", 80)).rstrip("/") + "/api/captive/portal"
+    return (
+        "# Fotobox Captive-Portal: alle DNS-Anfragen auf Hotspot-IP umleiten\n"
+        "# Wird zur Laufzeit von hotspot.py geschrieben.\n"
+        f"address=/#/{ip}\n"
+        "# RFC 8910: Adresse der Captive-Portal-API. Handys ab iOS 14 /\n"
+        "# Android 11 lesen sie und zeigen den Anmelden-Banner, ohne auf\n"
+        "# ihre eigenen Verbindungstests angewiesen zu sein.\n"
+        f'dhcp-option=114,"{api}"\n'
+    )
+
+
 def _write_captive_conf(ip: str) -> str:
-    """Schreibt captive.conf so dass dnsmasq alle DNS-Anfragen auf die
-    übergebene IP umleitet (Captive-Portal-DNS-Hijack).
+    """Schreibt captive.conf: DNS-Hijack auf die übergebene IP plus die
+    Portal-Adresse als DHCP-Option 114.
+
+    Zwei Wege zum selben Ziel, weil der erste allein nicht verlässlich ist.
+    Der DNS-Hijack fängt die Verbindungstests der Handys ab — aber nur,
+    wenn das Handy überhaupt welche schickt. Wer das Anmeldefenster einmal
+    weggetippt hat oder das Netz schon kennt, schickt keine mehr und steht
+    dann "verbunden, aber sonst passiert nichts" da. Option 114 (RFC 8910)
+    sagt es stattdessen ausdrücklich beim DHCP-Handshake, bei jedem
+    Beitritt aufs Neue.
 
     Bevorzugt direktes Schreiben (install.sh chownt die Datei dem
     Service-User). Fällt das wegen fehlender Rechte fehl, wird via
@@ -30,11 +63,8 @@ def _write_captive_conf(ip: str) -> str:
       "unchanged" — Datei hatte bereits den gewünschten Inhalt
       "failed"    — Write fehlgeschlagen (kein Schreibrecht trotz Fallback)
     """
-    content = (
-        "# Fotobox Captive-Portal: alle DNS-Anfragen auf Hotspot-IP umleiten\n"
-        "# Wird zur Laufzeit von hotspot.py geschrieben.\n"
-        f"address=/#/{ip}\n"
-    )
+    content = captive_conf_content(ip)
+
     try:
         with open(CAPTIVE_CONF_PATH, "r", encoding="utf-8") as f:
             if f.read() == content:
@@ -350,8 +380,12 @@ def start() -> bool:
                     "gestartet werden — manueller Eingriff: "
                     "'sudo nmcli connection up %s'", CONN_NAME)
         config.cfg["hotspot_ip"] = actual_ip
+        # Ueber gallery_host, nicht ueber actual_ip: mit gesetztem
+        # gallery_hostname traegt die URL den Namen, und der Captive-
+        # Redirect schickt die Gaeste dann dorthin statt auf die IP.
         config.cfg["gallery_url"] = config.build_gallery_url(
-            actual_ip, config.cfg.get("gallery_port", 80))
+            config.gallery_host(config.cfg),
+            config.cfg.get("gallery_port", 80))
     else:
         logger.warning(
             "Hotspot: Interface-IP konnte nach Start nicht ausgelesen werden "

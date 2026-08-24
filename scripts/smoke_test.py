@@ -321,8 +321,22 @@ def check_network():
              f"kann er das Handy nicht verbinden (config.box_qr_payload)")
 
     captive = "/etc/NetworkManager/dnsmasq-shared.d/captive.conf"
-    (ok if os.path.isfile(captive) else warn)(
-        "Captive-Portal-DNS", captive if os.path.isfile(captive) else f"{captive} fehlt")
+    try:
+        with open(captive, encoding="utf-8") as fh:
+            conf = fh.read()
+    except OSError:
+        conf = ""
+    if not conf:
+        warn("Captive-Portal-DNS", f"{captive} fehlt oder ist leer")
+    else:
+        ok("Captive-Portal-DNS", captive)
+        # Zweiter Weg ins Anmeldefenster: ohne Option 114 haengt alles an
+        # den Verbindungstests der Handys — und die schickt ein Geraet
+        # nicht mehr, das das Netz schon kennt.
+        (ok if "dhcp-option=114" in conf else warn)(
+            "Portal-Ansage per DHCP-Option 114 (RFC 8910)",
+            next((l for l in conf.splitlines() if "114" in l),
+                 "fehlt — Dienst neu starten, hotspot.py schreibt sie beim Start"))
 
     # Port 80 ohne root: setcap auf der venv-Python
     py = os.path.join(BASE, "venv", "bin", "python")
@@ -338,10 +352,22 @@ def check_network():
              "funktioniert dann NICHT. './install.sh' erneut laufen lassen.")
 
     if service_active():
-        url = config.cfg.get("gallery_url", "http://192.168.4.1")
+        # Bewusst ueber die IP und nicht ueber gallery_url: mit gesetztem
+        # gallery_hostname traegt die einen Namen, und den loest allein der
+        # dnsmasq des Hotspots auf. Der Resolver der Box selbst haengt am
+        # Uplink und kennt ihn nicht — der Test wuerde fehlschlagen, obwohl
+        # fuer die Gaeste alles stimmt.
+        url = config.build_gallery_url(
+            config.cfg.get("hotspot_ip", "192.168.4.1"),
+            config.cfg.get("gallery_port", 80))
         rc, out = run(["curl", "-fsS", "-o", "/dev/null", "-w", "%{http_code}",
                        "--max-time", "5", url])
         (ok if rc == 0 else fail)(f"Galerie antwortet unter {url}", out.strip())
+        name = config.cfg.get("gallery_url", "")
+        if name and name != url:
+            ok(f"Für Gäste zusätzlich unter {name}",
+               "Loest nur im Fotobox-WLAN auf (Captive-DNS) — von der Box "
+               "aus deshalb nicht pruefbar")
 
 
 # ── 7. Kamera, Capture-Card, GPIO ──────────────────────────────────────────────

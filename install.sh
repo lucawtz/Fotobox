@@ -128,11 +128,17 @@ fi
 echo "→ Captive-Portal-DNS einrichten..."
 HOTSPOT_IP=$(cd "$INSTALL_DIR" && python3 -c "import config; print(config.cfg['hotspot_ip'])" 2>/dev/null || echo "192.168.4.1")
 sudo mkdir -p /etc/NetworkManager/dnsmasq-shared.d
-sudo tee /etc/NetworkManager/dnsmasq-shared.d/captive.conf > /dev/null <<EOF
-# Fotobox Captive-Portal: alle DNS-Anfragen auf Hotspot-IP umleiten
-# Wird zur Laufzeit von hotspot.py auf die echte Interface-IP angepasst.
-address=/#/$HOTSPOT_IP
-EOF
+# Inhalt kommt aus hotspot.py statt aus einem Heredoc hier: die Datei
+# traegt neben dem DNS-Hijack auch die DHCP-Option 114, und ein zweiter
+# handgeschriebener Stand wuerde beim ersten Start als "geaendert" gelten
+# und den Hotspot ueberfluessigerweise durchstarten.
+CAPTIVE_PY="import config, hotspot; print(hotspot.captive_conf_content('$HOTSPOT_IP'), end='')"
+CAPTIVE_CONF=$(cd "$INSTALL_DIR" && python3 -c "$CAPTIVE_PY" 2>/dev/null)
+if [ -z "$CAPTIVE_CONF" ]; then
+    echo "  ! hotspot.captive_conf_content nicht aufrufbar — schreibe nur den DNS-Hijack"
+    CAPTIVE_CONF="address=/#/$HOTSPOT_IP"
+fi
+printf '%s\n' "$CAPTIVE_CONF" | sudo tee /etc/NetworkManager/dnsmasq-shared.d/captive.conf > /dev/null
 sudo chown "$INSTALL_USER":"$INSTALL_USER" /etc/NetworkManager/dnsmasq-shared.d/captive.conf
 
 # 7c. Sudoers-Fallback: falls der chown später mal verloren geht (Reinstall

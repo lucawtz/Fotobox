@@ -132,6 +132,9 @@ export interface AdminConfig {
   // koennte der Host den Admin-PIN auslesen und sich selbst hochstufen.
   wifi_ssid?: string;
   wifi_password?: string;
+  /** Galerie-Adresse ohne Schema, wie sie auf dem Boxschirm steht
+   *  (z. B. "fotobox.internal"). Nur zum Anzeigen. */
+  gallery_address?: string;
   admin_pin?: string;
   host_pin?: string;
 }

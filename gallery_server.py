@@ -337,8 +337,13 @@ def _captive_portal_redirect():
     - Phone tippt apple.com (DNS-Hijack zum Pi) → Redirect zur Galerie
     - Browser tippt 192.168.4.1 oder 192.168.2.140 → kein Redirect
     """
-    host = (request.host or "").split(":")[0]
-    if not host or _looks_like_ip(host) or host == "localhost" or host.endswith(".local"):
+    host = (request.host or "").split(":")[0].lower()
+    # Der eigene Name MUSS hier heraus. Zeigt gallery_url auf
+    # 'fotobox.internal', ist das Redirect-Ziel selbst ein Hostname — ohne
+    # diese Zeile leitet die Box ihn auf sich selbst um, und zwar endlos.
+    if (not host or _looks_like_ip(host) or host == "localhost"
+            or host.endswith(".local")
+            or host == config.gallery_host(config.cfg)):
         return None
     # Hierher kommen wir nur via DNS-Hijack (Hostname statt IP).
     probe = request.path.lower() in _PROBE_SUCCESS
@@ -370,6 +375,43 @@ def api_captive_release():
     _captive_release(ip)
     logger.info("Captive-Portal freigegeben für %s", ip or "unbekannt")
     return jsonify(ok=True, ttl=_CAPTIVE_RELEASE_TTL_S)
+
+
+@app.route("/api/captive/portal")
+def api_captive_portal():
+    """Captive-Portal-API nach RFC 8908 — das Ziel der DHCP-Option 114.
+
+    Der Weg ueber die Probe-URLs ist Raterei: das Handy schickt sie nur,
+    wenn es das Netz fuer neu haelt. Wer das Anmeldefenster einmal
+    weggetippt hat oder schon einmal verbunden war, bekommt beim naechsten
+    Beitritt keins mehr — genau die Sackgasse, in der ein Gast steht, der
+    "verbunden, aber sonst passiert nichts" sieht.
+
+    Ueber Option 114 sagt die Box es stattdessen ausdruecklich: hier ist
+    ein Portal, hier ist seine Adresse. iOS ab 14 und Android ab 11 lesen
+    das und zeigen den Anmelden-Banner unabhaengig davon, was sie sich
+    ueber das Netz gemerkt haben.
+
+    'user-portal-url' traegt den schoenen Namen — das ist die Adresse, die
+    der Gast dann in der Zeile stehen sieht. Die Option selbst zeigt auf
+    die IP (hotspot.py), damit dieser Aufruf hier ohne DNS auskommt.
+
+    Wer sich per /api/captive/release freigeschaltet hat, bekommt
+    'captive: false' — sonst holt ihn der Banner zurueck ins
+    Anmeldefenster, aus dem er gerade herausgegangen ist.
+    """
+    released = _captive_is_released(_client_ip())
+    portal = (config.cfg.get("gallery_url") or "").rstrip("/") + "/"
+    body = {"captive": not released, "user-portal-url": portal}
+    if released:
+        # Ohne Restlaufzeit fragt iOS ungeduldig nach; die Zahl ist
+        # dieselbe, mit der _captive_release den Freibrief ausstellt.
+        body["seconds-remaining"] = _CAPTIVE_RELEASE_TTL_S
+        body["can-extend-session"] = True
+    resp = Response(json.dumps(body), status=200,
+                    mimetype="application/captive+json")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # ── Galerie-Routen ─────────────────────────────────────────────────────────────
@@ -1422,6 +1464,10 @@ def api_admin_config():
             # nur Glyph und Text. Nur das Ja/Nein — die Pfade selbst gehen
             # den Mieter nichts an.
             "booking_label":      config.cfg.get("booking_label", ""),
+            # Dritte Zeile der WLAN-Box auf dem Boxschirm (ui.py:
+            # _gallery_address) — ohne Schema, so wie sie dort steht.
+            "gallery_address":    (config.cfg.get("gallery_url") or ""
+                                   ).split("://")[-1].rstrip("/"),
             "has_instagram_qr":   os.path.isfile(config.cfg.get("instagram_qr_path", "")),
             "has_booking_qr":     os.path.isfile(config.cfg.get("booking_qr_path", "")),
             # Warnung, solange Auslieferungs-PINs aktiv sind. Der Admin-PIN
@@ -2046,7 +2092,7 @@ def preflight() -> int:
                 "diesem Modus NICHT.", port, fallback)
             config.cfg["gallery_port"] = fallback
             config.cfg["gallery_url"] = config.build_gallery_url(
-                config.cfg.get("hotspot_ip", "192.168.4.1"), fallback)
+                config.gallery_host(config.cfg), fallback)
             return fallback
     # Alle Fallbacks belegt → Server wird gleich stumm crashen, aber
     # wenigstens steht's klar im Log.

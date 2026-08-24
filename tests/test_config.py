@@ -98,3 +98,27 @@ def test_logo_path_is_stored_relative(tmp_path, monkeypatch):
 def test_gallery_url_omits_port_80():
     assert config.build_gallery_url("192.168.4.1", 80) == "http://192.168.4.1"
     assert config.build_gallery_url("192.168.4.1", 5000) == "http://192.168.4.1:5000"
+
+
+def test_gallery_host_nimmt_den_namen_nur_mit_eigenem_hotspot():
+    """Ohne eigenen Hotspot gibt es keinen Captive-DNS, der den Namen
+    aufloest — dort waere er eine Sackgasse."""
+    base = {"gallery_hostname": "fotobox.internal", "hotspot_ip": "192.168.4.1"}
+    assert config.gallery_host({**base, "hotspot_enabled": True}) == "fotobox.internal"
+    assert config.gallery_host({**base, "hotspot_enabled": False}) == "192.168.4.1"
+    assert config.gallery_host({**base, "hotspot_enabled": True,
+                                "gallery_hostname": ""}) == "192.168.4.1"
+
+
+def test_gallery_host_raeumt_den_namen_auf():
+    """Ein versehentlicher Punkt am Ende oder Grossschreibung darf nicht
+    dazu fuehren, dass der Redirect-Vergleich in gallery_server danebengreift
+    und die Box sich selbst umleitet."""
+    got = config.gallery_host({"gallery_hostname": "  Fotobox.Internal. ",
+                               "hotspot_enabled": True})
+    assert got == "fotobox.internal"
+
+
+def test_gallery_url_traegt_den_namen(tmp_path, monkeypatch):
+    cfg = _reload(monkeypatch, tmp_path / "config.json")
+    assert cfg["gallery_url"] == "http://fotobox.internal"

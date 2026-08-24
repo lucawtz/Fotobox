@@ -91,6 +91,20 @@ _DEFAULTS: dict = {
     # laesst den Galerie-Server auch auf 127.0.0.1 gebunden.
     "hotspot_enabled": True,
     "hotspot_ip": "192.168.4.1",
+    # Name, unter dem die Galerie im Fotobox-WLAN laeuft. Der Captive-DNS
+    # beantwortet JEDEN Namen mit der Hotspot-IP (hotspot.py schreibt
+    # 'address=/#/<ip>'), also loest dieser hier dort auf die Box auf.
+    #
+    # Er ist fuer die Gaeste da, die schon im WLAN haengen: der WLAN-QR
+    # nuetzt ihnen nichts mehr, und eine IP tippt niemand freiwillig ab.
+    #
+    # '.internal' hat die ICANN 2024 ausdruecklich fuer private Netze
+    # reserviert — die Endung wird nie an jemanden vergeben. Ein echter
+    # Name wie '.box' gehoerte dagegen einem fremden Registry und koennte
+    # ausserhalb des Hotspots eines Tages irgendwo landen.
+    #
+    # Leer = die Galerie laeuft wieder unter der nackten IP.
+    "gallery_hostname": "fotobox.internal",
     "hotspot_interface": "wlan0",
     # Wie lange eine Event-Session laeuft, bevor automatisch ein neuer
     # Ordner beginnt. 18h deckt "Feier bis 02:00" ab, trennt aber den
@@ -309,7 +323,7 @@ def load_config() -> dict:
         data["picture_dir"] = os.path.join(BASE_DIR, data["picture_dir"])
 
     # Laufzeit-Werte
-    data["gallery_url"] = build_gallery_url(data["hotspot_ip"], data["gallery_port"])
+    data["gallery_url"] = build_gallery_url(gallery_host(data), data["gallery_port"])
     data["thumbnail_dir"] = os.path.join(BASE_DIR, "thumbnails")
 
     return data
@@ -319,6 +333,22 @@ def build_gallery_url(host: str, port: int) -> str:
     """Baut die Gallery-URL — Port 80 wird weggelassen, damit der QR-Code
     ein cleanes 'http://192.168.4.1' zeigt statt 'http://192.168.4.1:80'."""
     return f"http://{host}" if int(port) == 80 else f"http://{host}:{port}"
+
+
+def gallery_host(data: dict) -> str:
+    """Host-Teil der Galerie-Adresse: der Name, wenn die Box ihr eigenes
+    WLAN aufspannt — sonst die nackte IP.
+
+    Ohne eigenen Hotspot gibt es keinen Captive-DNS, der den Namen
+    aufloesen koennte; er waere dort eine Sackgasse. Dasselbe gilt fuer
+    die Box selbst: ihr eigener Resolver haengt am Uplink, nicht am
+    dnsmasq des Hotspots — wer von der Box aus die Galerie aufruft
+    (scripts/smoke_test.py), muss die IP nehmen.
+    """
+    name = (data.get("gallery_hostname") or "").strip().strip(".").lower()
+    if name and data.get("hotspot_enabled", True):
+        return name
+    return data.get("hotspot_ip", "192.168.4.1")
 
 
 # ── Was der QR-Code am Boxbildschirm traegt ───────────────────────────────────

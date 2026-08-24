@@ -102,6 +102,8 @@ export interface PreviewProps {
   logoUrl: string | null;
   wifiSsid: string;
   wifiPassword: string;
+  /** Galerie-Adresse ohne Schema, dritte Zeile der WLAN-Box. */
+  galleryAddress: string;
   instagramUrl: string;
   bookingUrl: string;
   /** Beschriftung der Buchungs-Reihe (Owner-Setting booking_label). */
@@ -327,7 +329,7 @@ function SocialIcon({ kind, color }: { kind: "instagram" | "calendar"; color: st
 
 export default function ThemePreview(props: PreviewProps) {
   const { theme, eventName, subtitle, logoUrl,
-          wifiSsid, wifiPassword, instagramUrl, bookingUrl,
+          wifiSsid, wifiPassword, galleryAddress, instagramUrl, bookingUrl,
           bookingLabel, hasInstagramQr, hasBookingQr } = props;
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -360,9 +362,21 @@ export default function ThemePreview(props: PreviewProps) {
       0,
     );
 
-  // ── WLAN-Box (ui.py:_wifi_box_metrics) ──────────────────────────────────
-  const wifiRows = (wifiSsid.trim() ? 1 : 0) + (wifiPassword.trim() ? 1 : 0);
-  const wifiBoxH = wifiRows ? 22 + wifiRows * (F_LABEL_H + 4 + F_NORMAL_H + 14) : 0;
+  // ── WLAN-Box (ui.py:_wifi_rows / _wifi_box_metrics) ─────────────────────
+  // Die Adresszeile traegt die kleine Schrift: sie ist der Weg fuer Gaeste,
+  // die schon im WLAN haengen, soll SSID und Passwort aber nicht die Buehne
+  // nehmen. Jede Zeile hier kostet die QR-Gruppe darueber Platz.
+  const wifiRowDefs = (
+    [
+      ["WLAN", wifiSsid, F_NORMAL_PT, F_NORMAL_H, 700],
+      ["Passwort", wifiPassword, F_NORMAL_PT, F_NORMAL_H, 700],
+      ["Galerie", galleryAddress, F_SUB_PT, F_SUB_H, 400],
+    ] as const
+  ).filter(([, value]) => !!String(value).trim());
+  const wifiRows = wifiRowDefs.length;
+  const wifiBoxH = wifiRows
+    ? 22 + wifiRowDefs.reduce((h, [, , , rowH]) => h + F_LABEL_H + 4 + rowH + 14, 0)
+    : 0;
   // ui.py rechnet den Rand aus der Status-Bar statt ihn zu verdrahten.
   const wifiTop  = wifiRows ? H - (STATUS_H + 12) - wifiBoxH : H;
 
@@ -773,9 +787,8 @@ export default function ThemePreview(props: PreviewProps) {
                 px: "16px",
               }}
             >
-              {([["WLAN", wifiSsid], ["Passwort", wifiPassword]] as const)
-                .filter(([, v]) => !!v.trim())
-                .map(([label, value]) => (
+              {wifiRowDefs
+                .map(([label, value, sizePt, lineH, weight]) => (
                   <Box key={label} sx={{ mb: "12px" }}>
                     <Box
                       sx={{
@@ -790,9 +803,9 @@ export default function ThemePreview(props: PreviewProps) {
                     </Box>
                     <Box
                       sx={{
-                        fontSize: F_NORMAL_PT,
-                        fontWeight: 700,
-                        lineHeight: `${F_NORMAL_H}px`,
+                        fontSize: sizePt,
+                        fontWeight: weight,
+                        lineHeight: `${lineH}px`,
                         color: c("sidebar_text"),
                         whiteSpace: "nowrap",
                         overflow: "hidden",
