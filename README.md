@@ -211,6 +211,24 @@ startet den Hotspot danach automatisch neu — alle verbundenen Geräte fliegen
 dabei kurz raus, auch das Gerät, von dem aus man die Änderung vornimmt. Am
 besten vor dem Event erledigen, nicht mittendrin.
 
+### Passwort-Dialog für die eigene SSID
+
+Wird die Fotobox-SSID versehentlich im WLAN-Menü des Pi-Desktops angeklickt,
+legt NetworkManager (bzw. netplan) ein **Client**-Profil auf die eigene SSID an
+— autoconnect an, an kein Interface gebunden. NM probiert es dann auf jedem
+freien Adapter (z. B. dem USB-Stick `wlan1`), der Handshake mit dem eigenen AP
+scheitert zwangsläufig, und mitten im Event ploppt alle paar Minuten
+„Authentication required by Wi-Fi network" auf.
+
+`hotspot.py` räumt solche Profile beim Start selbst weg. Hat netplan das Profil
+angelegt, bleibt zusätzlich eine YAML-Datei liegen, die es beim nächsten Boot
+neu erzeugt — die gehört von Hand entfernt:
+
+```bash
+grep -rl ssid-oder-name /etc/netplan/   # 90-NM-<uuid>.yaml finden
+sudo rm /etc/netplan/90-NM-<uuid>.yaml
+```
+
 ### Warum externe Links über `/go/` laufen
 
 `hotspot.py` schreibt `address=/#/<hotspot_ip>` in die dnsmasq-Config — ein

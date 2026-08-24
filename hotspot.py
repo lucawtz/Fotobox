@@ -118,6 +118,70 @@ def _free_interface(ifname: str) -> None:
         _nmcli(["connection", "down", name], timeout=10)
 
 
+def _connection_uuids(ctype: str = "802-11-wireless") -> list:
+    """UUIDs aller gespeicherten Connections vom gewuenschten Typ."""
+    r = _nmcli(["-t", "-f", "UUID,TYPE", "connection", "show"], timeout=5)
+    if r is None or r.returncode != 0:
+        return []
+    uuids = []
+    for line in r.stdout.splitlines():
+        parts = line.split(":")
+        if len(parts) >= 2 and parts[1] == ctype:
+            uuids.append(parts[0])
+    return uuids
+
+
+def _connection_field(uuid: str, fields: list) -> dict:
+    """Liest einzelne Settings einer Connection als dict (leer bei Fehler)."""
+    r = _nmcli(["-t", "-f", ",".join(fields), "connection", "show", "uuid", uuid],
+               timeout=5)
+    if r is None or r.returncode != 0:
+        return {}
+    out = {}
+    for line in r.stdout.splitlines():
+        key, sep, value = line.partition(":")
+        if sep:
+            out[key] = value
+    return out
+
+
+def _purge_self_ssid_clients(ssid: str) -> None:
+    """Loescht Client-Profile, die auf unsere eigene Hotspot-SSID zeigen.
+
+    Klickt jemand am Pi-Desktop im WLAN-Menue auf die eigene Fotobox-SSID,
+    legt NetworkManager (bzw. netplan) ein infrastructure-Profil mit
+    autoconnect=yes an. Das Profil ist an kein Interface gebunden, NM
+    probiert es also auf jedem freien WLAN-Adapter (z.B. dem USB-Stick
+    wlan1) und versucht, sich mit dem eigenen Hotspot zu verbinden. Der
+    Handshake scheitert zwangslaeufig, NM fragt nach einem neuen Key —
+    und der Passwort-Dialog ploppt mitten im Event alle paar Minuten auf.
+    Solche Profile sind nie sinnvoll, also raus damit.
+    """
+    for uuid in _connection_uuids():
+        info = _connection_field(uuid, [
+            "connection.id", "802-11-wireless.mode", "802-11-wireless.ssid"])
+        if not info:
+            continue
+        name = info.get("connection.id", uuid)
+        if name == CONN_NAME:
+            continue
+        if info.get("802-11-wireless.ssid") != ssid:
+            continue
+        # Leeres Feld / "--" bedeutet bei NM den Default: infrastructure
+        if info.get("802-11-wireless.mode") == "ap":
+            continue
+        logger.info(
+            "Hotspot: loesche Client-Profil '%s' auf eigener SSID '%s' "
+            "(sonst fragt NetworkManager staendig nach dem WLAN-Passwort)",
+            name, ssid)
+        _nmcli(["connection", "down", "uuid", uuid], timeout=10)
+        r = _nmcli(["connection", "delete", "uuid", uuid], timeout=10)
+        if r is None or r.returncode != 0:
+            logger.warning(
+                "Hotspot: Client-Profil '%s' konnte nicht geloescht werden: %s",
+                name, (r.stderr if r else "no result").strip()[:200])
+
+
 def _delete_existing() -> None:
     """Alte fotobox-hotspot-Connection entfernen damit ein frischer Build
     nicht von kaputten Altsettings gestört wird."""
@@ -227,6 +291,7 @@ def start() -> bool:
             ifname)
         return False
 
+    _purge_self_ssid_clients(ssid)
     _free_interface(ifname)
     _delete_existing()
 
