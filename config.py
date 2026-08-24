@@ -130,7 +130,6 @@ _DEFAULTS: dict = {
     ],
     "polaroid_frames": [[567, 255, -5], [1098, 256, 5], [1633, 257, 12]],
     "polaroid_photo_size": [310, 295],
-    # 16:9 — passt zum HDMI-Output der Kamera, sodass kein Letterbox entsteht.
     # Der Platz, den die Live-Vorschau hoechstens einnehmen darf — nicht
     # ihre Groesse: ui._live_geometry legt das Kamerabild
     # seitenverhaeltnistreu hinein und zieht den Rahmen um das Ergebnis.
