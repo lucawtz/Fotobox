@@ -71,8 +71,8 @@ Diese Tabelle wird aus `config.py` gepflegt — bei Änderungen dort bitte mitzi
 
 | Feld | Beschreibung | Standard |
 |---|---|---|
-| `wifi_ssid` | Hotspot-Name | `"Fotobox"` |
-| `wifi_password` | Hotspot-Passwort (WPA2: 8–63 Zeichen) | `"fotobox123"` |
+| `wifi_ssid` | Hotspot-Name — steckt im QR-Code am Boxbildschirm | `"Fotobox"` |
+| `wifi_password` | Hotspot-Passwort (WPA2: 8–63 Zeichen) — steckt im QR-Code am Boxbildschirm | `"fotobox123"` |
 | `event_name` | Name des Events (Boxschirm + Galerie) | `"Fotobox"` |
 | `subtitle` | Untertitel unter dem Event-Namen | `"Drück einen Knopf"` |
 | `countdown_duration` | Countdown-Dauer in Sekunden | `3` |
@@ -267,6 +267,44 @@ verwerfen — und der Gast ist in Safari/Chrome, wo Speichern funktioniert.
 Die Freigabe gilt 3 Stunden pro Gerät; andere Hostnamen landen weiterhin in
 der Galerie, damit `fotobox.box` auch danach noch funktioniert.
 
+### Warum der QR-Code das WLAN trägt und nicht den Link
+
+Der selbst erzeugte Code in der Sidebar enthält die **WLAN-Zugangsdaten**
+(`WIFI:T:WPA;S:…;P:…;;`), nicht `gallery_url`. Der Grund ist eine harte Grenze
+der Handys: **ein Link kann kein WLAN aufbauen.** Weder iOS noch Android geben
+einer Webseite diese Möglichkeit, und wer den Galerie-Link scannt, ohne im
+Fotobox-WLAN zu hängen, landet nur im Verbindungsfehler — die IP `192.168.4.1`
+ist von draußen nicht erreichbar.
+
+Der `WIFI:`-Payload dagegen wird von der Kamera-App selbst ausgewertet (iOS ab
+11, Android ab 10) und trägt das Handy ins Netz. Die Galerie kommt danach von
+allein: das Captive-Portal schiebt sie unmittelbar nach dem Verbinden ins
+Anmeldefenster (siehe Abschnitt oben). Für den Gast ist das **ein Scan** statt
+„abtippen, verbinden, dann scannen".
+
+Entschieden wird der Inhalt in `config.box_qr_payload()`. Auf den Galerie-Link
+fällt der Code zurück, wenn die Box gar kein eigenes WLAN aufspannt
+(`hotspot_enabled: false` — dann kennt sie die Zugangsdaten des fremden Netzes
+nicht), wenn keine SSID gesetzt ist, oder wenn das Passwort zwischen 1 und 7
+Zeichen liegt: WPA2 verlangt 8, `hotspot.py` verweigert kürzere ebenfalls, es
+gäbe also gar kein Netz, in das der Code führen könnte. Die Beschriftung unter
+dem Code wechselt mit (`ui.py: _qr_caption`).
+
+Zwei Dinge, die dabei bewusst so sind:
+
+* **Die Klartext-Daten in der WLAN-Box bleiben stehen.** Ältere Kameras lesen
+  keine WLAN-Codes, und ein Laptop hat gar keine.
+* **Wer schon verbunden ist, kommt über den Code nicht in die Galerie.** Sein
+  Handy meldet nur „bereits verbunden". Für ihn ist der Weg die Galerie-Adresse
+  aus der WLAN-Box oder das Anmeldefenster, das beim nächsten Verbinden erneut
+  aufgeht.
+
+Der Payload kostet Modulgröße: `Fotobox` + zehnstelliges Passwort ergeben 29
+Module gegenüber 25 beim Link. Ein langer Eventname als SSID treibt das auf 33
+und damit auf 3 px je Modul — dort warnt `ui.py` im Log und rät zu kürzerer
+SSID bzw. kürzerem Passwort. Die Stellschraube ist die Länge des Inhalts, nicht
+die Gestaltung des Codes.
+
 ### Instagram-QR
 
 `instagram_qr_path` nimmt den Code, den Instagram im eigenen Profil zum Export
@@ -277,7 +315,7 @@ Rechteck darauf. Das Weiss wird bewusst durch die *helle* Kachel ersetzt und
 nicht durch das Sidebar-Braun: ein QR-Code braucht dunkle Module auf hellem
 Grund, invertiert scheitern viele Scanner.
 
-Instagrams Code hat 41 Module gegenüber 25 beim Galerie-Code, ist also
+Instagrams Code hat 41 Module gegenüber 29 beim Galerie-Code, ist also
 deutlich dichter. Er wird deshalb mit 130 px gerendert (~3,2 px pro Modul) —
 kleiner als der Galerie-Code, aber gross genug zum Scannen. Ohne hinterlegte
 Datei zeichnet die Sidebar wie vorher das Instagram-Glyph.
@@ -285,7 +323,7 @@ Datei zeichnet die Sidebar wie vorher das Instagram-Glyph.
 ### Nur ein selbst erzeugter Code
 
 Am Boxbildschirm gibt es aus demselben Grund **nur einen** selbst erzeugten
-QR-Code, den der Galerie. Wer den Buchungs-Link scannen würde, hängt ohnehin schon im
+QR-Code — den, der ins WLAN und damit in die Galerie führt. Wer den Buchungs-Link scannen würde, hängt ohnehin schon im
 Fotobox-WLAN und damit in der Galerie, wo der Button steht — ein zweiter Code
 gewinnt dort nichts und nimmt dem Galerie-Code die Führung. Instagram und
 Buchung stehen deshalb als Text darunter, die Buchung mit ihrer Domain als

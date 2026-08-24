@@ -522,10 +522,14 @@ class UI:
         # stehen darunter als Text (_draw_social_links) — beides fuehrt
         # ueber die Galerie, und drei Codes nebeneinander erschlagen den
         # Blick, ohne dass einer davon gewinnt.
+        # Was er traegt, entscheidet config.box_qr_payload: im Regelfall
+        # die WLAN-Zugangsdaten, nicht den Galerie-Link — die Begruendung
+        # steht dort.
         # border=0: die Ruhezone liefert der Cremerand der Karte, damit
         # das Muster genauso gross ist wie bei den Codes darunter.
-        self._qr_surf = self._make_qr(cfg.get("gallery_url", ""),
-                                      size=self.QR_SIZE, border=0,
+        _payload = config.box_qr_payload(cfg)
+        self._qr_surf = self._make_qr(_payload, size=self.QR_SIZE, border=0,
+                                      label=self._qr_payload_log(_payload),
                                       **self._qr_colors())
         # Fassung des Galerie-Codes in Layout-Groesse — (Schluessel, Surface),
         # gefuellt von _gallery_qr.
@@ -552,7 +556,7 @@ class UI:
         self._insta_qr_mtime    = self._mtime(self._insta_qr_seen)
         self._booking_qr_seen   = cfg.get("booking_qr_path", "")
         self._booking_qr_mtime  = self._mtime(self._booking_qr_seen)
-        self._qr_url_seen       = cfg.get("gallery_url", "")
+        self._qr_payload_seen   = config.box_qr_payload(cfg)
         self._cfg_mtime         = self._mtime(config.CONFIG_PATH)
         self._theme_seen        = dict(cfg.get("theme") or {})
         # Von main.py gesetzt (gecachter CUPS-Zustand aus printing.status()).
@@ -743,15 +747,18 @@ class UI:
             self._apply_theme(self._cfg)
             self._theme_seen = theme_now
 
-        # QR-Code — neu generieren wenn sich gallery_url ändert (z.B. Port
-        # oder hotspot_ip vom Admin verstellt) und seit der Code
-        # Theme-Farben trägt auch bei jedem Theme-Wechsel.
-        url = self._cfg.get("gallery_url", "")
-        if url != self._qr_url_seen or theme_changed:
-            logger.info("Live-Reload: QR neu erzeugt (%s)", url)
-            self._qr_surf     = self._make_qr(url, size=self.QR_SIZE,
-                                              border=0, **self._qr_colors())
-            self._qr_url_seen = url
+        # QR-Code — neu generieren wenn sich sein Inhalt ändert (SSID oder
+        # WLAN-Passwort im Admin geaendert, ohne Hotspot auch Port oder
+        # hotspot_ip) und seit der Code Theme-Farben trägt auch bei jedem
+        # Theme-Wechsel.
+        payload = self._qr_payload()
+        if payload != self._qr_payload_seen or theme_changed:
+            logger.info("Live-Reload: QR neu erzeugt (%s)",
+                        self._qr_payload_log(payload))
+            self._qr_surf         = self._make_qr(
+                payload, size=self.QR_SIZE, border=0,
+                label=self._qr_payload_log(payload), **self._qr_colors())
+            self._qr_payload_seen = payload
 
     # ── Homescreen ─────────────────────────────────────────────────────────────
 
@@ -2293,7 +2300,7 @@ class UI:
             # ergibt 4,5 px/Modul und 2 von 6 Stufen im Kameratest, direkt
             # auf 100 px gerendert sind es 4,0 px/Modul und 3 von 6. Harte
             # Modulkanten wiegen schwerer als ein paar Pixel Kantenlaenge.
-            mods = self._qr_modules(self._cfg.get("gallery_url", ""))
+            mods = self._qr_modules(self._qr_payload())
             k    = max(1, SOCIAL_QR_SIZE // mods)
             size = mods * k
             while (k > 1 and mods * (k - 1) >= SOCIAL_QR_MIN
@@ -2378,6 +2385,26 @@ class UI:
             return card
         return (245, 245, 245)
 
+    def _qr_payload(self) -> str:
+        """Inhalt des Sidebar-Codes — WLAN-Zugang oder, ohne eigenen
+        Hotspot, der Galerie-Link. Entschieden wird das in
+        config.box_qr_payload; hier steht nur der kurze Weg dorthin, weil
+        Layout, Cache und Live-Reload alle danach fragen."""
+        return config.box_qr_payload(self._cfg)
+
+    def _qr_payload_log(self, payload: str) -> str:
+        """Fassung des Payloads fuers Log.
+
+        Das WLAN-Passwort steht zwar gross auf dem Boxbildschirm, hat aber
+        im Journal nichts verloren — Logs werden weitergereicht, der
+        Bildschirm nicht. Ausserdem liest sich der maskierte WIFI:-String
+        in einer Logzeile grauenhaft.
+        """
+        if not payload.startswith("WIFI:"):
+            return payload
+        ssid = (self._cfg.get("wifi_ssid") or "").strip()
+        return f"WLAN '{ssid}'" if ssid else "WLAN-Zugang"
+
     def _qr_colors(self) -> dict:
         """Theme-Farben für den Galerie-QR: Module im Sidebar-Ton, Grund in
         der Cremefarbe der Karte — so verschwindet die Quiet-Zone in ihr,
@@ -2412,7 +2439,7 @@ class UI:
 
     def _qr_module_px(self, size: int) -> int:
         """Modulbreite, die _make_qr bei dieser Zielgroesse waehlen wird."""
-        return max(1, size // self._qr_modules(self._cfg.get("gallery_url", "")))
+        return max(1, size // self._qr_modules(self._qr_payload()))
 
     def _qr_pad(self) -> int:
         """Cremerand um jede Code-Kachel — zugleich deren Quiet-Zone.
@@ -2460,13 +2487,14 @@ class UI:
         if self._qr_surf.get_width() == side:
             return self._qr_surf
         colors = self._qr_colors()
-        key = (side, self._cfg.get("gallery_url", ""),
-               colors["fg"], colors["bg"], colors["eye"])
+        payload = self._qr_payload()
+        key = (side, payload, colors["fg"], colors["bg"], colors["eye"])
         cached = self._qr_scaled
         if cached and cached[0] == key:
             return cached[1]
-        surf = self._make_qr(self._cfg.get("gallery_url", ""), size=side,
-                             border=0, **colors) or self._qr_surf
+        surf = self._make_qr(payload, size=side, border=0,
+                             label=self._qr_payload_log(payload),
+                             **colors) or self._qr_surf
         self._qr_scaled = (key, surf)
         return surf
 
@@ -2491,12 +2519,33 @@ class UI:
             err = self._f_small.render("QR fehlt", True, self._theme["panel_bg"])
             self._screen.blit(err, err.get_rect(center=card.center))
 
-        hint = self._f_sub.render("Fotos auf's Handy", True,
+        hint = self._f_sub.render(self._qr_caption(), True,
                                   self._theme["sidebar_text"])
+        # Breitenklammer wie in der WLAN-Box: die Sidebar ist 320 px breit,
+        # und eine laengere Beschriftung (oder eine groessere Schrift) liefe
+        # sonst stumm ueber ihren Rand hinaus.
+        if hint.get_width() > SIDEBAR_W - 24:
+            scale = (SIDEBAR_W - 24) / hint.get_width()
+            hint = pygame.transform.smoothscale(
+                hint, (int(hint.get_width() * scale),
+                       int(hint.get_height() * scale)))
         hint_y = card.bottom + 12
         self._screen.blit(hint, hint.get_rect(centerx=cx, top=hint_y))
 
         self._draw_social_links(cx, hint_y + hint.get_height() + 16)
+
+    def _qr_caption(self) -> str:
+        """Beschriftung unter dem Code — sie muss sagen, was der Scan tut.
+
+        Mit WLAN-Payload passiert beides auf einen Scan: das Handy tritt
+        dem Hotspot bei, und das Captive-Portal schiebt die Galerie
+        hinterher. Traegt der Code dagegen nur den Link (kein eigener
+        Hotspot), fuehrt er allein zu den Fotos — dann waere "WLAN" ein
+        Versprechen, das er nicht halten kann.
+        """
+        if self._qr_payload().startswith("WIFI:"):
+            return "Scannen: WLAN + Fotos"
+        return "Fotos auf's Handy"
 
     def _social_rows(self) -> list:
         """[(icon_type, zeile1, zeile2|None, qr_surface|None)]."""
@@ -3015,7 +3064,8 @@ class UI:
     @staticmethod
     def _make_qr(url: str, size: int = 160, border: int = 4,
                  fg: tuple = (0, 0, 0), bg: tuple = (255, 255, 255),
-                 eye: Optional[tuple] = None) -> Optional[pygame.Surface]:
+                 eye: Optional[tuple] = None,
+                 label: Optional[str] = None) -> Optional[pygame.Surface]:
         """QR-Surface in Theme-Farben, hochskaliert auf ein ganzzahliges
         Vielfaches der Modulbreite.
 
@@ -3035,13 +3085,18 @@ class UI:
         `fg`/`bg` sind Modul- und Grundfarbe, `eye` faerbt die inneren
         Kerne der drei Finder.
 
+        `label` ist das, was in den Logzeilen steht — gebraucht fuer den
+        WLAN-Payload, dessen Passwort nicht ins Journal gehoert.
+
         Reichen fg/bg nicht für QR_MIN_CONTRAST, fällt die Farbwahl still
         auf Schwarz-Weiss zurück: der Mieter kann jede Theme-Farbe frei
         setzen, und ein hübscher, aber unscannbarer Code wäre am
         Eventabend teurer als ein hässlicher.
         """
+        shown = label or url
         if not url:
-            logger.warning("QR-Code: keine URL — gallery_url leer in config?")
+            logger.warning("QR-Code: leerer Inhalt — weder WLAN-Daten noch "
+                           "gallery_url in der config?")
             return None
         try:
             import qrcode
@@ -3073,6 +3128,20 @@ class UI:
             scale = max(1, size // total)
             px    = total * scale
 
+            # Unter 4 px je Modul wird der Code auf Distanz und bei leichter
+            # Unschaerfe wackelig — der Gast muss dann naeher ran. Die
+            # Stellschraube ist nicht die Gestaltung (die kostet nachweislich
+            # nichts, siehe Kommentar an QR_SIZE), sondern die Laenge des
+            # Inhalts: beim WLAN-Payload wachsen die Module mit SSID und
+            # Passwort. "Fotobox" + 10 Zeichen Passwort landen bei 29 Modulen
+            # und 4 px, ein langer Eventname als SSID bei 33 und 3 px.
+            if scale < 4:
+                logger.warning(
+                    "QR-Code für %s: nur %d px je Modul (%d Module auf "
+                    "%d px) — kürzere SSID/kürzeres WLAN-Passwort machen "
+                    "das Muster gröber und damit besser scannbar",
+                    shown, scale, total, px)
+
             img, styled = UI._qr_pil(qr, fg, bg, eye)
             # Runde Module leben von geglätteten Kanten, eckige von harten
             # — deshalb hier zwei Filter statt einem.
@@ -3090,12 +3159,12 @@ class UI:
             if not UI._qr_readable(test):
                 logger.warning(
                     "QR-Code für %s ist bei %d px nicht decodierbar — "
-                    "QR-Card vergrössern oder Theme-Farben prüfen", url, px)
+                    "QR-Card vergrössern oder Theme-Farben prüfen", shown, px)
 
             surf = pygame.image.frombuffer(
                 img.tobytes("raw", "RGB"), (px, px), "RGB").copy()
             logger.info("QR-Code erstellt für %s (%d Module → %dx%d px, %s)",
-                        url, total, px, px, "gestaltet" if styled else "eckig")
+                        shown, total, px, px, "gestaltet" if styled else "eckig")
             return surf
         except ImportError as exc:
             logger.warning("qrcode/pillow fehlt: %s — QR deaktiviert", exc)

@@ -77,14 +77,15 @@ export default function AdminWifi() {
             WLAN
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Hotspot-Daten, die auf der Galerie als QR-Code angezeigt werden können
+            Zugangsdaten des Fotobox-WLANs — sie stecken im QR-Code auf dem
+            Boxbildschirm
           </Typography>
         </Box>
 
         <SettingsCard
           icon={<WifiRoundedIcon />}
           title="Netzwerk-Name (SSID)"
-          description="Wird Gästen für die Verbindung zum Fotobox-WLAN angezeigt."
+          description="Steht auf dem Boxbildschirm und steckt im QR-Code. Kurz halten — je länger SSID und Passwort, desto feiner das QR-Muster."
         >
           {cfg ? (
             <TextField
@@ -100,7 +101,7 @@ export default function AdminWifi() {
         <SettingsCard
           icon={<LockRoundedIcon />}
           title="WLAN-Passwort"
-          description="Mindestens 8 Zeichen für WPA2."
+          description="8 bis 63 Zeichen (WPA2). Gäste müssen es nicht abtippen — der QR-Code auf dem Boxbildschirm trägt es mit und verbindet das Handy von selbst."
         >
           {cfg ? (
             <TextField

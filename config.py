@@ -80,7 +80,6 @@ _DEFAULTS: dict = {
     "subtitle": "Drück einen Knopf",
     "countdown_duration": 3,
     "max_photos": 500,
-    "gpio_pins": {"left": 17, "trigger": 27, "right": 22},
     "logo_path": "Layout/logo.png",
     "admin_pin": "123456",
     "host_pin": "000000",
@@ -206,7 +205,7 @@ _DEFAULTS: dict = {
     # trigger+right gleichzeitig die Kamera.
     #
     # Beim Verdrahten: der LINKE Taster an GPIO 27, der RECHTE an GPIO 22.
-    # ui._switch_hint beschriftet die Knoepfe in dieser Reihenfolge, andersherum
+    # ui._switch_hint beschriftet die Knoepfe nach dieser Reihenfolge, andersherum
     # angeschlossen zeigt der Schirm auf den falschen Taster.
     "gpio_pins": {"left": None, "trigger": 27, "right": 22},
     "disk_warn_mb": 500,
@@ -316,6 +315,75 @@ def build_gallery_url(host: str, port: int) -> str:
     """Baut die Gallery-URL — Port 80 wird weggelassen, damit der QR-Code
     ein cleanes 'http://192.168.4.1' zeigt statt 'http://192.168.4.1:80'."""
     return f"http://{host}" if int(port) == 80 else f"http://{host}:{port}"
+
+
+# ── Was der QR-Code am Boxbildschirm traegt ───────────────────────────────────
+# Nicht die Galerie-URL, sondern die WLAN-Zugangsdaten. Der Grund ist eine
+# harte Grenze der Handys: ein Link kann kein WLAN aufbauen, weder iOS noch
+# Android geben einer Webseite diese Moeglichkeit. Wer den Galerie-Link
+# scannt, ohne im Fotobox-WLAN zu haengen, landet im Verbindungsfehler.
+#
+# Der WIFI:-Payload dagegen wird von den Kamera-Apps selbst ausgewertet (iOS
+# ab 11, Android ab 10) und traegt das Handy ins Netz. Die Galerie kommt
+# danach von allein: das Captive-Portal (gallery_server._captive_portal_
+# redirect) schiebt sie unmittelbar nach dem Verbinden ins Anmeldefenster.
+# Ein Scan statt "abtippen, verbinden, dann scannen".
+#
+# Die Klartext-Daten in der WLAN-Box der Sidebar bleiben trotzdem stehen —
+# fuer Geraete, deren Kamera keine WLAN-Codes liest, und fuer Laptops.
+
+# Reihenfolge wichtig: der Backslash zuerst, sonst maskiert der eigene
+# Durchlauf gleich die Backslashes wieder mit, die er selbst gesetzt hat.
+_WIFI_QR_SPECIALS = ("\\", ";", ",", ":", '"')
+
+
+def _wifi_qr_escape(value: str) -> str:
+    """Sonderzeichen fuer den WIFI:-Payload maskieren."""
+    for ch in _WIFI_QR_SPECIALS:
+        value = value.replace(ch, "\\" + ch)
+    return value
+
+
+def build_wifi_qr(ssid: str, password: str) -> str:
+    """WIFI:-Payload fuer den Sidebar-Code. Leerer String = nicht baubar.
+
+    Leer kommt zurueck, wenn kein SSID gesetzt ist oder das Passwort
+    zwischen 1 und 7 Zeichen liegt: WPA2 verlangt mindestens 8, und
+    hotspot.start() verweigert kuerzere ebenfalls — es gaebe dann gar kein
+    Netz, in das der Code fuehren koennte. Ganz ohne Passwort ist der
+    Hotspot offen, das ist ein gueltiger Fall (T:nopass).
+
+    Rein hexadezimale Werte muessten laut Spec in Anfuehrungszeichen — das
+    betrifft aber nur 64-stellige Roh-PSKs, die hier niemand eintraegt. Ein
+    achtstelliges Zahlenpasswort ist zu kurz, um als PSK durchzugehen, und
+    wird von jedem Parser als Text gelesen. Anfuehrungszeichen wuerden dort
+    mehr kaputt machen als retten.
+    """
+    ssid = (ssid or "").strip()
+    password = password or ""
+    if not ssid:
+        return ""
+    if 0 < len(password) < 8:
+        return ""
+    if not password:
+        return f"WIFI:T:nopass;S:{_wifi_qr_escape(ssid)};;"
+    return (f"WIFI:T:WPA;S:{_wifi_qr_escape(ssid)};"
+            f"P:{_wifi_qr_escape(password)};;")
+
+
+def box_qr_payload(data: dict) -> str:
+    """Inhalt des selbst erzeugten QR-Codes auf dem Boxbildschirm.
+
+    WLAN-Payload, wenn die Box selbst der Access-Point ist — sonst die
+    Galerie-URL. Ohne eigenen Hotspot haengt die Box in einem fremden Netz,
+    dessen Zugangsdaten sie nicht kennt; dort ist der Link das einzige, was
+    der Code sinnvoll tragen kann.
+    """
+    if not data.get("hotspot_enabled", True):
+        return data.get("gallery_url", "")
+    return (build_wifi_qr(data.get("wifi_ssid", ""),
+                          data.get("wifi_password", ""))
+            or data.get("gallery_url", ""))
 
 
 _save_lock = threading.Lock()
