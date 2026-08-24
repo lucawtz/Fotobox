@@ -191,11 +191,24 @@ _DEFAULTS: dict = {
     "booking_qr_path": "Layout/booking_qr.png",
     # Taster-Pins. Ein Wert darf null sein — dann ist dieser Taster nicht
     # verbaut, und die UI blendet seine Aktionen aus statt einen toten Knopf
-    # zu zeigen. Mit zwei Tastern ist trigger+right die bessere Wahl: dann
-    # bleiben Foto, Collage, Nochmal und Drucken erreichbar, und "Zurueck"
-    # erledigt der 10-Sekunden-Timer des Result-Screens. Fehlt left, weckt
+    # zu zeigen.
+    #
+    # Die Box hat ZWEI Taster, deshalb steht left auf null. Das ist keine
+    # Sparmassnahme, sondern die Entscheidung aus IDEAS.md (22.08.2026): der
+    # Collage-Stil gehoert ins Admin-Panel, nicht an einen dritten Knopf, weil
+    # er eine Eigenschaft des Abends ist und keine des einzelnen Gastes. Damit
+    # gab es fuer Taster drei keine Aufgabe mehr.
+    #
+    # trigger+right statt left+trigger, weil die Aktionen daran haengen: Foto
+    # und Nochmal an trigger, Collage und Drucken an right. "Zurueck" verliert
+    # dabei seinen Taster und braucht auch keinen — der 10-Sekunden-Timer des
+    # Result-Screens tut dasselbe und sagt sogar, wann. Fehlt left, weckt
     # trigger+right gleichzeitig die Kamera.
-    "gpio_pins": {"left": 17, "trigger": 27, "right": 22},
+    #
+    # Beim Verdrahten: der LINKE Taster an GPIO 27, der RECHTE an GPIO 22.
+    # ui._switch_hint beschriftet die Knoepfe in dieser Reihenfolge, andersherum
+    # angeschlossen zeigt der Schirm auf den falschen Taster.
+    "gpio_pins": {"left": None, "trigger": 27, "right": 22},
     "disk_warn_mb": 500,
     # Harte Grenze: darunter wird die Aufnahme verweigert, statt gphoto2
     # ins Leere laufen zu lassen. Ein RAW+JPEG-Paar der 700D braucht ~30 MB,
