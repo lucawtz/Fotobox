@@ -59,9 +59,13 @@ fi
 if [ -d "$INSTALL_DIR/frontend" ]; then
     echo "→ Frontend (React-SPA) bauen..."
     cd "$INSTALL_DIR/frontend"
-    if [ ! -d node_modules ]; then
-        npm install --silent
-    fi
+    # Immer installieren, nicht nur beim ersten Mal: nach einem git pull mit
+    # neuen Dependencies existiert node_modules laengst, ein "nur wenn fehlt"-Check
+    # haette die neuen Pakete uebersprungen und der Build waere an einem
+    # unaufloesbaren Import gescheitert. npm ci baut exakt nach
+    # package-lock.json auf und raeumt veraltete Pakete mit weg; npm install
+    # faengt den Fall ab, dass Lockfile und package.json auseinanderlaufen.
+    npm ci --silent || npm install --silent
     npm run build --silent
     cd "$INSTALL_DIR"
 fi
