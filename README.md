@@ -121,7 +121,8 @@ Diese Tabelle wird aus `config.py` gepflegt — bei Änderungen dort bitte mitzi
 | `print_dpi` | Auflösung für die Druckaufbereitung | `300` |
 | `print_options` | Zusätzliche rohe `lp -o`-Optionen | `[]` |
 | `camera_keepalive_s` | Intervall des Kamera-Watchdogs | `25` |
-| `camera_output_mode` | gphoto2-Ausgabemodus der Kamera | `"3"` |
+| `camera_output_mode` | Index aus `gphoto2 --get-config output` | `"3"` |
+| `camera_preview_pull` | Preview-Frame nach jedem Live-View-Wake (siehe unten) | `true` |
 
 ---
 
@@ -299,8 +300,26 @@ sudo lpoptions -d Selphy
 lpstat -p                      # muss "is idle. enabled" melden
 ```
 
-Danach im Admin-Panel unter **Drucken** das Zielgerät auswählen. Solange CUPS
-keinen bereiten Drucker meldet, blendet die Box den „Drucken"-Knopf aus.
+Danach im Admin-Panel unter **Drucken** das Zielgerät auswählen. Solange kein
+Drucker bereit ist, blendet die Box den „Drucken"-Knopf aus.
+
+**Was „bereit“ heißt.** `lpstat -p` beschreibt nur die Warteschlange: eine
+freigegebene, leere Queue meldet `idle`, auch wenn der Selphy ausgeschaltet ist.
+Die Box fragt deshalb zusätzlich
+
+* den echten Gerätezustand per IPP ab (`printer-state-reasons` — Papier leer,
+  Abdeckung offen, Kassette fehlt). Das Admin-Panel zeigt diese Gründe im
+  Klartext an; blockierende Gründe nehmen den „Drucken"-Knopf weg,
+  Warnhinweise wie „Farbband fast leer“ nicht.
+* ob der USB-Drucker überhaupt am Bus hängt (Seriennummer aus der `device-uri`
+  gegen `/sys/bus/usb/devices`). Ein ausgeschalteter Drucker meldet sich ab und
+  gilt damit als **nicht verbunden** — das sieht CUPS von sich aus nicht.
+
+Bei einem Netzwerkdrucker oder einer `device-uri` ohne Seriennummer wird nichts
+behauptet: der Drucker bleibt im Angebot, ein echter Fehler kommt dann beim
+Druckversuch. Von CUPS mitgelieferte Attrappen (`CUPS-BRF-Printer`, PDF, Fax)
+sind als „kein Fotodrucker“ gekennzeichnet und werden bei leerem
+`printer_name` nicht automatisch gewählt.
 
 **Testdruck aus dem Panel:** auf derselben Seite unten „Testseite drucken". Das
 Blatt trägt einen Rahmen 5 mm vom Papierrand, Eckwinkel direkt am Rand und eine
@@ -342,6 +361,57 @@ obere und untere Fotoreihe abschneiden.
 
 ---
 
+## Kamera einstellen
+
+Vieles davon lässt sich nicht per Software erledigen — es muss **an der Kamera
+selbst** stehen. Jede Einstellung hier spart entweder Wartezeit für den Gast
+oder einen Spiegelhub (das hörbare Klicken).
+
+| Einstellung | Wert | Warum |
+|---|---|---|
+| Bildqualität | **JPEG**, nicht RAW+JPEG | Ein RAW+JPEG-Paar der 700D sind ~30 MB über USB 2.0. Und gphoto2 lädt zwei Dateien auf einen einzigen `--filename` — das schlägt fehl, die Aufnahme ist verloren. |
+| Bildgröße | **M** (ca. 8 MP) reicht | 18 MP dauern länger und bringen auf einem 10×15-Druck nichts. |
+| Fokus | **MF** am Objektiv | Im Live-View fokussiert die 700D per Kontrast-AF. Findet sie nichts, löst sie gar nicht aus (`Perhaps no focus?` im Log) — bei fester Boxposition ist Autofokus reines Risiko. |
+| Auto-Power-Off | **Aus** | Sonst schläft die Kamera mitten im Event ein und der Live-View ist weg. Die Box versucht das per gphoto2 zu setzen, aber nicht jede Firmware nimmt es an. |
+| Bildkontrolle | **Aus** | Sonst zeigt die Kamera nach jeder Aufnahme das Foto — auch auf HDMI. Die Box setzt `reviewtime=0`, doppelt hält besser. |
+| Aufnahmemodus | **M** oder **Av**, fest | Automatik ändert die Belichtungszeit je nach Gast; feste Werte geben über den Abend gleich aussehende Bilder. |
+| Speicherziel | SD-Karte drin lassen | gphoto2 lädt das Bild trotzdem herunter, und die Karte ist das Backup, falls der Pi ausfällt. |
+| Stromversorgung | **Dummy-Akku / Netzteil** | Ein Akku hält den Live-View keinen Abend durch. |
+
+### Warum es überhaupt klickt
+
+Der Live-View auf dem Bildschirm kommt von der HDMI-Capture-Card, nicht von
+gphoto2. Damit die Kamera überhaupt auf HDMI sendet, muss sie im Live-View
+stehen — also **Spiegel hoch**. Beim Auslösen muss sie da wieder heraus:
+Spiegel runter, Verschluss, und anschließend für die Vorschau wieder hoch.
+Das ist mechanisch und mit einer DSLR nicht wegzukonfigurieren.
+
+Was die Box tut: sie hält diese Wechsel aus der Wartezeit des Gastes heraus.
+`camera.capture()` macht nur noch die Aufnahme; den Live-View holt
+`request_liveview()` im Hintergrund zurück, während der Result-Screen läuft
+(der zeigt ohnehin kein Live-Bild).
+
+Bleibt der Preview-Pull: die 700D fällt nach dem Spiegelhub sofort wieder aus
+dem Live-View, wenn nicht einmal ein Frame über USB abgeholt wird. Das ist ein
+zusätzlicher Spiegelhub pro Wake. Ob deine Kamera ihn braucht, sagt der Test —
+`camera_preview_pull: false` in die config.json, Box starten, Homescreen
+anschauen. Bleibt das Live-Bild stehen, kann der Wert so bleiben.
+
+### Prüfen, was die Kamera wirklich kann
+
+```bash
+python3 scripts/diagnose_camera.py     # geführt, mit Beobachtungshinweisen
+gphoto2 --get-config output            # welcher Index ist TFT+PC?
+gphoto2 --get-config imageformat       # steht sie auf RAW+JPEG?
+gphoto2 --get-config capturetarget
+```
+
+`camera_output_mode` ist der **Index** aus der Choice-Liste von
+`--get-config output`, nicht der Klartext. Steht der falsche drin, kommt aus
+der Kamera weder auf HDMI noch auf dem Display ein Bild.
+
+---
+
 ## Troubleshooting
 
 ### Kamera nicht erkannt
@@ -349,6 +419,25 @@ obere und untere Fotoreihe abschneiden.
 2. `gphoto2 --auto-detect` im Terminal ausführen
 3. Kamera-Modus auf "PTP" / "MTP" stellen (nicht "Massenspecher")
 4. Watchdog versucht automatisch alle 10 Sekunden eine Neuverbindung
+5. Läuft ein Desktop auf dem Pi, greift `gvfs-gphoto2-volume-monitor` nach der
+   Kamera und gphoto2 meldet sporadisch `Could not claim the USB device`:
+   `systemctl --user mask gvfs-gphoto2-volume-monitor`
+
+### "Kamera hat kein Bild geliefert"
+
+Die Aufnahme lief, aber es kam keine Datei an. In dieser Reihenfolge prüfen:
+
+1. `gphoto2 --get-config imageformat` — steht sie auf **RAW+JPEG**? Dann lädt
+   gphoto2 zwei Dateien auf einen `--filename` und scheitert. Auf JPEG stellen.
+2. Speicherkarte voll oder schreibgeschützt
+3. `logs/fotobox.log` nach `Aufnahme fehlgeschlagen` durchsuchen — dort steht
+   die Originalmeldung von gphoto2
+
+### Auslöser klickt, aber es kommt kein Foto
+
+Meist der Autofokus: die 700D löst im Live-View nicht aus, wenn sie keinen
+Fokus findet (`Perhaps no focus?`). Objektiv auf **MF** stellen und den Fokus
+einmal auf die Standposition der Gäste legen.
 
 ### Galerie nicht erreichbar
 - Pi-IP mit `ip a` prüfen

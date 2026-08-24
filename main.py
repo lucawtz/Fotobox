@@ -67,10 +67,17 @@ def _do_countdown(ui: UI, camera: Camera, cfg: dict,
         total=total,
     )
 
-    # Warten MIT laufender Render-Schleife: sonst steht der Bildschirm bis zu
-    # 35 s auf dem letzten "Lächeln!"-Frame und wirkt abgestuerzt.
-    if not ui.wait_for_capture(done, timeout=35.0):
-        logger.error("Capture-Timeout nach 35 s — gphoto2 antwortet nicht")
+    # Warten MIT laufender Render-Schleife: sonst steht der Bildschirm bis zum
+    # Timeout auf dem letzten "Lächeln!"-Frame und wirkt abgestuerzt.
+    #
+    # Den Timeout gibt die Kamera vor, statt hier als zweite Zahl zu stehen.
+    # Die frueheren festen 35 s waren gegen den 30-s-Capture-Timeout gerechnet
+    # — capture() haengte damals aber noch das Live-View-Wecken an und konnte
+    # 48 s brauchen. Die UI gab also auf und verwarf Fotos, die es laengst gab.
+    timeout = camera.capture_budget_s + 5.0
+    if not ui.wait_for_capture(done, timeout=timeout):
+        logger.error("Capture-Timeout nach %.0f s — gphoto2 antwortet nicht",
+                     timeout)
         ui.show_notice("Kamera antwortet nicht",
                        "Bitte kurz warten und nochmal auslösen")
         return None
@@ -99,15 +106,32 @@ def _capture_sequence(ui: UI, camera, cfg: dict, mode: str) -> Optional[str]:
     Ablauf ausserdem ohne Kamera und ohne Display testen —
     siehe tests/test_capture_flow.py.
     """
-    if mode == "single":
-        return _do_countdown(ui, camera, cfg, 1, 1)
+    try:
+        return (_do_countdown(ui, camera, cfg, 1, 1) if mode == "single"
+                else _collage(ui, camera, cfg))
+    finally:
+        # Live-View zurueckholen, sobald die Aufnahme durch ist — aber im
+        # Hintergrund. Als naechstes kommt der Result-Screen, der zehn
+        # Sekunden lang gar kein Live-Bild zeigt; bis der Homescreen wieder
+        # dran ist, steht das Bild also laengst. Vorher tat capture() das
+        # selbst und synchron, mitten in der Wartezeit des Gastes.
+        camera.request_liveview()
 
+
+def _collage(ui: UI, camera, cfg: dict) -> Optional[str]:
+    """Vier Shots hintereinander, zusammengesetzt zur 2x2-Collage."""
     shots: list = []
     for i in range(COLLAGE_SHOTS):
         photo = _do_countdown(ui, camera, cfg, i + 1, COLLAGE_SHOTS)
         if not photo:
             break
         shots.append(photo)
+        # Zwischen zwei Shots das Live-Bild schon waehrend "Lächeln!" und dem
+        # naechsten Countdown zurueckholen — dort schaut der Gast hin und
+        # richtet sich aus. Nach dem letzten Shot nicht: das erledigt der
+        # gemeinsame finally-Zweig in _capture_sequence.
+        if len(shots) < COLLAGE_SHOTS:
+            camera.request_liveview()
 
     if len(shots) == COLLAGE_SHOTS:
         return collage_mod.make_collage(shots, events.current_event_dir(cfg))
@@ -266,6 +290,7 @@ def main():
         camera = Camera(
             keepalive_s=cfg.get("camera_keepalive_s", 25),
             output_mode=str(cfg.get("camera_output_mode", "3")),
+            preview_pull=bool(cfg.get("camera_preview_pull", True)),
         )
 
     # Taster (GPIO + Tastatur-Fallback). Ein Pin darf in gpio_pins auf null
@@ -367,15 +392,22 @@ def main():
                 # ist der nicht verbaut, beide vorhandenen gleichzeitig. Das
                 # findet kein Gast zufaellig, und es spart den dritten
                 # Taster, solange keiner da ist.
-                # Async ausführen damit die UI nicht 8-18 s blockiert während
+                # Async ausführen damit die UI nicht blockiert während
                 # gphoto2 läuft.
+                #
+                # reset_output=True: wer hier drückt, tut das weil das Bild
+                # fehlt. Dann soll die Box alles neu setzen statt nur den
+                # Spiegel zu heben — im Automatikbetrieb wäre `output` ein
+                # gphoto2-Prozessstart umsonst, hier ist er die halbe Miete.
                 combo_wake = not btns.wired("left") and trigger and right
                 if combo_wake or (left and not (trigger or right)):
                     idle_since = now
                     if camera.available:
                         logger.info("Manueller Wake — Live-View einschalten")
                         threading.Thread(
-                            target=camera.wake_liveview, daemon=True).start()
+                            target=camera.wake_liveview,
+                            kwargs={"reset_output": True},
+                            daemon=True).start()
                     btns.wait_for_release()
 
                 elif trigger or right:
@@ -411,9 +443,10 @@ def main():
                                        camera.error_message or "Bitte Kamera prüfen")
                         btns.wait_for_release()
                     else:
-                        # Kein Auto-Wake — Live-View muss manuell per Camera-Knopf
-                        # oder Q auf der Fotobox aktiviert werden, sonst killt der
-                        # capture-preview-Pull eine eventuell laufende manuelle LV.
+                        # Hier bewusst kein Wake: der Gast hat gerade gedrückt,
+                        # ein Spiegelhub würde den Countdown um Sekunden
+                        # verzögern. Um den Live-View kümmert sich
+                        # _capture_sequence, sobald die Aufnahme durch ist.
                         photo = _capture_sequence(ui, camera, cfg, mode)
                         if photo:
                             result_photo = photo

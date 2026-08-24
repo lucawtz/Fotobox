@@ -24,7 +24,7 @@ import tempfile
 import threading
 import time
 from typing import Optional
-from urllib.parse import quote, unquote
+from urllib.parse import unquote
 
 logger = logging.getLogger(__name__)
 
@@ -98,12 +98,11 @@ def _printer_states() -> dict:
 # das steht in sysfs (siehe _usb_present).
 
 _IPP_REQUEST = """{
-    OPERATION Get-Printer-Attributes
+    OPERATION CUPS-Get-Printers
     GROUP operation-attributes-tag
     ATTR charset attributes-charset utf-8
     ATTR language attributes-natural-language en
-    ATTR uri printer-uri $uri
-    ATTR keyword requested-attributes printer-state,printer-state-reasons,printer-state-message,printer-is-accepting-jobs
+    ATTR keyword requested-attributes printer-name,printer-state,printer-state-reasons,printer-is-accepting-jobs,device-uri
 }
 """
 
@@ -132,36 +131,65 @@ def _ipp_request_path() -> Optional[str]:
 # `lpstat` liefert, damit Frontend und Box-UI nur eine Menge kennen muessen.
 _IPP_STATE = {"idle": "idle", "processing": "printing", "stopped": "disabled"}
 
+_IPP_ATTRS = ("printer-name", "printer-state", "printer-state-reasons",
+              "printer-is-accepting-jobs", "device-uri")
 
-def _ipp_state(name: str) -> Optional[dict]:
-    """Echter Zustand eines Druckers per IPP. None = nicht abfragbar."""
+
+def _ipp_printers() -> Optional[list]:
+    """Alle Drucker samt echtem Zustand in einer einzigen IPP-Abfrage.
+
+    None heisst "IPP nicht nutzbar" (ipptool fehlt, CUPS antwortet nicht) —
+    dann greift die lpstat-Rueckfallebene in list_printers(). Eine leere Liste
+    heisst dagegen "CUPS kennt keinen Drucker" und ist eine Antwort.
+
+    Warum eine Sammelabfrage und nicht je Drucker eine: `lpstat -e/-p/-v`
+    brauchen auf dieser Box je gut eine Sekunde, weil CUPS dabei auch das
+    Netzwerk nach Freigaben absucht. Drei davon pro Statusabruf waren gut drei
+    Sekunden, und `status()` laeuft aus der Renderschleife der Box. Dieselbe
+    Information kostet ueber CUPS-Get-Printers rund 40 ms.
+    """
     path = _ipp_request_path()
     if path is None:
         return None
-    uri = "ipp://localhost/printers/" + quote(name, safe="")
-    proc = _run(["ipptool", "-tv", uri, path], timeout=6.0)
-    if proc is None or proc.returncode != 0:
-        return None
+    proc = _run(["ipptool", "-tv", "ipp://localhost/", path], timeout=8.0)
+    if proc is None or "status-code = " not in (proc.stdout or ""):
+        return None                       # ipptool fehlt oder hat nicht geantwortet
 
-    attrs = {}
-    for line in proc.stdout.splitlines():
-        m = re.match(r"\s+(printer-state|printer-state-reasons|printer-state-message"
-                     r"|printer-is-accepting-jobs)\s+\([^)]*\)\s*=\s*(.*)$", line)
-        if m:
-            attrs[m.group(1)] = m.group(2).strip()
-    if "printer-state" not in attrs:
-        return None
+    # Die Antwort ist eine Folge von Attributgruppen, eine je Drucker. Statt
+    # auf ipptools "-- separator --"-Zeile zu bauen, faengt eine Gruppe dort
+    # neu an, wo ein Attribut zum zweiten Mal auftaucht: pro Drucker kommt
+    # jedes genau einmal, und das gilt auch, wenn ipptool sein Ausgabeformat
+    # einmal aendert.
+    groups, current = [], {}
+    for line in (proc.stdout or "").splitlines():
+        m = re.match(r"\s+(\S+)\s+\([^)]*\)\s*=\s*(.*)$", line)
+        if not m or m.group(1) not in _IPP_ATTRS:
+            continue
+        key, value = m.group(1), m.group(2).strip()
+        if key in current:
+            groups.append(current)
+            current = {}
+        current[key] = value
+    if current:
+        groups.append(current)
 
-    raw = attrs["printer-state"].lower()
-    # 'none' ist die IPP-Schreibweise fuer "nichts zu melden", kein Grund.
-    reasons = [r.strip() for r in attrs.get("printer-state-reasons", "").split(",")
-               if r.strip() and r.strip() != "none"]
-    return {
-        "state":     _IPP_STATE.get(raw, raw),
-        "reasons":   reasons,
-        "message":   attrs.get("printer-state-message", ""),
-        "accepting": attrs.get("printer-is-accepting-jobs", "true").lower() == "true",
-    }
+    out = []
+    for g in groups:
+        name = g.get("printer-name")
+        if not name:
+            continue
+        # 'none' ist die IPP-Schreibweise fuer "nichts zu melden", kein Grund.
+        reasons = [r.strip() for r in g.get("printer-state-reasons", "").split(",")
+                   if r.strip() and r.strip() != "none"]
+        raw = g.get("printer-state", "").lower()
+        out.append({
+            "name":      name,
+            "state":     _IPP_STATE.get(raw, raw or "unknown"),
+            "reasons":   reasons,
+            "accepting": g.get("printer-is-accepting-jobs", "true").lower() == "true",
+            "uri":       g.get("device-uri", ""),
+        })
+    return out
 
 
 # Was der Drucker meldet, in der Sprache der Oberflaeche. Schluessel ist der
@@ -227,13 +255,19 @@ def _reason_labels(reasons: list) -> list:
 _USB_DEVICES = "/sys/bus/usb/devices"
 
 
-def _usb_serials() -> set:
-    """Seriennummern aller aktuell angemeldeten USB-Geraete."""
+def _usb_serials() -> Optional[set]:
+    """Seriennummern aller aktuell angemeldeten USB-Geraete.
+
+    None heisst "sysfs nicht lesbar", und das ist etwas anderes als ein leeres
+    Ergebnis. Ohne die Unterscheidung waere "kein Geraet gefunden" nicht von
+    "hier laesst sich nichts nachsehen" zu trennen — auf einem System ohne
+    /sys wuerde der Drucken-Knopf dann grundsaetzlich verschwinden.
+    """
     found = set()
     try:
         entries = os.listdir(_USB_DEVICES)
     except OSError:
-        return found
+        return None
     for entry in entries:
         try:
             with open(os.path.join(_USB_DEVICES, entry, "serial")) as fh:
@@ -253,7 +287,9 @@ def _usb_present(uri: str) -> Optional[bool]:
     und genau das sieht CUPS nicht.
 
     None heisst "nicht beurteilbar": Netzwerkdrucker, URI ohne Seriennummer,
-    kein lesbares sysfs. Nur ein sicheres False nimmt den Drucken-Knopf weg.
+    kein lesbares sysfs. Nur ein sicheres False nimmt den Drucken-Knopf weg —
+    im Zweifel wird der Drucker angeboten und ein echter Fehler kommt beim
+    Druckversuch.
     """
     if not uri or not uri.startswith("usb:"):
         return None
@@ -261,7 +297,7 @@ def _usb_present(uri: str) -> Optional[bool]:
     if not m:
         return None
     serials = _usb_serials()
-    if not serials:
+    if serials is None:
         return None
     return unquote(m.group(1)) in serials
 
@@ -296,38 +332,38 @@ def _device_uris(names: list) -> dict:
 def list_printers() -> list[dict]:
     """Alle CUPS-Drucker mit echtem Zustand. Leere Liste = keiner eingerichtet.
 
-    Die Namen kommen aus `lpstat -e` — eine nackte Zieladresse pro Zeile, ohne
-    uebersetzbare Prosa. `lpstat -p` wird von CUPS dagegen lokalisiert: auf
-    einem deutschen System steht dort 'Drucker „Selphy" ist inaktiv', woran der
-    englische Parser scheitert. Das Ergebnis war eine leere Liste, damit
-    `available() == False`, damit kein Druck-Knopf in der UI (`print_ready`) —
-    und die irrefuehrende Meldung "Kein Drucker in CUPS eingerichtet", obwohl
-    einer angeschlossen war. Der Zustand kommt deshalb bevorzugt per IPP; die
-    lpstat-Zeile bleibt nur Rueckfallebene, falls ipptool fehlt.
+    Erste Wahl ist IPP: eine Abfrage, sprachneutral, mit Zustand, Gruenden und
+    device-uri. Die lpstat-Ebene darunter bleibt als Rueckfall, wenn ipptool
+    fehlt — und sie hat ihre eigene Geschichte: `lpstat -p` wird von CUPS
+    lokalisiert, auf einem deutschen System steht dort 'Drucker „Selphy" ist
+    inaktiv', woran der englische Parser scheiterte. Das Ergebnis war eine
+    leere Liste, damit `available() == False`, damit kein Druck-Knopf in der UI
+    (`print_ready`) — und die irrefuehrende Meldung "Kein Drucker in CUPS
+    eingerichtet", obwohl einer angeschlossen war. Deshalb kommen die Namen
+    dort aus `lpstat -e`: nackte Zieladressen ohne uebersetzbare Prosa.
     """
-    states = _printer_states()
+    ipp = _ipp_printers()
 
-    names = []
-    proc = _run(["lpstat", "-e"])
-    if proc is not None and proc.returncode == 0:
-        names = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
-    if not names:
-        # Aeltere CUPS-Versionen ohne `-e`: dann bleibt nur der englische Parser.
-        names = list(states)
-
-    uris = _device_uris(names)
+    if ipp is not None:
+        found = [(p["name"], p["state"], p["reasons"], p["accepting"], p["uri"])
+                 for p in ipp]
+        lines = {}
+    else:
+        states = _printer_states()
+        names = []
+        proc = _run(["lpstat", "-e"])
+        if proc is not None and proc.returncode == 0:
+            names = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+        if not names:
+            # Aeltere CUPS-Versionen ohne `-e`: dann bleibt nur der Parser.
+            names = list(states)
+        uris = _device_uris(names)
+        lines = {n: states.get(n, ("unknown", ""))[1] for n in names}
+        found = [(n, states.get(n, ("unknown", ""))[0], [], True, uris.get(n, ""))
+                 for n in names]
 
     out = []
-    for name in names:
-        uri = uris.get(name, "")
-        fallback_state, line = states.get(name, ("unknown", ""))
-
-        ipp = _ipp_state(name)
-        if ipp is not None:
-            state, reasons, accepting = ipp["state"], ipp["reasons"], ipp["accepting"]
-        else:
-            state, reasons, accepting = fallback_state, [], True
-
+    for name, state, reasons, accepting, uri in found:
         labels = _reason_labels(reasons)
         blocked = any(item["blocking"] for item in labels)
         connected = _usb_present(uri)
@@ -339,7 +375,7 @@ def list_printers() -> list[dict]:
             # lp-Fehler melden, als das Drucken stumm zu verstecken.
             "ready": (state in ("idle", "printing", "unknown")
                       and connected is not False and accepting and not blocked),
-            "line":  line or name,
+            "line":  lines.get(name) or name,
             # Was der Drucker selbst meldet, uebersetzt und mit Schweregrad.
             "reasons":   labels,
             # True/False = sicher am USB / sicher nicht. None = nicht pruefbar.

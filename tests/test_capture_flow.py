@@ -39,12 +39,21 @@ class FakeUI:
 class FakeCamera:
     """Schreibt echte JPEGs. `fail_at` = 1-basierter Shot, der fehlschlaegt."""
 
+    capture_budget_s = 5.0
+
     def __init__(self, fail_at=None, size=(600, 400)):
         self.fail_at = fail_at
         self.size = size
         self.shots = 0
         self.available = True
         self.error_message = ""
+        # Protokoll der Live-View-Weckrufe, jeweils mit dem Shot-Stand zum
+        # Zeitpunkt des Aufrufs. Damit laesst sich pruefen, dass geweckt wird
+        # NACH der Aufnahme und nicht mittendrin.
+        self.wakes = []
+
+    def request_liveview(self):
+        self.wakes.append(self.shots)
 
     def capture(self, directory):
         self.shots += 1
@@ -95,6 +104,47 @@ def test_single_failure_is_reported_not_swallowed(cfg, flow):
     cam = FakeCamera(fail_at=1)
 
     assert main._capture_sequence(ui, cam, cfg, "single") is None
+
+
+# ── Live-View ──────────────────────────────────────────────────────────────────
+#
+# Der Live-View kommt von der HDMI-Capture-Card und setzt voraus, dass die
+# Kamera im Live-View-Modus steht (Spiegel hoch). Jeder Wechsel dorthin
+# klappert hoerbar und kostet einen gphoto2-Prozessstart. Deshalb darf er nur
+# dort passieren, wo gleich wieder ein Live-Bild sichtbar wird — und nie in
+# der Zeit, in der der Gast auf "Foto wird uebertragen" wartet.
+
+
+def test_liveview_is_woken_after_the_shot_not_during(cfg, flow):
+    ui, _ = flow
+    cam = FakeCamera()
+
+    main._capture_sequence(ui, cam, cfg, "single")
+
+    assert cam.wakes == [1], \
+        "genau ein Weckruf, und zwar nachdem das Foto im Kasten ist"
+
+
+def test_liveview_is_woken_between_collage_shots(cfg, flow):
+    """Zwischen den Shots schaut der Gast auf den Countdown — dort braucht er
+    das Live-Bild, um sich auszurichten."""
+    ui, _ = flow
+    cam = FakeCamera()
+
+    main._capture_sequence(ui, cam, cfg, "collage")
+
+    assert cam.wakes == [1, 2, 3, 4], \
+        "nach jedem Shot einmal — nach dem letzten ueber _capture_sequence"
+
+
+def test_liveview_is_woken_even_when_the_shot_fails(cfg, flow):
+    """Sonst bliebe die Box nach einem Fehlschlag ohne Live-Bild stehen."""
+    ui, _ = flow
+    cam = FakeCamera(fail_at=1)
+
+    main._capture_sequence(ui, cam, cfg, "single")
+
+    assert cam.wakes == [1]
 
 
 # ── Collage ────────────────────────────────────────────────────────────────────

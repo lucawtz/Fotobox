@@ -186,7 +186,17 @@ _DEFAULTS: dict = {
     "print_mode": "auto",
     "print_options": [],
     "camera_keepalive_s": 25,
+    # Index aus `gphoto2 --get-config output`, NICHT der Klartextwert. Welche
+    # Nummer TFT+PC meint, unterscheidet sich je nach Modell — steht der
+    # falsche drin, kommt aus der Kamera weder auf HDMI noch auf dem Display
+    # ein Bild.
     "camera_output_mode": "3",
+    # Zieht nach jedem Live-View-Wake einen Preview-Frame ueber USB. Die EOS
+    # 700D faellt ohne diesen Pull sofort wieder aus dem Live-View heraus.
+    # Kostet aber einen zusaetzlichen Spiegelhub (das hoerbare Klicken) und
+    # bis zu 8 s. Haelt die Kamera den Live-View auch ohne, spart `false`
+    # beides — auf der echten Box ausprobieren, das Log sagt was passiert.
+    "camera_preview_pull": True,
 }
 
 

@@ -76,8 +76,17 @@ class DevCamera:
         logger.info("Foto gespeichert (Dev-Kamera): %s", path)
         return path
 
-    def wake_liveview(self, with_preview: bool = False):
+    # Die Webcam braucht weder Spiegel noch USB-Session — capture() ist nach
+    # spaetestens _FRAME_WAIT_S durch. main.py leitet daraus seinen UI-Timeout
+    # ab, deshalb muss der Wert auch hier existieren.
+    capture_budget_s = 5.0
+
+    def wake_liveview(self, with_preview: bool = None,
+                      reset_output: bool = False):
         """No-op — der LiveReader laeuft ohnehin durchgehend."""
+
+    def request_liveview(self):
+        """No-op — siehe wake_liveview."""
 
     def close(self):
         """No-op — das Capture-Device gehoert der UI, die schliesst es selbst."""

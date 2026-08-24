@@ -26,28 +26,65 @@ def _set_status(available: bool, error: str = ""):
 
 
 class Camera:
-    """gphoto2-Wrapper mit Watchdog und manuellem Live-View-Wake.
+    """gphoto2-Wrapper mit Watchdog und asynchronem Live-View-Wake.
 
-    Live-View bei der EOS 700D braucht drei Schritte (siehe wake_liveview):
-    1. output=3 (TFT+PC) — sonst sendet die Kamera auf keinem Kanal Bild
-    2. viewfinder=1 — Spiegel hoch, LV-Modus an
-    3. capture-preview — pullt einmal einen Frame, sonst fällt die 700D
-       sofort wieder aus dem LV-Modus heraus
+    Jeder gphoto2-Aufruf ist ein eigener Prozess mit kompletter
+    USB-Session-Initialisierung (1-2 s), und jeder Wechsel in oder aus dem
+    Live-View klappt den Spiegel — das ist das hoerbare Klicken. Daraus
+    folgen die zwei Regeln dieses Moduls: so wenige gphoto2-Aufrufe wie
+    moeglich, und keiner davon in der Zeit, in der ein Gast auf den
+    Bildschirm schaut und wartet.
 
-    Beobachtetes "Auslöse-Geräusch" beim capture-preview ist nur der
+    Aufgabenteilung:
+      _init()             einmalige Kamera-Settings + erster Live-View
+      wake_liveview()     Spiegel hoch, blockierend — fuer _init und den
+                          manuellen Wake (Q bzw. Tasterkombination)
+      request_liveview()  dasselbe im Hintergrund, fuer die Stellen an
+                          denen gleich wieder ein Live-Bild sichtbar wird
+      capture()           NUR die Aufnahme, ohne Live-View-Geraffel
+
+    Live-View bei der EOS 700D braucht zwei Schritte:
+    1. viewfinder=1 — Spiegel hoch, LV-Modus an
+    2. capture-preview — pullt einmal einen Frame, sonst faellt die 700D
+       nach dem Spiegelhub sofort wieder heraus. Falls die Kamera den Pull
+       nicht braucht, spart `camera_preview_pull: false` einen Spiegelhub
+       und bis zu 8 s pro Wake.
+
+    `output` (TFT/PC/HDMI) steht bewusst NICHT in wake_liveview: der Wert
+    bleibt in der Kamera stehen, bis ihn jemand aendert. Ihn bei jedem
+    Aufwecken neu zu setzen kostete einen kompletten Prozessstart umsonst.
+    Nach einem USB-Reconnect laeuft _init ohnehin wieder komplett durch, und
+    der manuelle Wake setzt ihn per reset_output=True trotzdem mit.
+
+    Beobachtetes "Ausloese-Geraeusch" beim capture-preview ist nur der
     Spiegelhub, nicht der Verschluss — keine Shutter-Aktuationen verbraucht.
 
-    Wake-Strategie: Nutzer aktiviert manuell (Display-Knopf an Kamera
-    oder Q auf Fotobox), Watchdog mischt sich NICHT ein damit die manuelle
-    Aktivierung nicht gestört wird. Empfehlung: im Kameramenü unter
-    'Auto-Power-Off' auf "Aus" stellen.
+    An der Kamera selbst gehoert eingestellt: 'Auto-Power-Off' aus,
+    Bildqualitaet JPEG (NICHT RAW+JPEG — zwei Dateien auf einen --filename
+    lassen den Download scheitern) und manueller Fokus. Siehe README,
+    Abschnitt "Kamera einstellen".
     """
 
     DEFAULT_KEEPALIVE_S = 25
-    DEFAULT_OUTPUT_MODE = "3"  # 1=TFT, 2=PC, 3=TFT+PC, 7=TFT+PC+MOBILE
+    # Index in der Choice-Liste der Kamera, nicht der Klartextwert. Welcher
+    # Index welchen Modus meint, ist modellabhaengig und steht in der Ausgabe
+    # von `gphoto2 --get-config output` — bei falschem Index kommt aus der
+    # Kamera weder auf HDMI noch auf dem Display ein Bild.
+    DEFAULT_OUTPUT_MODE = "3"
+
+    # Obergrenze der eigentlichen Aufnahme inklusive Download.
+    CAPTURE_TIMEOUT_S = 30
+    # Obergrenze fuer das Warten auf einen anderen, noch laufenden
+    # gphoto2-Aufruf — etwa einen Live-View-Wake, der zwischen zwei
+    # Collage-Shots noch nicht fertig ist. Ohne diese Grenze konnte ein
+    # haengender Aufruf beliebig weit in die Wartezeit des naechsten Gastes
+    # hineinlaufen und dort einen Timeout ausloesen, der nach Kamerafehler
+    # aussah.
+    BUSY_TIMEOUT_S = 10
 
     def __init__(self, keepalive_s: int = DEFAULT_KEEPALIVE_S,
-                 output_mode: str = DEFAULT_OUTPUT_MODE):
+                 output_mode: str = DEFAULT_OUTPUT_MODE,
+                 preview_pull: bool = True):
         self.available = False
         self.error_message = ""
         self._running = True
@@ -55,8 +92,26 @@ class Camera:
         self._capturing = False
         self._keepalive_s = max(5, int(keepalive_s))
         self._output_mode = str(output_mode)
+        self._preview_pull = bool(preview_pull)
+        # Laesst hoechstens einen Hintergrund-Wake gleichzeitig zu: vier
+        # Collage-Shots wuerden sonst vier Wake-Threads hinterlassen, die
+        # sich auf dem _cmd_lock stauen und die Kamera vier Mal klappern
+        # lassen, obwohl einmal reicht.
+        self._wake_gate = threading.Semaphore(1)
         self._init()
         threading.Thread(target=self._watchdog, daemon=True).start()
+
+    @property
+    def capture_budget_s(self) -> float:
+        """Was ein capture()-Aufruf von aussen hoechstens dauern kann.
+
+        main.py leitet daraus seinen UI-Timeout ab, statt eine zweite Zahl zu
+        pflegen. Genau daran lief der frueher fest verdrahtete 35-s-Timeout
+        in den Fehlerfall: capture() haengte damals noch das Live-View-Wecken
+        an die Aufnahme und konnte 48 s brauchen — die UI gab nach 35 s auf
+        und verwarf ein Foto, das laengst auf der Platte lag.
+        """
+        return float(self.CAPTURE_TIMEOUT_S + self.BUSY_TIMEOUT_S)
 
     # ── gphoto2-Wrapper ────────────────────────────────────────────────────────
 
@@ -66,6 +121,25 @@ class Camera:
                 ["gphoto2"] + args,
                 capture_output=True, text=True, timeout=timeout,
             )
+
+    def _set_config(self, assignment: str, timeout: int = 5) -> bool:
+        """Setzt eine gphoto2-Config und sagt, ob die Kamera sie genommen hat.
+
+        Frueher stand die immer gleiche try/returncode/stderr-Kaskade an
+        jeder Aufrufstelle einzeln — und an zweien davon wurde der
+        Rueckgabewert gar nicht ausgewertet.
+        """
+        try:
+            r = self._gphoto(["--set-config", assignment], timeout=timeout)
+        except Exception as exc:
+            logger.debug("  → %s Exception: %s", assignment, exc)
+            return False
+        if r.returncode == 0:
+            logger.info("  → %s OK", assignment)
+            return True
+        err = (r.stderr or "").strip()[:120] or "(kein Fehlertext)"
+        logger.info("  → %s fehlgeschlagen: %s", assignment, err)
+        return False
 
     # ── Init / Detect ──────────────────────────────────────────────────────────
 
@@ -84,74 +158,62 @@ class Camera:
             logger.warning(self.error_message)
             return
 
-        try:
-            self._gphoto(["--set-config", "reviewtime=0"], timeout=10)
-        except Exception as exc:
-            logger.debug("reviewtime: %s", exc)
+        # Bildkontrolle aus: sonst blendet die Kamera nach jeder Aufnahme das
+        # Foto ins Display und damit auch auf HDMI.
+        self._set_config("reviewtime=0", timeout=10)
 
-        # Auto-Power-Off versuchen zu deaktivieren (best effort)
-        for cfg in ("autopoweroff=0", "autopoweroff=65535"):
-            try:
-                self._gphoto(["--set-config", cfg], timeout=5)
-            except Exception:
-                pass
+        # output gehoert hierher und nicht in jeden Wake — siehe Klassen-Docstring.
+        self._set_config(f"output={self._output_mode}")
 
-        # Live-View direkt beim Start aktivieren (inkl. capture-preview-Pull,
-        # ohne den die EOS 700D nach dem Spiegelhub sofort wieder aussteigt).
-        # Damit zeigt die Fotobox sofort nach dem App-Start ein Live-Bild,
-        # ohne dass jemand erst den Q-Knopf oder den Display-Knopf drückt.
-        self.wake_liveview(with_preview=True)
+        # Auto-Power-Off best effort. Welcher Wert "aus" bedeutet, ist
+        # modellabhaengig: 0 bei den einen, 65535 bei den anderen. Bisher
+        # wurden stumpf beide gesetzt, wodurch der zweite den ersten wieder
+        # ueberschrieb. Jetzt bleibt der erste stehen, den die Kamera nimmt.
+        for value in ("0", "65535"):
+            if self._set_config(f"autopoweroff={value}"):
+                break
+
+        # Live-View direkt beim Start aktivieren, damit die Fotobox sofort
+        # nach dem App-Start ein Live-Bild zeigt und niemand erst den
+        # Q-Knopf oder den Display-Knopf druecken muss.
+        self.wake_liveview()
 
         self.available = True
         self.error_message = ""
         _set_status(True, "")
         logger.info("Kamera bereit (Live-View aktiviert)")
 
-    # ── Live-View Wake (ohne capture-preview!) ─────────────────────────────────
+    # ── Live-View Wake ─────────────────────────────────────────────────────────
 
-    def wake_liveview(self, with_preview: bool = True) -> bool:
-        """Aktiviert Live-View an der Kamera.
+    def wake_liveview(self, with_preview: bool = None,
+                      reset_output: bool = False) -> bool:
+        """Aktiviert Live-View an der Kamera. Blockiert bis zu ~13 s.
 
-        Schritt 1: output=3 (TFT+PC) setzen — bei der EOS 700D ist
-            output per Default auf "Off"; ohne das kommt überhaupt
-            kein Bild aus der Kamera (weder Display noch HDMI noch USB).
-        Schritt 2: viewfinder=1 (Live-View-Modus an, Spiegel hoch).
-        Schritt 3 (optional): einen Preview-Frame über USB abrufen, damit
-            die Kamera im Live-View-Modus bleibt — ohne diesen Pull fällt
-            die 700D nach dem Spiegelhub sofort zurück.
+        Schritt 1: viewfinder=1 (Live-View-Modus an, Spiegel hoch).
+        Schritt 2 (optional): einen Preview-Frame ueber USB abrufen, damit
+            die Kamera im Live-View-Modus bleibt — ohne diesen Pull faellt
+            die 700D nach dem Spiegelhub sofort zurueck.
 
-        with_preview=False für Watchdog-Calls — den Preview-Pull machen
-        wir nur wenn der Nutzer aktiv weckt (Q-Knopf, vor Aufnahme), nicht
-        alle 30s im Watchdog.
+        with_preview=None uebernimmt die Konfiguration (camera_preview_pull),
+        True/False ueberstimmt sie fuer diesen Aufruf.
+
+        reset_output=True setzt zusaetzlich output neu. Nur fuer den
+        manuellen Wake gedacht: wenn ein Gast den Knopf drueckt, weil das
+        Bild fehlt, soll das der grosse Hammer sein und nicht die halbe
+        Massnahme. Im Automatikbetrieb waere es ein Prozessstart umsonst.
+
+        Aufrufer im UI-Pfad nehmen request_liveview() — das hier blockiert.
         """
-        logger.info("wake_liveview(with_preview=%s)", with_preview)
-        ok = False
+        if with_preview is None:
+            with_preview = self._preview_pull
+        logger.info("wake_liveview(with_preview=%s, reset_output=%s)",
+                    with_preview, reset_output)
 
-        # Schritt 1: output (HDMI/Display einschalten — Default ist Off!)
-        try:
-            r = self._gphoto(["--set-config", f"output={self._output_mode}"], timeout=5)
-            if r.returncode == 0:
-                logger.info("  → output=%s OK", self._output_mode)
-            else:
-                err = r.stderr.strip()[:120] if r.stderr else "(kein Fehlertext)"
-                logger.info("  → output=%s fehlgeschlagen: %s",
-                            self._output_mode, err)
-        except Exception as exc:
-            logger.debug("  → output Exception: %s", exc)
+        if reset_output:
+            self._set_config(f"output={self._output_mode}")
 
-        # Schritt 2: viewfinder einschalten
-        try:
-            r = self._gphoto(["--set-config", "viewfinder=1"], timeout=5)
-            if r.returncode == 0:
-                logger.info("  → viewfinder=1 OK")
-                ok = True
-            else:
-                err = r.stderr.strip()[:120] if r.stderr else "(kein Fehlertext)"
-                logger.info("  → viewfinder=1 fehlgeschlagen: %s", err)
-        except Exception as exc:
-            logger.debug("  → viewfinder Exception: %s", exc)
+        ok = self._set_config("viewfinder=1")
 
-        # Schritt 3: Preview-Pull damit Live-View aktiv bleibt
         if with_preview:
             try:
                 with self._cmd_lock:
@@ -174,6 +236,34 @@ class Camera:
 
         return ok
 
+    def request_liveview(self) -> None:
+        """Weckt den Live-View im Hintergrund — der Aufrufer wartet nicht.
+
+        Gedacht fuer die Stellen, an denen gleich wieder ein Bildschirm mit
+        Live-Bild kommt (Homescreen nach dem Result-Screen, Countdown des
+        naechsten Collage-Shots). Frueher haengte capture() das Aufwecken
+        direkt an die Aufnahme — also genau in die Sekunden, in denen der
+        Gast auf "Foto wird übertragen" starrt, obwohl danach der
+        Result-Screen kommt, der ueberhaupt kein Live-Bild zeigt.
+
+        Mehrfachaufrufe sind billig: laeuft schon ein Wake, kehrt der
+        naechste sofort zurueck, statt einen zweiten Spiegelhub anzustossen.
+        """
+        if not self.available or self._capturing or not self._running:
+            return
+        if not self._wake_gate.acquire(blocking=False):
+            return
+
+        def _run():
+            try:
+                self.wake_liveview()
+            except Exception as exc:
+                logger.warning("Hintergrund-Wake fehlgeschlagen: %s", exc)
+            finally:
+                self._wake_gate.release()
+
+        threading.Thread(target=_run, daemon=True).start()
+
     # ── Watchdog ───────────────────────────────────────────────────────────────
 
     def _watchdog(self):
@@ -191,47 +281,70 @@ class Camera:
                 self.error_message = "Kamera getrennt – USB prüfen"
                 _set_status(False, self.error_message)
                 logger.warning("Watchdog: Kamera verloren")
-            # Sonst: nichts tun. Live-View aktiviert der Nutzer manuell
-            # über den Display-Knopf an der Kamera oder Q auf der Fotobox.
-            # Automatisches Wake würde die manuelle Aktivierung killen.
+            # Sonst: nichts tun. Der Watchdog weckt bewusst keinen Live-View
+            # — das wuerde eine manuelle Aktivierung am Kamera-Display wieder
+            # killen. Wecken tut, wer das Live-Bild gleich braucht.
 
     # ── Capture ────────────────────────────────────────────────────────────────
 
     def capture(self, directory: str) -> str:
+        """Nimmt genau ein Foto auf und gibt dessen Pfad zurueck.
+
+        Bewusst NUR die Aufnahme: kein Live-View davor, keiner danach. Der
+        Live-View wird dort geweckt, wo er wieder sichtbar wird — siehe
+        request_liveview() und main._capture_sequence.
+        """
         if not self.available:
             raise RuntimeError("Kamera nicht verfügbar")
         os.makedirs(directory, exist_ok=True)
-        # Microsekunden im Filename — int(time.time()) hat Sekunden-Auflösung
-        # und würde bei zwei Captures innerhalb derselben Sekunde (Collage!)
-        # die vorherige Datei überschreiben.
+        # Millisekunden im Filename — int(time.time()) hat Sekunden-Aufloesung
+        # und wuerde bei zwei Captures innerhalb derselben Sekunde (Collage!)
+        # die vorherige Datei ueberschreiben.
         filename = f"foto_{int(time.time() * 1000)}.jpg"
         before = set(os.listdir(directory))
 
         self._capturing = True
         try:
-            with self._cmd_lock:
-                try:
-                    result = subprocess.run(
-                        ["gphoto2", "--capture-image-and-download",
-                         "--filename", filename],
-                        capture_output=True, text=True, timeout=30,
-                        cwd=directory,
-                    )
-                    if result.returncode != 0:
-                        raise RuntimeError(
-                            f"Aufnahme fehlgeschlagen: {result.stderr.strip()}")
-                except subprocess.TimeoutExpired:
-                    raise RuntimeError("Aufnahme Timeout")
+            # Nicht unbegrenzt auf das Lock warten: sonst zaehlt die Wartezeit
+            # eines fremden gphoto2-Aufrufs voll gegen den UI-Timeout, und der
+            # Gast bekommt "Kamera antwortet nicht" fuer eine Kamera, die noch
+            # gar nicht gefragt wurde.
+            if not self._cmd_lock.acquire(timeout=self.BUSY_TIMEOUT_S):
+                raise RuntimeError("Kamera ist noch beschäftigt")
+            try:
+                result = subprocess.run(
+                    ["gphoto2", "--capture-image-and-download",
+                     "--filename", filename],
+                    capture_output=True, text=True,
+                    timeout=self.CAPTURE_TIMEOUT_S,
+                    cwd=directory,
+                )
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("Aufnahme Timeout")
+            finally:
+                self._cmd_lock.release()
         finally:
             self._capturing = False
 
-        # Live-View nach Aufnahme reaktivieren
-        self.wake_liveview()
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Aufnahme fehlgeschlagen: {(result.stderr or '').strip()}")
 
         after = set(os.listdir(directory))
         new_files = after - before
-        name = (max(new_files, key=lambda f: os.path.getmtime(os.path.join(directory, f)))
-                if new_files else filename)
+        if not new_files:
+            # Frueher fiel capture() hier auf den *erwarteten* Dateinamen
+            # zurueck und meldete Erfolg fuer eine Datei, die es nicht gibt.
+            # main.py ging damit in den Result-Screen, das Laden scheiterte
+            # still im Log und der Gast sah einen schwarzen Bildschirm ohne
+            # jede Erklaerung. Haeufigste Ursachen: die Kamera steht auf
+            # RAW+JPEG (zwei Dateien, ein --filename) oder capturetarget
+            # zeigt auf die Speicherkarte statt auf den internen Speicher.
+            raise RuntimeError(
+                "Kamera hat kein Bild geliefert – Bildqualität (JPEG statt "
+                "RAW+JPEG) und Speicherziel prüfen")
+        name = max(new_files,
+                   key=lambda f: os.path.getmtime(os.path.join(directory, f)))
         path = os.path.join(directory, name)
         logger.info("Foto gespeichert: %s", path)
         return path
