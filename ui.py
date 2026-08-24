@@ -78,6 +78,10 @@ ACTION_GAP      = 24
 ACTION_RADIUS   = 28      # Stärker abgerundete Ecken — moderner als 18.
 LIVE_OUTER_W    = 12      # Aussenrahmen (braun) ums Live-View.
 LIVE_INNER_W    = 3       # Innerer Goldakzent.
+# Eckenradius des Live-Bilds. Bildmaske, Backing-Block und innerer Akzent
+# teilen ihn sich, damit Bildkante und Akzent in den Ecken aufeinander
+# liegen statt sich zu kreuzen.
+LIVE_RADIUS     = 6
 
 # Instagram-/Booking-Reihen unter dem Galerie-Code. Beide koennen einen
 # eigenen, fertig gestalteten Code tragen (instagram_qr_path,
@@ -363,6 +367,7 @@ class UI:
             return 0
         # -1 heisst "jede Groesse geht" (z.B. im Fenstermodus-Treiber).
         if modes == -1 or not modes or (W, H) in modes:
+            UI._log_upscale()
             return 0
         logger.info("Display: %dx%d ist kein nativer Modus (verfuegbar: %s…) "
                     "— SCALED aktiv", W, H, modes[:3])
@@ -370,6 +375,26 @@ class UI:
         # nearest, 2 = best) bleibt stehen.
         os.environ.setdefault("SDL_RENDER_SCALE_QUALITY", "1")
         return pygame.SCALED
+
+    @staticmethod
+    def _log_upscale():
+        """Meldet, wenn der Schirm groesser ist als W x H.
+
+        FULLSCREEN schaltet den Schirm dann auf einen 1920x1080-Modus und
+        das Panel rechnet das Bild selbst hoch. Fonts und Kanten werden
+        dabei weich — auf einem 2560x1440-Monitor um Faktor 1,33. Es ist
+        kein Fehler der UI, sieht aber wie einer aus, deshalb steht es im
+        Log statt dass man es am Bild raten muss.
+        """
+        try:
+            sizes = pygame.display.get_desktop_sizes()
+        except (pygame.error, AttributeError):
+            return
+        if sizes and sizes[0] != (W, H):
+            logger.info(
+                "Display: Schirm ist %dx%d, gerendert wird %dx%d — das Panel "
+                "skaliert selbst hoch, Schrift wirkt dadurch weicher als auf "
+                "einem echten %dx%d-Schirm", *sizes[0], W, H, W, H)
 
     @staticmethod
     def _open_display():
@@ -457,6 +482,9 @@ class UI:
         self._qr_surf = self._make_qr(cfg.get("gallery_url", ""),
                                       size=self.QR_SIZE, border=0,
                                       **self._qr_colors())
+        # Fassung des Galerie-Codes in Layout-Groesse — (Schluessel, Surface),
+        # gefuellt von _gallery_qr.
+        self._qr_scaled: Optional[tuple] = None
 
         # Optionaler Instagram-QR (instagram_qr_path). Ist er gesetzt, tritt
         # er in der Sidebar an die Stelle des Instagram-Glyphs.
@@ -510,6 +538,8 @@ class UI:
         self._RESULT_CACHE_MAX = 8
 
         # Live-Reader (Capture-Card)
+        # _live_dst ist die wiederverwendete Ziel-Surface aus _live_surface.
+        self._live_dst: Optional[pygame.Surface] = None
         self._live: Optional[_LiveReader] = None
         try:
             self._live = _LiveReader(capture_device)
@@ -675,9 +705,7 @@ class UI:
         self._draw_event_header()
         self._draw_qr_card()
         self._draw_wifi_box()
-        self._draw_live_frame_outer()
-        self._draw_live()
-        self._draw_live_frame()
+        self._draw_live_view()
         self._draw_polaroids()
         self._draw_action_buttons()
         self._draw_status_bar(camera_ok, free_mb, photo_count)
@@ -693,42 +721,92 @@ class UI:
         """
         return self._live.latest() if self._live else None
 
-    def _draw_live(self):
-        """Live-Vorschau aus der Capture-Card im konfigurierten live_view_rect.
+    def _draw_live_view(self):
+        """Rahmen und Live-Bild — beide auf demselben Rechteck.
 
-        Schneidet automatisch schwarze Letterbox-Ränder aus dem HDMI-Signal
-        weg und zeigt eine Meldung wenn kein Signal anliegt.
+        Frueher zog der Rahmen ueber das volle live_view_rect und das Bild
+        lag mittig darin. Bei jedem Seitenverhaeltnis ausser dem des Rects
+        blieben dadurch schwarze Balken zwischen Bild und Rahmen stehen —
+        es sah aus, als sitze das Bild nicht im Rahmen. Jetzt bestimmt das
+        Bild das Rechteck und der Rahmen legt sich darum, egal welches
+        Format die Capture-Card liefert.
         """
-        x, y, w, h = self._cfg.get("live_view_rect", [440, 600, 1040, 450])
+        rect, surf, msg = self._live_geometry()
+        self._draw_live_frame_outer(rect)
+        if surf is None:
+            self._draw_no_signal(rect, msg)
+        else:
+            self._screen.blit(surf, rect)
+        self._draw_live_frame(rect)
 
+    def _live_box(self) -> pygame.Rect:
+        """Der konfigurierte Platz der Live-Vorschau — Obergrenze fuer das
+        Bild, nicht dessen tatsaechliche Groesse."""
+        x, y, w, h = self._cfg.get("live_view_rect", [440, 600, 1040, 450])
+        return pygame.Rect(x, y, w, h)
+
+    def _live_geometry(self):
+        """(Rect, Bild oder None, Meldung oder None).
+
+        Das Rect ist der Ausschnitt von _live_box, den das Kamerabild
+        seitenverhaeltnistreu wirklich fuellt, zentriert auf dessen Mitte.
+        Ohne Signal bleibt es die volle Box — dann traegt sie die Meldung.
+        """
+        box = self._live_box()
+        frame, msg = self._live_frame_rgb()
+        if frame is None:
+            return box, None, msg
+
+        fh, fw = frame.shape[:2]
+        scale  = min(box.w / fw, box.h / fh)
+        nw, nh = max(1, int(fw * scale)), max(1, int(fh * scale))
+        frame  = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        rect   = pygame.Rect(0, 0, nw, nh)
+        rect.center = box.center
+        return rect, self._live_surface(frame, nw, nh), None
+
+    def _live_frame_rgb(self):
+        """(RGB-Frame, Meldung) — genau eins von beiden ist None.
+
+        Schneidet automatisch schwarze Letterbox-Raender aus dem
+        HDMI-Signal weg.
+        """
         if self._live is None:
-            self._draw_no_signal(x, y, w, h)
-            return
+            return None, "Warte auf Kamera…"
         frame = self._live.latest()
         if frame is None or frame.max() < 20:
-            self._draw_no_signal(x, y, w, h, "Bitte Display an der Kamera einschalten")
-            return
-
+            return None, "Bitte Display an der Kamera einschalten"
         frame = self._crop_black_borders(frame)
         if frame is None:
-            self._draw_no_signal(x, y, w, h, "Bitte Display an der Kamera einschalten")
-            return
+            return None, "Bitte Display an der Kamera einschalten"
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), None
 
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        fh, fw = frame.shape[:2]
-        scale  = min(w / fw, h / fh)
-        nw, nh = int(fw * scale), int(fh * scale)
-        frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+    def _live_surface(self, frame, w: int, h: int) -> pygame.Surface:
+        """Frame als Surface mit runden Ecken im Radius des Rahmens.
+
+        Ohne die Maske stehen die vier eckigen Bildecken in den runden
+        Ecken des Rahmens und ueberdecken dort den inneren Akzent.
+
+        Die Ziel-Surface wird ueber Frames hinweg wiederverwendet: sie je
+        Bild neu anzulegen und per convert_alpha() zu fuellen kostet das
+        Doppelte, und der Live-View laeuft mit 30 fps.
+        """
+        dst = self._live_dst
+        if dst is None or dst.get_size() != (w, h):
+            dst = self._live_dst = pygame.Surface((w, h), pygame.SRCALPHA)
         # frombuffer ist 3-5x schneller als surfarray.make_surface(swapaxes),
         # weil keine numpy-Achsen-Umordnung und keine Pixelformat-Konvertierung
         # nötig ist — der RGB-Buffer aus cv2.resize wird direkt blittable.
-        surf = pygame.image.frombuffer(frame.tobytes(), (nw, nh), "RGB")
-        self._screen.blit(surf, (x + (w - nw) // 2, y + (h - nh) // 2))
+        # Der Blit setzt Alpha flaechendeckend auf 255, die Maske danach
+        # schneidet die Ecken wieder frei.
+        dst.blit(pygame.image.frombuffer(frame.tobytes(), (w, h), "RGB"), (0, 0))
+        dst.blit(_aa_round_rect_mask(w, h, LIVE_RADIUS), (0, 0),
+                 special_flags=pygame.BLEND_RGBA_MIN)
+        return dst
 
-    def _draw_no_signal(self, x: int, y: int, w: int, h: int,
-                        msg: str = "Warte auf Kamera…"):
-        lbl = self._f_normal.render(msg, True, C_WHITE)
-        self._screen.blit(lbl, lbl.get_rect(center=(x + w // 2, y + h // 2)))
+    def _draw_no_signal(self, rect: pygame.Rect, msg: Optional[str] = None):
+        lbl = self._f_normal.render(msg or "Warte auf Kamera…", True, C_WHITE)
+        self._screen.blit(lbl, lbl.get_rect(center=rect.center))
 
     def _crop_black_borders(self, frame):
         """Schneidet schwarze Ränder aus einem Frame heraus (HDMI-Letterbox).
@@ -1105,27 +1183,23 @@ class UI:
                 y += lbl.get_height() + self._HEADER_LINE_GAP
             y += self._HEADER_BLOCK_GAP - self._HEADER_LINE_GAP
 
-    def _draw_live_frame_outer(self):
+    def _draw_live_frame_outer(self, rect: pygame.Rect):
         """Brauner Aussenrahmen + dunkler Backing-Block. Wird VOR dem
         Live-Bild gezeichnet, damit der Rahmen als Frame fungiert und
         der Backing-Block bei 'kein Signal' den dunklen Bereich liefert.
         """
-        x, y, w, h = self._cfg.get("live_view_rect", [440, 600, 1040, 450])
-        outer = pygame.Rect(x - LIVE_OUTER_W, y - LIVE_OUTER_W,
-                            w + 2 * LIVE_OUTER_W, h + 2 * LIVE_OUTER_W)
         pygame.draw.rect(self._screen, self._theme["live_outer"],
-                         outer, border_radius=14)
-        pygame.draw.rect(self._screen, self._theme["live_bg"],
-                         pygame.Rect(x, y, w, h), border_radius=6)
+                         rect.inflate(2 * LIVE_OUTER_W, 2 * LIVE_OUTER_W),
+                         border_radius=14)
+        pygame.draw.rect(self._screen, self._theme["live_bg"], rect,
+                         border_radius=LIVE_RADIUS)
 
-    def _draw_live_frame(self):
+    def _draw_live_frame(self, rect: pygame.Rect):
         """Innerer Goldakzent — NACH dem Live-Bild gezeichnet, sitzt als
         dezenter Strich auf dem Bildrand.
         """
-        x, y, w, h = self._cfg.get("live_view_rect", [440, 600, 1040, 450])
-        pygame.draw.rect(self._screen, self._theme["live_inner"],
-                         pygame.Rect(x, y, w, h),
-                         width=LIVE_INNER_W, border_radius=6)
+        pygame.draw.rect(self._screen, self._theme["live_inner"], rect,
+                         width=LIVE_INNER_W, border_radius=LIVE_RADIUS)
 
     def _status_bar_height(self) -> int:
         """Höhe der Status-Bar, aus der Schrift statt fest verdrahtet.
@@ -1760,16 +1834,17 @@ class UI:
     # ── Live-View ──────────────────────────────────────────────────────────────
 
     def _draw_live_fullscreen(self):
+        """Live-Bild ueber den ganzen Schirm — Countdown und Slideshow.
+
+        Anders als _draw_live_view bleiben die schwarzen Balken hier
+        stehen: es gibt keinen Rahmen, an dem sie stoeren wuerden, und ein
+        formatfuellender Zuschnitt haette dem Gast im Countdown genau den
+        Bildrand genommen, an dem er sich ausrichtet.
+        """
         self._screen.fill(C_BLACK)
-        if self._live is None:
-            return
-        frame = self._live.latest()
-        if frame is None or frame.max() < 20:
-            return
-        frame = self._crop_black_borders(frame)
+        frame, _ = self._live_frame_rgb()
         if frame is None:
             return
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         fh, fw = frame.shape[:2]
         scale = min(W / fw, H / fh)
         nw, nh = int(fw * scale), int(fh * scale)
@@ -2031,17 +2106,29 @@ class UI:
         """Galerie-Code in der Ziel-Kantenlaenge, neu gerendert statt
         skaliert — siehe die Begruendung in _social_layout. Das Ergebnis
         wird gecacht, weil die Sidebar jeden Frame neu gezeichnet wird.
+
+        Der Schluessel traegt URL und Farben mit, nicht nur die
+        Kantenlaenge. Ohne sie ueberlebte der Code jeden Theme-Wechsel:
+        _check_config_reload baute zwar _qr_surf neu, hier kam aber
+        weiterhin die alte Fassung heraus. Und weil _social_layout den
+        Code in der engen Sidebar fast immer verkleinert, lief praktisch
+        jeder Frame ueber diesen Cache — sichtbar wurde es als heller
+        Block, der seinen alten Grund behielt, waehrend die Karte
+        darunter schon die neue Farbe hatte.
         """
         if self._qr_surf is None:
             return None
         if self._qr_surf.get_width() == side:
             return self._qr_surf
-        cached = getattr(self, "_qr_scaled", None)
-        if cached and cached[0] == side:
+        colors = self._qr_colors()
+        key = (side, self._cfg.get("gallery_url", ""),
+               colors["fg"], colors["bg"], colors["eye"])
+        cached = self._qr_scaled
+        if cached and cached[0] == key:
             return cached[1]
         surf = self._make_qr(self._cfg.get("gallery_url", ""), size=side,
-                             border=0, **self._qr_colors()) or self._qr_surf
-        self._qr_scaled = (side, surf)
+                             border=0, **colors) or self._qr_surf
+        self._qr_scaled = (key, surf)
         return surf
 
     def _draw_qr_card(self):
