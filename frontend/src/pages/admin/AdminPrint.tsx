@@ -20,7 +20,7 @@ import PrintRoundedIcon from "@mui/icons-material/PrintRounded";
 import TuneRoundedIcon from "@mui/icons-material/TuneRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import FactCheckRoundedIcon from "@mui/icons-material/FactCheckRounded";
-import { api, AdminConfig, PrinterInfo } from "../../api";
+import { api, AdminConfig, Printer, PrinterInfo } from "../../api";
 import SettingsCard from "./SettingsCard";
 
 const MODES = [
@@ -36,12 +36,14 @@ const MODES = [
 // Wort aus `lpstat -p` durch (idle | printing | disabled) — in einer deutschen
 // Oberflaeche stand da vorher schlicht "idle".
 //
-// Sonderfall "unknown": das heisst NICHT "Drucker kaputt", sondern "lpstat hat
-// nicht auf Englisch geantwortet, der Zustand ist nicht auslesbar" (siehe
-// printing.list_printers). Deshalb blieb `ready` dort bewusst true — der
-// gruene Erfolgs-Chip war trotzdem falsch, denn zugesichert ist hier nichts.
+// Sonderfall "unknown": das heisst NICHT "Drucker kaputt", sondern "der Zustand
+// war nicht auslesbar" — weder per IPP noch aus einem englischen lpstat (siehe
+// printing.list_printers). Deshalb bleibt `ready` dort bewusst true; der
+// gruene Erfolgs-Chip waere trotzdem falsch, denn zugesichert ist hier nichts.
 // Neutral grau sagt das Richtige: unbekannt, wird aber angeboten.
-const STATE_LABEL: Record<string, { label: string; color: "success" | "warning" | "info" | "default"; title?: string }> = {
+type ChipColor = "success" | "warning" | "info" | "default";
+
+const STATE_LABEL: Record<string, { label: string; color: ChipColor; title?: string }> = {
   idle:     { label: "bereit",       color: "success" },
   printing: { label: "druckt",       color: "info"    },
   disabled: { label: "deaktiviert",  color: "warning",
@@ -55,6 +57,34 @@ const STATE_LABEL: Record<string, { label: string; color: "success" | "warning" 
 /** Fallback fuer Zustaende, die CUPS ausser den vier bekannten liefert. */
 const stateChip = (state: string) =>
   STATE_LABEL[state] ?? { label: state, color: "default" as const };
+
+/** Der eine Chip, der in der Auswahlliste hinter dem Namen steht.
+ *
+ *  In eine Zeile passt genau eine Aussage, also die wichtigste. Der
+ *  CUPS-Zustand ist dabei die schwaechste von allen: 'idle' heisst nur, dass
+ *  die Warteschlange frei ist — ein ausgeschalteter Selphy meldet das auch.
+ *  Deshalb kommt zuerst, was wirklich am Gerät haengt, und erst zuletzt der
+ *  Zustand der Queue. */
+const printerChip = (p: Printer): { label: string; color: ChipColor; title?: string } => {
+  if (p.virtual)
+    return { label: "kein Fotodrucker", color: "default" as const,
+             title: "Von CUPS mitgelieferte Attrappe (Braille/PDF/Fax) — nimmt "
+                  + "Auftraege an, wirft aber nie ein Foto aus." };
+  if (p.connected === false)
+    return { label: "nicht verbunden", color: "warning" as const,
+             title: "Meldet sich nicht am USB — ausgeschaltet oder Kabel ab. "
+                  + "CUPS wuerde den Drucker trotzdem als bereit fuehren." };
+  const blocking = p.reasons.find((r) => r.blocking);
+  if (blocking)
+    return { label: blocking.text, color: "warning" as const,
+             title: `Der Drucker meldet '${blocking.key}'. Solange das anliegt, `
+                  + "bringt ein Druckversuch nichts." };
+  const hint = p.reasons[0];
+  if (hint)
+    return { label: hint.text, color: "info" as const,
+             title: `Der Drucker meldet '${hint.key}' — ein Hinweis, kein Hindernis.` };
+  return stateChip(p.state);
+};
 
 export default function AdminPrint() {
   const [cfg, setCfg] = useState<AdminConfig | null>(null);
@@ -125,6 +155,12 @@ export default function AdminPrint() {
   };
 
   const st = info?.status;
+  // Was das Geraet selbst meldet, getrennt nach Gewicht: "Papier leer"
+  // haelt den Druck auf, "Farbband fast leer" ist nur ein Hinweis und darf
+  // nicht wie ein Fehler aussehen.
+  const reasons = st?.reasons ?? [];
+  const blockingReasons = reasons.filter((r) => r.blocking);
+  const hintReasons = reasons.filter((r) => !r.blocking);
 
   // Der Testdruck nimmt die gespeicherte Config vom Server, nicht das Formular
   // hier. Bei ungesicherten Aenderungen wuerde man also etwas anderes testen,
@@ -147,19 +183,40 @@ export default function AdminPrint() {
       {/* Zustand zuerst: die häufigste Frage am Event-Tag ist "geht der Drucker?" */}
       {info === null ? (
         <Skeleton variant="rounded" height={64} />
+      ) : st?.connected === false ? (
+        // Der haeufigste Fall am Event-Tag und der einzige, den CUPS gar nicht
+        // sieht: Drucker aus. Die Warteschlange meldet weiter 'idle', hier
+        // stand deshalb frueher ein gruenes "ist bereit".
+        <Alert severity="warning">
+          Drucker <strong>{st.printer}</strong> meldet sich nicht am USB — er ist
+          ausgeschaltet oder das Kabel ist ab. Die Box blendet den
+          „Drucken"-Knopf aus, bis er wieder da ist.
+        </Alert>
+      ) : blockingReasons.length > 0 ? (
+        <Alert severity="warning">
+          Drucker <strong>{st?.printer}</strong> meldet:{" "}
+          <strong>{blockingReasons.map((r) => r.text).join(", ")}</strong>.
+          Solange das anliegt, bringt ein Druckversuch nichts — die Box blendet
+          den „Drucken"-Knopf aus.
+        </Alert>
       ) : st?.available && st.state === "unknown" ? (
         // Angeboten, aber nicht bestaetigt: gruen waere hier zu viel
-        // versprochen — CUPS hat den Zustand nicht preisgegeben.
+        // versprochen — weder IPP noch lpstat haben den Zustand preisgegeben.
         <Alert severity="info">
           Drucker <strong>{st.printer}</strong> ist eingerichtet, sein Zustand
-          lässt sich aber nicht auslesen (CUPS antwortet nicht auf Englisch).
-          Der „Drucken"-Knopf wird angezeigt — ob wirklich Papier kommt, zeigt
-          erst der erste Druckversuch.
+          lässt sich aber nicht auslesen. Der „Drucken"-Knopf wird angezeigt —
+          ob wirklich Papier kommt, zeigt erst der erste Druckversuch.
         </Alert>
       ) : st?.available ? (
         <Alert severity="success">
           Drucker <strong>{st.printer}</strong> ist bereit. Der „Drucken"-Knopf
           wird auf dem Boxschirm angezeigt.
+          {hintReasons.length > 0 && (
+            <>
+              {" "}Das Gerät meldet dazu:{" "}
+              <strong>{hintReasons.map((r) => r.text).join(", ")}</strong>.
+            </>
+          )}
         </Alert>
       ) : (
         <Alert severity="warning">
@@ -206,7 +263,7 @@ export default function AdminPrint() {
                     {p.name}
                   </Box>
                   {(() => {
-                    const st = stateChip(p.state);
+                    const st = printerChip(p);
                     return (
                       <Chip
                         size="small"

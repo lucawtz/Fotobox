@@ -136,11 +136,27 @@ export interface AdminConfig {
   host_pin?: string;
 }
 
+/** Was der Drucker selbst meldet (IPP printer-state-reasons), schon uebersetzt.
+ *  `blocking` heisst: ein Druckversuch bringt sicher nichts (Papier leer,
+ *  Deckel offen). Alles andere ist ein Hinweis, kein Hindernis. */
+export interface PrinterReason {
+  key: string;
+  severity: "error" | "warning" | "report";
+  text: string;
+  blocking: boolean;
+}
+
 export interface Printer {
   name: string;
   state: string;
   ready: boolean;
   line: string;
+  reasons: PrinterReason[];
+  /** true/false = haengt sicher am USB / sicher nicht. null = nicht pruefbar
+   *  (Netzwerkdrucker, kein lesbares sysfs) — dann wird nichts behauptet. */
+  connected: boolean | null;
+  /** CUPS-Attrappe (Braille, PDF, Fax) statt Fotodrucker. */
+  virtual: boolean;
 }
 
 export interface PrinterInfo {
@@ -157,6 +173,8 @@ export interface PrinterInfo {
     printer: string | null;
     message: string;
     state: "idle" | "printing" | "disabled" | "unknown" | null;
+    reasons: PrinterReason[];
+    connected: boolean | null;
   };
 }
 

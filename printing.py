@@ -24,6 +24,7 @@ import tempfile
 import threading
 import time
 from typing import Optional
+from urllib.parse import quote, unquote
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ _lock = threading.Lock()
 # auslesbar" unterscheiden kann — `available` allein sagt das nicht, weil
 # 'unknown' bewusst als bereit durchgeht (siehe list_printers).
 _status: dict = {"available": False, "printer": None, "message": "noch nicht geprüft",
-                 "state": None, "checked": 0.0}
+                 "state": None, "reasons": [], "connected": None, "checked": 0.0}
 
 
 # ── CUPS-Abfragen ──────────────────────────────────────────────────────────────
@@ -81,8 +82,219 @@ def _printer_states() -> dict:
     return states
 
 
+# ── Echter Geraetezustand ──────────────────────────────────────────────────────
+
+# `lpstat -p` beantwortet nicht die Frage, die am Event-Tag zaehlt. Es
+# beschreibt die Warteschlange, nicht das Geraet: eine freigegebene, leere
+# Queue meldet 'idle', auch wenn der Selphy ausgeschaltet ist, das Papierfach
+# leer ist oder das Kabel ab ist. Die Admin-Seite zeigte darauf einen gruenen
+# "ist bereit"-Hinweis und die Box den Drucken-Knopf — der Gast druckte ins
+# Nichts und merkte es erst, als nichts herauskam.
+#
+# IPP liefert den echten Zustand, und zwar sprachneutral: `printer-state` als
+# Schluesselwort statt uebersetzter Prosa, dazu `printer-state-reasons` mit
+# dem, was der Drucker selbst meldet — Papier leer, Deckel offen, Kassette
+# raus. Ob das Geraet ueberhaupt am USB haengt, weiss CUPS dagegen gar nicht;
+# das steht in sysfs (siehe _usb_present).
+
+_IPP_REQUEST = """{
+    OPERATION Get-Printer-Attributes
+    GROUP operation-attributes-tag
+    ATTR charset attributes-charset utf-8
+    ATTR language attributes-natural-language en
+    ATTR uri printer-uri $uri
+    ATTR keyword requested-attributes printer-state,printer-state-reasons,printer-state-message,printer-is-accepting-jobs
+}
+"""
+
+# ipptool liest die Anfrage nur aus einer Datei, nicht von stdin. Einmal
+# anlegen und behalten — bei jedem Statusabruf eine neue Tempdatei zu
+# schreiben waere derselbe Fehler wie die ungecachten lpstat-Forks von frueher.
+_ipp_request_file: Optional[str] = None
+
+
+def _ipp_request_path() -> Optional[str]:
+    global _ipp_request_file
+    if _ipp_request_file and os.path.isfile(_ipp_request_file):
+        return _ipp_request_file
+    try:
+        fd, path = tempfile.mkstemp(prefix="fotobox_ipp_", suffix=".test")
+        with os.fdopen(fd, "w") as fh:
+            fh.write(_IPP_REQUEST)
+    except OSError as exc:
+        logger.warning("ipptool-Anfrage nicht schreibbar: %s", exc)
+        return None
+    _ipp_request_file = path
+    return path
+
+
+# IPP kennt genau drei Zustaende. Sie werden auf die Vokabeln abgebildet, die
+# `lpstat` liefert, damit Frontend und Box-UI nur eine Menge kennen muessen.
+_IPP_STATE = {"idle": "idle", "processing": "printing", "stopped": "disabled"}
+
+
+def _ipp_state(name: str) -> Optional[dict]:
+    """Echter Zustand eines Druckers per IPP. None = nicht abfragbar."""
+    path = _ipp_request_path()
+    if path is None:
+        return None
+    uri = "ipp://localhost/printers/" + quote(name, safe="")
+    proc = _run(["ipptool", "-tv", uri, path], timeout=6.0)
+    if proc is None or proc.returncode != 0:
+        return None
+
+    attrs = {}
+    for line in proc.stdout.splitlines():
+        m = re.match(r"\s+(printer-state|printer-state-reasons|printer-state-message"
+                     r"|printer-is-accepting-jobs)\s+\([^)]*\)\s*=\s*(.*)$", line)
+        if m:
+            attrs[m.group(1)] = m.group(2).strip()
+    if "printer-state" not in attrs:
+        return None
+
+    raw = attrs["printer-state"].lower()
+    # 'none' ist die IPP-Schreibweise fuer "nichts zu melden", kein Grund.
+    reasons = [r.strip() for r in attrs.get("printer-state-reasons", "").split(",")
+               if r.strip() and r.strip() != "none"]
+    return {
+        "state":     _IPP_STATE.get(raw, raw),
+        "reasons":   reasons,
+        "message":   attrs.get("printer-state-message", ""),
+        "accepting": attrs.get("printer-is-accepting-jobs", "true").lower() == "true",
+    }
+
+
+# Was der Drucker meldet, in der Sprache der Oberflaeche. Schluessel ist der
+# IPP-Grund ohne Schweregrad-Endung (-error/-warning/-report).
+_REASON_TEXT = {
+    "media-empty":          "Papier leer",
+    "media-needed":         "Papier nachlegen",
+    "media-low":            "Papier fast leer",
+    "media-jam":            "Papierstau",
+    "cover-open":           "Abdeckung offen",
+    "door-open":            "Klappe offen",
+    "input-tray-missing":   "Papierkassette fehlt",
+    "output-area-full":     "Ablage voll",
+    "marker-supply-low":    "Farbband fast leer",
+    "marker-supply-empty":  "Farbband leer",
+    "toner-low":            "Toner fast leer",
+    "toner-empty":          "Toner leer",
+    "offline":              "Drucker offline",
+    "shutdown":             "Drucker abgeschaltet",
+    "paused":               "Warteschlange angehalten",
+    "connecting-to-device": "Verbindung wird aufgebaut",
+    "timed-out":            "Drucker antwortet nicht",
+    "spool-area-full":      "Zwischenspeicher voll",
+    "other":                "Stoerung gemeldet",
+}
+
+# Gruende, bei denen ein Druckversuch sicher nichts bringt. Bewusst eine
+# Positivliste: alles andere — Farbband fast leer, Verbindung wird gerade
+# aufgebaut — soll den Drucken-Knopf nicht wegnehmen. Ein zu strenger Filter
+# waere hier schlimmer als ein zu lascher, denn ein fehlgeschlagener Druck
+# meldet sich von selbst, ein fehlender Knopf nicht.
+_BLOCKING_REASONS = {
+    "media-empty", "media-needed", "media-jam", "cover-open", "door-open",
+    "input-tray-missing", "output-area-full", "marker-supply-empty",
+    "toner-empty", "offline", "shutdown", "paused", "spool-area-full",
+}
+
+
+def _reason_labels(reasons: list) -> list:
+    """IPP-Gruende in anzeigbare Eintraege uebersetzen.
+
+    Die Endung traegt den Schweregrad ('media-empty-error'), der Rest den
+    Grund. Unbekannte Gruende werden durchgereicht statt verschluckt — lieber
+    ein rohes Schluesselwort in der Oberflaeche als eine leere Zeile, wenn ein
+    Treiber etwas meldet, das hier keiner kennt.
+    """
+    out = []
+    for raw in reasons:
+        base, severity = raw, "warning"
+        for suffix in ("-error", "-warning", "-report"):
+            if base.endswith(suffix):
+                base, severity = base[:-len(suffix)], suffix[1:]
+                break
+        out.append({
+            "key":      base,
+            "severity": severity,
+            "text":     _REASON_TEXT.get(base, base.replace("-", " ")),
+            "blocking": base in _BLOCKING_REASONS,
+        })
+    return out
+
+
+_USB_DEVICES = "/sys/bus/usb/devices"
+
+
+def _usb_serials() -> set:
+    """Seriennummern aller aktuell angemeldeten USB-Geraete."""
+    found = set()
+    try:
+        entries = os.listdir(_USB_DEVICES)
+    except OSError:
+        return found
+    for entry in entries:
+        try:
+            with open(os.path.join(_USB_DEVICES, entry, "serial")) as fh:
+                serial = fh.read().strip()
+        except OSError:
+            continue
+        if serial:
+            found.add(serial)
+    return found
+
+
+def _usb_present(uri: str) -> Optional[bool]:
+    """Haengt das Geraet zu dieser device-uri wirklich am Bus?
+
+    Ein ausgeschalteter Selphy meldet sich vom USB ab, seine Seriennummer
+    verschwindet dann aus sysfs — genau das unterscheidet "aus" von "bereit",
+    und genau das sieht CUPS nicht.
+
+    None heisst "nicht beurteilbar": Netzwerkdrucker, URI ohne Seriennummer,
+    kein lesbares sysfs. Nur ein sicheres False nimmt den Drucken-Knopf weg.
+    """
+    if not uri or not uri.startswith("usb:"):
+        return None
+    m = re.search(r"[?&]serial=([^&]+)", uri)
+    if not m:
+        return None
+    serials = _usb_serials()
+    if not serials:
+        return None
+    return unquote(m.group(1)) in serials
+
+
+# CUPS bringt auf Bookworm einen Braille-Drucker mit (CUPS-BRF-Printer,
+# device-uri cups-brf:/). Der steht als 'idle' in der Liste, nimmt Auftraege
+# an und wirft nie ein Foto aus — als stiller Fallback fuer eine leere
+# printer_name-Config waere er die denkbar schlechteste Wahl.
+_VIRTUAL_URI = ("cups-brf:", "cups-pdf:", "cups-fax:")
+
+
+def _device_uris(names: list) -> dict:
+    """device-uri je Drucker aus `lpstat -v`.
+
+    Gematcht wird auf den bekannten Druckernamen, nicht auf die Prosa davor:
+    "device for X: usb://..." heisst auf einem deutschen System "Gerät für
+    X: usb://...". Ein Regex auf das englische Wort haette dort nichts
+    gefunden — derselbe Fallstrick wie bei `lpstat -p` und `lpstat -d`.
+    """
+    proc = _run(["lpstat", "-v"])
+    if proc is None or proc.returncode != 0:
+        return {}
+    uris = {}
+    for line in proc.stdout.splitlines():
+        for name in names:
+            marker = name + ": "
+            if marker in line:
+                uris[name] = line.split(marker, 1)[1].strip()
+    return uris
+
+
 def list_printers() -> list[dict]:
-    """Alle CUPS-Drucker mit Zustand. Leere Liste = keiner eingerichtet.
+    """Alle CUPS-Drucker mit echtem Zustand. Leere Liste = keiner eingerichtet.
 
     Die Namen kommen aus `lpstat -e` — eine nackte Zieladresse pro Zeile, ohne
     uebersetzbare Prosa. `lpstat -p` wird von CUPS dagegen lokalisiert: auf
@@ -90,7 +302,8 @@ def list_printers() -> list[dict]:
     englische Parser scheitert. Das Ergebnis war eine leere Liste, damit
     `available() == False`, damit kein Druck-Knopf in der UI (`print_ready`) —
     und die irrefuehrende Meldung "Kein Drucker in CUPS eingerichtet", obwohl
-    einer angeschlossen war.
+    einer angeschlossen war. Der Zustand kommt deshalb bevorzugt per IPP; die
+    lpstat-Zeile bleibt nur Rueckfallebene, falls ipptool fehlt.
     """
     states = _printer_states()
 
@@ -102,17 +315,37 @@ def list_printers() -> list[dict]:
         # Aeltere CUPS-Versionen ohne `-e`: dann bleibt nur der englische Parser.
         names = list(states)
 
+    uris = _device_uris(names)
+
     out = []
     for name in names:
-        state, line = states.get(name, ("unknown", ""))
+        uri = uris.get(name, "")
+        fallback_state, line = states.get(name, ("unknown", ""))
+
+        ipp = _ipp_state(name)
+        if ipp is not None:
+            state, reasons, accepting = ipp["state"], ipp["reasons"], ipp["accepting"]
+        else:
+            state, reasons, accepting = fallback_state, [], True
+
+        labels = _reason_labels(reasons)
+        blocked = any(item["blocking"] for item in labels)
+        connected = _usb_present(uri)
         out.append({
             "name":  name,
             "state": state,                      # idle | printing | disabled | unknown
-            # 'unknown' heisst "lpstat antwortet nicht auf Englisch", nicht
+            # 'unknown' heisst "weder IPP noch ein englisches lpstat", nicht
             # "Drucker kaputt". Lieber den Knopf anbieten und einen echten
             # lp-Fehler melden, als das Drucken stumm zu verstecken.
-            "ready": state in ("idle", "printing", "unknown"),
+            "ready": (state in ("idle", "printing", "unknown")
+                      and connected is not False and accepting and not blocked),
             "line":  line or name,
+            # Was der Drucker selbst meldet, uebersetzt und mit Schweregrad.
+            "reasons":   labels,
+            # True/False = sicher am USB / sicher nicht. None = nicht pruefbar.
+            "connected": connected,
+            # Kein Fotodrucker, sondern eine CUPS-Attrappe (Braille, PDF, Fax).
+            "virtual":   any(uri.startswith(prefix) for prefix in _VIRTUAL_URI),
         })
     return out
 
@@ -135,60 +368,84 @@ def default_printer() -> Optional[str]:
     return m.group(1) if m else None
 
 
-def resolve_printer(cfg: dict) -> Optional[str]:
-    """Welcher Drucker soll es sein: Config, sonst CUPS-Default, sonst der erste."""
+def resolve_printer(cfg: dict, printers: Optional[list] = None) -> Optional[str]:
+    """Welcher Drucker soll es sein: Config, sonst CUPS-Default, sonst der erste.
+
+    `printers` nimmt eine bereits geholte Liste entgegen. Ohne das fragt
+    refresh_status() zweimal ab — einmal selbst, einmal hier drin —, und eine
+    Abfrage ist seit dem IPP-Umbau kein einzelner lpstat-Fork mehr, sondern
+    einer je Drucker obendrauf.
+
+    Der Griff zum "ersten" ueberspringt Attrappen wie den mitgelieferten
+    Braille-Drucker: auf einer frisch installierten Box mit leerem
+    `printer_name` stuende der sonst als bereitgemeldetes Ziel da, und jedes
+    Gastfoto verschwaende darin. Eine ausdrueckliche Wahl in der Config wird
+    dagegen respektiert — wer sie trifft, weiss, was er tut.
+    """
     wanted = (cfg.get("printer_name") or "").strip()
-    printers = list_printers()
+    if printers is None:
+        printers = list_printers()
     names = [p["name"] for p in printers]
     if wanted:
         return wanted if wanted in names else None
     dflt = default_printer()
     if dflt and dflt in names:
         return dflt
-    return names[0] if names else None
+    real = [p["name"] for p in printers if not p["virtual"]]
+    return real[0] if real else None
 
 
 def refresh_status(cfg: dict) -> dict:
     """Fragt CUPS wirklich ab und aktualisiert den Cache."""
     with _lock:
         if not cfg.get("print_enabled", True):
-            _status.update(available=False, printer=None, state=None,
-                           message="Drucken in der Config deaktiviert",
+            _status.update(available=False, printer=None, state=None, reasons=[],
+                           connected=None, message="Drucken in der Config deaktiviert",
                            checked=time.monotonic())
             return dict(_status)
 
         printers = list_printers()
         if not printers:
-            _status.update(available=False, printer=None, state=None,
-                           message="Kein Drucker in CUPS eingerichtet",
+            _status.update(available=False, printer=None, state=None, reasons=[],
+                           connected=None, message="Kein Drucker in CUPS eingerichtet",
                            checked=time.monotonic())
             return dict(_status)
 
-        name = resolve_printer(cfg)
+        name = resolve_printer(cfg, printers)
         if name is None:
             wanted = cfg.get("printer_name")
             _status.update(
-                available=False, printer=None, state=None,
-                message=f"Drucker '{wanted}' nicht gefunden",
+                available=False, printer=None, state=None, reasons=[], connected=None,
+                message="Drucker '" + str(wanted) + "' nicht gefunden",
                 checked=time.monotonic())
             return dict(_status)
 
         entry = next((p for p in printers if p["name"] == name), None)
         ready = bool(entry and entry["ready"])
         state = entry["state"] if entry else "unknown"
+        reasons = entry["reasons"] if entry else []
+        connected = entry["connected"] if entry else None
+        blocking = [r["text"] for r in reasons if r["blocking"]]
         # Meldung aus dem Zustand statt aus dem Ja/Nein: "ist deaktiviert" war
         # frueher die Antwort auf JEDEN nicht-bereiten Zustand, auch auf
-        # solche, die CUPS ausser 'disabled' liefert.
-        if state == "unknown":
-            message = f"Drucker '{name}' gefunden, Zustand nicht auslesbar"
-        elif ready:
-            message = "bereit"
+        # solche, die CUPS ausser 'disabled' liefert. Die Reihenfolge geht vom
+        # Handfesten zum Vagen — wer den Drucker gerade eingeschaltet hat, soll
+        # nicht "Zustand nicht auslesbar" lesen, sondern "Papier leer".
+        if connected is False:
+            message = f"Drucker '{name}' ist nicht verbunden — ausgeschaltet oder Kabel ab"
+        elif blocking:
+            message = f"{blocking[0]} ({name})"
         elif state == "disabled":
             message = f"Drucker '{name}' ist deaktiviert"
+        elif state == "unknown":
+            message = f"Drucker '{name}' gefunden, Zustand nicht auslesbar"
+        elif ready:
+            hints = [r["text"] for r in reasons]
+            message = "bereit — " + ", ".join(hints) if hints else "bereit"
         else:
             message = f"Drucker '{name}' meldet '{state}'"
-        _status.update(available=ready, printer=name, state=state,
-                       message=message, checked=time.monotonic())
+        _status.update(available=ready, printer=name, state=state, reasons=reasons,
+                       connected=connected, message=message, checked=time.monotonic())
         return dict(_status)
 
 
