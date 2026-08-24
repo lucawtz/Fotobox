@@ -205,26 +205,48 @@ def test_unavailable_camera_refuses_before_touching_usb(cam, tmp_path):
 
 # ── Live-View ──────────────────────────────────────────────────────────────────
 
-def test_wake_does_not_reset_output_by_default(cam):
-    """output bleibt in der Kamera stehen, bis es jemand aendert.
+def test_wake_sets_output_after_the_viewfinder(cam):
+    """Die Reihenfolge ist der ganze Punkt.
 
-    Es bei jedem Wecken neu zu setzen war ein kompletter gphoto2-Prozessstart
-    (1-2 s USB-Init) fuer nichts.
+    gphoto2 zieht beim Einschalten des Viewfinders den Ausgang selbst auf
+    'PC', damit es die Frames ueber USB bekommt. Wer output vorher setzt,
+    bekommt es dort ueberschrieben — an der EOS 700D gemessen: die Kamera
+    meldete danach 'PC' und gab auf HDMI nichts aus, wo die Capture-Card
+    haengt. Umgekehrt herum meldet sie 'TFT + PC', und das Bild kommt an.
     """
     cam.wake_liveview(with_preview=False)
 
-    assert _gphoto_verbs(cam.calls) == ["--set-config viewfinder=1"]
-
-
-def test_manual_wake_resets_output_too(cam):
-    """Wer den Wake-Knopf drueckt, tut das weil das Bild fehlt — dann darf es
-    der grosse Hammer sein."""
-    cam.wake_liveview(with_preview=False, reset_output=True)
-
     assert _gphoto_verbs(cam.calls) == [
-        "--set-config output=3",
         "--set-config viewfinder=1",
+        "--set-config-index output=3",
     ]
+
+
+def test_output_is_set_by_index_not_by_value(cam):
+    """'output=3' allein ist mehrdeutig — Nummer aus der Liste oder Wert 3.
+
+    Die 700D landete damit auf 'PC' statt auf 'TFT + PC'. --set-config-index
+    laesst die Frage gar nicht erst offen.
+    """
+    cam.wake_liveview(with_preview=False)
+
+    assert any(v.startswith("--set-config-index output=") for v in
+               _gphoto_verbs(cam.calls))
+    assert not any(v == "--set-config output=3" for v in
+                   _gphoto_verbs(cam.calls))
+
+
+def test_every_wake_sets_output_again(cam):
+    """output haelt nicht ueber das Prozessende hinaus.
+
+    Nach dem Ende des gphoto2-Prozesses liest es sich wieder als 'Off' —
+    gemessen. Es einmalig beim Start zu setzen und darauf zu vertrauen, war
+    genau der Fehler, der das Live-Bild verschwinden liess.
+    """
+    cam.wake_liveview(with_preview=False)
+    cam.wake_liveview(with_preview=False)
+
+    assert _gphoto_verbs(cam.calls).count("--set-config-index output=3") == 2
 
 
 def test_preview_pull_follows_the_configuration(monkeypatch, cam):
@@ -246,7 +268,10 @@ def test_background_wake_actually_wakes(cam):
     # wieder freigibt.
     assert cam._wake_gate.acquire(timeout=5), "Hintergrund-Wake wurde nie fertig"
 
-    assert _gphoto_verbs(cam.calls) == ["--set-config viewfinder=1"]
+    assert _gphoto_verbs(cam.calls) == [
+        "--set-config viewfinder=1",
+        "--set-config-index output=3",
+    ]
 
 
 def test_background_wake_stays_out_of_a_running_capture(cam):

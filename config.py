@@ -142,9 +142,13 @@ _DEFAULTS: dict = {
     # (Polaroid-Unterkante inklusive Drehung und Schattenversatz, Status-Bar
     # aus der Schrifthoehe — beides in ui.py, nicht frei waehlbar.)
     # LIVE_OUTER_W=12 fuer den Rahmen ist in der Luft schon eingerechnet.
-    # Die Hoehe ist der bindende Wert: ein 16:9-Signal wird 906x510 gross,
-    # die Breite bleibt Reserve fuer breitere Formate.
-    "live_view_rect": [345, 508, 1160, 510],
+    # Die Hoehe ist der bindende Wert, und sie ist bewusst NICHT bis an die
+    # Nachbarn aufgezogen: der Streifen gibt 533 px her, genommen sind 450.
+    # Ein 16:9-Signal wird damit 800x450 gross und behaelt oben wie unten
+    # gut 40 px Luft. Randvoll sah es gedraengt aus, obwohl nichts kollidiert
+    # — die Luft ist hier Absicht, kein uebrig gebliebener Platz.
+    # Die Breite bleibt Reserve fuer breitere Formate.
+    "live_view_rect": [345, 539, 1160, 450],
     "instagram_url": "https://www.instagram.com/lucawtz",
     # Instagrams eigener QR-Code, in der App im eigenen Profil exportierbar.
     # Leer = ui.py zeichnet stattdessen das Instagram-Glyph.

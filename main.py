@@ -412,20 +412,13 @@ def main():
                 # Taster, solange keiner da ist.
                 # Async ausführen damit die UI nicht blockiert während
                 # gphoto2 läuft.
-                #
-                # reset_output=True: wer hier drückt, tut das weil das Bild
-                # fehlt. Dann soll die Box alles neu setzen statt nur den
-                # Spiegel zu heben — im Automatikbetrieb wäre `output` ein
-                # gphoto2-Prozessstart umsonst, hier ist er die halbe Miete.
                 combo_wake = not btns.wired("left") and trigger and right
                 if combo_wake or (left and not (trigger or right)):
                     idle_since = now
                     if camera.available:
                         logger.info("Manueller Wake — Live-View einschalten")
                         threading.Thread(
-                            target=camera.wake_liveview,
-                            kwargs={"reset_output": True},
-                            daemon=True).start()
+                            target=camera.wake_liveview, daemon=True).start()
                     btns.wait_for_release()
 
                 elif trigger or right:

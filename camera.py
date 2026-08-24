@@ -51,11 +51,17 @@ class Camera:
        nicht braucht, spart `camera_preview_pull: false` einen Spiegelhub
        und bis zu 8 s pro Wake.
 
-    `output` (TFT/PC/HDMI) steht bewusst NICHT in wake_liveview: der Wert
-    bleibt in der Kamera stehen, bis ihn jemand aendert. Ihn bei jedem
-    Aufwecken neu zu setzen kostete einen kompletten Prozessstart umsonst.
-    Nach einem USB-Reconnect laeuft _init ohnehin wieder komplett durch, und
-    der manuelle Wake setzt ihn per reset_output=True trotzdem mit.
+    `output` (wohin das Live-Bild geht) gehoert in JEDEN Wake, und zwar NACH
+    viewfinder=1. Beides ist gemessen, nicht angenommen: der Wert haelt nicht
+    ueber das Prozessende hinaus (danach liest er sich wieder als 'Off'), und
+    gphoto2 zieht ihn beim Einschalten des Viewfinders selbst auf 'PC' — wer
+    ihn vorher setzt, bekommt ihn genau dort ueberschrieben und schickt das
+    Live-Bild damit ausschliesslich ueber USB, nie auf HDMI.
+
+    Wichtiger Vorbehalt zum ganzen Modul: der per PTP eingeschaltete Live-View
+    lebt nur, solange ein gphoto2-Prozess die Sitzung offen haelt. Endet der
+    Prozess, faellt die Kamera zurueck und HDMI zeigt wieder ihr Info-Display.
+    Ein Wake reicht also fuer den Moment, nicht fuer die Dauer.
 
     Beobachtetes "Ausloese-Geraeusch" beim capture-preview ist nur der
     Spiegelhub, nicht der Verschluss — keine Shutter-Aktuationen verbraucht.
@@ -124,15 +130,23 @@ class Camera:
                 capture_output=True, text=True, timeout=timeout,
             )
 
-    def _set_config(self, assignment: str, timeout: int = 5) -> bool:
+    def _set_config(self, assignment: str, timeout: int = 5,
+                    by_index: bool = False) -> bool:
         """Setzt eine gphoto2-Config und sagt, ob die Kamera sie genommen hat.
 
         Frueher stand die immer gleiche try/returncode/stderr-Kaskade an
         jeder Aufrufstelle einzeln — und an zweien davon wurde der
         Rueckgabewert gar nicht ausgewertet.
+
+        by_index=True nimmt --set-config-index. Bei Auswahllisten ist das
+        blanke --set-config mehrdeutig: 'output=3' kann die Nummer 3 aus der
+        Liste meinen oder den Wert 3. Auf der EOS 700D landete die Kamera
+        damit auf 'PC' statt auf 'TFT + PC' — das Live-Bild ging also nur
+        ueber USB und nie auf HDMI, wo die Capture-Card haengt.
         """
+        flag = "--set-config-index" if by_index else "--set-config"
         try:
-            r = self._gphoto(["--set-config", assignment], timeout=timeout)
+            r = self._gphoto([flag, assignment], timeout=timeout)
         except Exception as exc:
             logger.debug("  → %s Exception: %s", assignment, exc)
             return False
@@ -164,9 +178,6 @@ class Camera:
         # Foto ins Display und damit auch auf HDMI.
         self._set_config("reviewtime=0", timeout=10)
 
-        # output gehoert hierher und nicht in jeden Wake — siehe Klassen-Docstring.
-        self._set_config(f"output={self._output_mode}")
-
         # Auto-Power-Off best effort. Welcher Wert "aus" bedeutet, ist
         # modellabhaengig: 0 bei den einen, 65535 bei den anderen. Bisher
         # wurden stumpf beide gesetzt, wodurch der zweite den ersten wieder
@@ -191,30 +202,31 @@ class Camera:
                       reset_output: bool = False) -> bool:
         """Aktiviert Live-View an der Kamera. Blockiert bis zu ~13 s.
 
-        Schritt 1: viewfinder=1 (Live-View-Modus an, Spiegel hoch).
-        Schritt 2 (optional): einen Preview-Frame ueber USB abrufen, damit
-            die Kamera im Live-View-Modus bleibt — ohne diesen Pull faellt
-            die 700D nach dem Spiegelhub sofort zurueck.
+        Schritt 1: viewfinder=1 — Live-View an, Spiegel hoch.
+        Schritt 2: output auf TFT+PC. Die Reihenfolge ist NICHT beliebig:
+            gphoto2 zieht beim Einschalten des Viewfinders den Ausgang selbst
+            auf 'PC', damit es die Frames ueber USB bekommt. Wer output vorher
+            setzt, bekommt es genau dort ueberschrieben — gemessen an der
+            EOS 700D, die daraufhin 'PC' meldete und auf HDMI nichts ausgab.
+        Schritt 3 (optional): einen Preview-Frame abrufen.
 
         with_preview=None uebernimmt die Konfiguration (camera_preview_pull),
         True/False ueberstimmt sie fuer diesen Aufruf.
 
-        reset_output=True setzt zusaetzlich output neu. Nur fuer den
-        manuellen Wake gedacht: wenn ein Gast den Knopf drueckt, weil das
-        Bild fehlt, soll das der grosse Hammer sein und nicht die halbe
-        Massnahme. Im Automatikbetrieb waere es ein Prozessstart umsonst.
+        `reset_output` ist wirkungslos und bleibt nur, damit bestehende
+        Aufrufe nicht brechen: output wird inzwischen bei jedem Wake gesetzt.
+        Es haelt naemlich nicht — nach dem Ende des gphoto2-Prozesses liest es
+        sich wieder als 'Off'. Die frueher hier stehende Annahme, der Wert
+        bleibe in der Kamera stehen, war schlicht falsch.
 
         Aufrufer im UI-Pfad nehmen request_liveview() — das hier blockiert.
         """
         if with_preview is None:
             with_preview = self._preview_pull
-        logger.info("wake_liveview(with_preview=%s, reset_output=%s)",
-                    with_preview, reset_output)
-
-        if reset_output:
-            self._set_config(f"output={self._output_mode}")
+        logger.info("wake_liveview(with_preview=%s)", with_preview)
 
         ok = self._set_config("viewfinder=1")
+        self._set_config(f"output={self._output_mode}", by_index=True)
 
         if with_preview:
             try:
