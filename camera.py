@@ -99,13 +99,17 @@ class Camera:
 
     # AF-Methode als Index aus `gphoto2 --get-config afmethod`:
     # 0 LiveFace, 1 LiveMulti, 2 Live, 3 Quick.
-    # Voreinstellung 2 (Live): ein kleines festes Feld in der Bildmitte.
-    # LiveFace zeichnet stattdessen einen Rahmen um jedes erkannte Gesicht und
-    # laesst ihn mitwandern — auf einem 1920x1080-Schirm vor einer Warteschlange
-    # ist das der unruhigste Teil des ganzen Bildes. LiveMulti ist noch
-    # groesser. Ganz ohne Rahmen geht keine der Methoden, das zeichnet die
-    # Kamera in ihr HDMI-Signal.
-    DEFAULT_AF_METHOD = "2"
+    #
+    # Voreinstellung 0 (LiveFace): die Kamera sucht Gesichter und legt um jedes
+    # einen mitwandernden Rahmen. Das ist der unruhigste Teil des Live-Bildes —
+    # und so gewollt, weil der Gast daran sieht, dass die Box ihn gefunden hat.
+    #
+    # 2 (Live) waere ein kleines festes Feld in der Mitte, 1 (LiveMulti) ein
+    # groesserer Klammerrahmen. Ganz ohne Rahmen kommt keine der Methoden aus:
+    # den zeichnet die Kamera in ihr HDMI-Signal, bevor die Box es sieht. Die
+    # EOS 700D hat keinen sauberen HDMI-Ausgang, per AF-Methode ist da nichts
+    # zu holen.
+    DEFAULT_AF_METHOD = "0"
 
     # Wie lange nach dem Start gewartet wird, bevor der Halter als "steht"
     # gilt. Scheitert gphoto2 am belegten USB-Geraet, beendet es sich in

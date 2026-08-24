@@ -406,13 +406,34 @@ def cam_init(monkeypatch, cam):
     return cam
 
 
-def test_init_turns_face_detection_off(cam_init):
-    """LiveFace zeichnet einen Rahmen um jedes erkannte Gesicht und laesst ihn
-    mitwandern — auf dem grossen Schirm der unruhigste Teil des Live-Bildes.
-    'Live' ist ein kleines festes Feld in der Mitte. Ganz ohne Rahmen geht
-    keine der Methoden, den zeichnet die Kamera in ihr HDMI-Signal.
+def test_init_sets_an_af_method(cam_init):
+    """_init muss die AF-Methode ueberhaupt setzen.
+
+    0 LiveFace, 1 LiveMulti, 2 Live, 3 Quick. Ohne das bleibt stehen, was
+    zuletzt jemand am Geraet gedreht hat — die Methode ueberlebt anders als
+    `output` das Prozessende in der Kamera.
+
+    Welcher Wert richtig ist, ist Geschmack des Betreibers und steht in der
+    Config; deshalb pinnt der Test ihn nicht fest, sondern nur, dass er
+    ankommt.
     """
-    assert "--set-config-index afmethod=2" in _gphoto_verbs(cam_init.calls)
+    method = camera_mod.Camera.DEFAULT_AF_METHOD
+    assert (f"--set-config-index afmethod={method}"
+            in _gphoto_verbs(cam_init.calls))
+
+
+def test_init_passes_a_deviating_af_method_through(monkeypatch, cam):
+    """Ein von der Voreinstellung abweichender Wert muss auch ankommen.
+
+    Sonst waere camera_af_method in der Config eine Attrappe: der Test darueber
+    liest denselben Standardwert wie der Code und wuerde ein hartverdrahtetes
+    afmethod nicht bemerken.
+    """
+    monkeypatch.setattr(camera_mod.Camera, "_detect", lambda self: True)
+    cam._af_method = "1"
+    cam.calls.clear()
+    _REAL_INIT(cam)
+    assert "--set-config-index afmethod=1" in _gphoto_verbs(cam.calls)
 
 
 def test_init_turns_the_image_review_off(cam_init):
