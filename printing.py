@@ -39,7 +39,8 @@ _lock = threading.Lock()
 # auslesbar" unterscheiden kann — `available` allein sagt das nicht, weil
 # 'unknown' bewusst als bereit durchgeht (siehe list_printers).
 _status: dict = {"available": False, "printer": None, "message": "noch nicht geprüft",
-                 "state": None, "reasons": [], "connected": None, "checked": 0.0}
+                 "state": None, "reasons": [], "connected": None, "pending": None,
+                 "checked": 0.0}
 
 
 # ── CUPS-Abfragen ──────────────────────────────────────────────────────────────
@@ -436,14 +437,16 @@ def refresh_status(cfg: dict) -> dict:
     with _lock:
         if not cfg.get("print_enabled", True):
             _status.update(available=False, printer=None, state=None, reasons=[],
-                           connected=None, message="Drucken in der Config deaktiviert",
+                           connected=None, pending=None,
+                           message="Drucken in der Config deaktiviert",
                            checked=time.monotonic())
             return dict(_status)
 
         printers = list_printers()
         if not printers:
             _status.update(available=False, printer=None, state=None, reasons=[],
-                           connected=None, message="Kein Drucker in CUPS eingerichtet",
+                           connected=None, pending=None,
+                           message="Kein Drucker in CUPS eingerichtet",
                            checked=time.monotonic())
             return dict(_status)
 
@@ -452,7 +455,7 @@ def refresh_status(cfg: dict) -> dict:
             wanted = cfg.get("printer_name")
             _status.update(
                 available=False, printer=None, state=None, reasons=[], connected=None,
-                message="Drucker '" + str(wanted) + "' nicht gefunden",
+                pending=None, message="Drucker '" + str(wanted) + "' nicht gefunden",
                 checked=time.monotonic())
             return dict(_status)
 
@@ -481,7 +484,8 @@ def refresh_status(cfg: dict) -> dict:
         else:
             message = f"Drucker '{name}' meldet '{state}'"
         _status.update(available=ready, printer=name, state=state, reasons=reasons,
-                       connected=connected, message=message, checked=time.monotonic())
+                       connected=connected, pending=pending_jobs(name),
+                       message=message, checked=time.monotonic())
         return dict(_status)
 
 
@@ -495,6 +499,67 @@ def status(cfg: dict) -> dict:
 
 def available(cfg: dict) -> bool:
     return bool(status(cfg).get("available"))
+
+
+# ── Warteschlange ──────────────────────────────────────────────────────────────
+#
+# Die Box fuehrt keine eigene Queue, sie reicht an CUPS durch: `lp` nimmt jeden
+# Auftrag binnen Sekundenbruchteilen an, der Selphy braucht danach rund eine
+# Minute pro Bild. Fuer den Gast sah beides gleich aus — "Foto wird gedruckt"
+# stand auch dann da, wenn vier Fotos davor lagen. Wer nichts herauskommen
+# sieht, drueckt nochmal, und die Papierkassette ist leer, bevor jemand merkt
+# warum. Darum wird die Tiefe ausgelesen und benannt.
+
+# Sekunden pro Bild, wenn die Config nichts sagt: Messwert Selphy CP1500.
+_SECONDS_PER_PRINT = 60.0
+
+
+def _seconds_per_print(cfg: dict) -> float:
+    try:
+        v = float(cfg.get("print_seconds_per_photo") or _SECONDS_PER_PRINT)
+    except (TypeError, ValueError):
+        return _SECONDS_PER_PRINT
+    return v if v > 0 else _SECONDS_PER_PRINT
+
+
+def pending_jobs(printer: Optional[str] = None) -> Optional[int]:
+    """Unerledigte Auftraege in der CUPS-Queue. None = nicht auslesbar.
+
+    `lpstat -o` listet ausschliesslich Offenes; fertig gedruckte Auftraege
+    verschwinden daraus von selbst. Ohne Ziel zaehlt es alle Queues, mit Ziel
+    nur die eine — letzteres ist gemeint, sonst zaehlt der Braille-Attrappen-
+    Drucker mit, den resolve_printer bewusst uebergeht.
+    """
+    proc = _run(["lpstat", "-o"] + ([printer] if printer else []))
+    if proc is None or proc.returncode != 0:
+        return None
+    return len([ln for ln in (proc.stdout or "").splitlines() if ln.strip()])
+
+
+# Eigener Platzhalter statt None: der Aufrufer uebergibt eine Zahl, die selbst
+# None sein darf ("Queue nicht auslesbar"). Mit None als Vorgabewert waere das
+# von "nicht uebergeben" nicht zu unterscheiden und queue_hint wuerde in genau
+# dem Fall nochmal forken, in dem die Abfrage gerade fehlgeschlagen ist.
+_UNSET = object()
+
+
+def queue_hint(cfg: dict, pending=_UNSET) -> str:
+    """Detailzeile fuer den Gast, gedacht direkt nach dem Abschicken.
+
+    Der eigene Auftrag steckt zu diesem Zeitpunkt mit in der Queue — "vor dir"
+    ist also eins weniger als die gemeldete Zahl. Ist sie nicht auslesbar,
+    bleibt es beim alten, unverbindlichen Satz: lieber nichts Genaues sagen
+    als etwas Falsches.
+    """
+    if pending is _UNSET:
+        pending = pending_jobs(status(cfg).get("printer"))
+    if pending is None or pending <= 1:
+        return "Bitte am Drucker warten"
+    ahead = pending - 1
+    minuten = max(1, round(ahead * _seconds_per_print(cfg) / 60.0))
+    fotos = "Ein Foto" if ahead == 1 else f"{ahead} Fotos"
+    einheit = "Minute" if minuten == 1 else "Minuten"
+    return f"{fotos} vor dir — etwa {minuten} {einheit}"
 
 
 # ── Bildaufbereitung ───────────────────────────────────────────────────────────
@@ -649,8 +714,15 @@ def print_photo(path: str, cfg: dict) -> tuple[bool, str]:
             logger.error("Druckauftrag abgelehnt: %s", detail)
             return False, detail[:80]
         job = (proc.stdout or "").strip()
-        logger.info("Druckauftrag angenommen (%s): %s", printer, job)
-        return True, "Foto wird gedruckt"
+        # Erst JETZT zaehlen: der eigene Auftrag haengt schon mit drin, und
+        # vorher gezaehlt waere die Auskunft um eins daneben.
+        pending = pending_jobs(printer)
+        with _lock:
+            _status["pending"] = pending
+        hint = queue_hint(cfg, pending)
+        logger.info("Druckauftrag angenommen (%s): %s — Queue: %s", printer, job,
+                    "unbekannt" if pending is None else pending)
+        return True, hint
     finally:
         # Temporäre Datei nur löschen wenn wir sie selbst angelegt haben.
         if prepared != path:

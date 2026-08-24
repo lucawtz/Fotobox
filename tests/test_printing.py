@@ -22,7 +22,8 @@ SELPHY_IDLE = "printer Selphy is idle.  enabled since Thu 01 Jan 2026\n"
 
 @pytest.fixture(autouse=True)
 def reset_status():
-    printing._status.update(available=False, printer=None, message="", checked=0.0)
+    printing._status.update(available=False, printer=None, message="", pending=None,
+                            checked=0.0)
     yield
     printing._status["checked"] = 0.0
 
@@ -31,7 +32,9 @@ def reset_status():
 def cups(monkeypatch):
     """Ersetzt subprocess.run durch feste CUPS-Antworten."""
     def install(p_out=SELPHY_IDLE, d_out="system default destination: Selphy",
-                lp=FakeProc(0, "request id is Selphy-1 (1 file(s))"), p_rc=0):
+                lp=FakeProc(0, "request id is Selphy-1 (1 file(s))"), p_rc=0,
+                jobs=None):
+        """`jobs`: Zeilen wie von `lpstat -o`. None = Queue nicht auslesbar."""
         calls = []
 
         def fake_run(args, **kw):
@@ -40,6 +43,8 @@ def cups(monkeypatch):
                 return FakeProc(p_rc, p_out)
             if args[:2] == ["lpstat", "-d"]:
                 return FakeProc(0, d_out)
+            if args[:2] == ["lpstat", "-o"]:
+                return FakeProc(1) if jobs is None else FakeProc(0, jobs)
             if args[0] == "lp":
                 if lp is None:
                     raise FileNotFoundError("lp")
@@ -218,7 +223,8 @@ def test_successful_job(cfg, cups, tmp_path):
     photo = tmp_path / "foto.jpg"
     Image.new("RGB", (600, 400)).save(photo, "JPEG")
     ok, msg = printing.print_photo(str(photo), cfg)
-    assert ok is True and "gedruckt" in msg
+    # Ohne auslesbare Queue bleibt es beim unverbindlichen Satz.
+    assert ok is True and msg == "Bitte am Drucker warten"
     lp = [c for c in calls if c[0] == "lp"][0]
     assert lp[:3] == ["lp", "-d", "Selphy"]
 
@@ -361,3 +367,102 @@ def test_print_test_cleans_up_both_tempfiles(cfg, cups):
     before = set(glob.glob(pattern))
     printing.print_test(cfg)
     assert set(glob.glob(pattern)) == before, "Testseite oder Druckbild blieb liegen"
+
+
+# ── Warteschlange ──────────────────────────────────────────────────────────────
+#
+# Die Box hat keine eigene Queue, sie zaehlt die von CUPS. Der eigene Auftrag
+# haengt beim Zaehlen schon mit drin — genau daran ist die Auskunft leicht um
+# eins daneben, deshalb steht das hier mehrfach.
+
+JOB = "Selphy-{} fotoboxpi 1024000 Mon 24 Aug 2026 22:30:00 CEST"
+
+
+def _queue(n):
+    """Baut eine lpstat -o-Ausgabe mit n Auftraegen."""
+    return "".join(JOB.format(i + 1) + chr(10) for i in range(n))
+
+
+def test_queue_empty_is_not_counted(cfg, cups):
+    cups(jobs="")
+    assert printing.pending_jobs("Selphy") == 0
+
+
+def test_queue_counts_lines(cfg, cups):
+    cups(jobs=_queue(3))
+    assert printing.pending_jobs("Selphy") == 3
+
+
+def test_queue_unreadable_is_none(cfg, cups):
+    cups(jobs=None)
+    assert printing.pending_jobs("Selphy") is None
+
+
+def test_queue_asks_only_the_resolved_printer(cfg, cups):
+    """Sonst zaehlt der Braille-Attrappendrucker mit, den resolve_printer meidet."""
+    calls = cups(jobs=_queue(1))
+    printing.pending_jobs("Selphy")
+    assert ["lpstat", "-o", "Selphy"] in calls
+
+
+def test_hint_alone_in_queue(cfg):
+    # 1 = nur der eigene Auftrag, niemand davor.
+    assert printing.queue_hint(cfg, 1) == "Bitte am Drucker warten"
+
+
+def test_hint_one_ahead_is_singular(cfg):
+    assert printing.queue_hint(cfg, 2) == "Ein Foto vor dir — etwa 1 Minute"
+
+
+def test_hint_counts_others_not_own_job(cfg):
+    # 4 in der Queue, davon einer der eigene -> 3 davor, 3 Minuten.
+    assert printing.queue_hint(cfg, 4) == "3 Fotos vor dir — etwa 3 Minuten"
+
+
+def test_hint_uses_config_duration(cfg):
+    cfg["print_seconds_per_photo"] = 30
+    assert printing.queue_hint(cfg, 5) == "4 Fotos vor dir — etwa 2 Minuten"
+
+
+def test_hint_falls_back_on_garbage_duration(cfg):
+    cfg["print_seconds_per_photo"] = "viel"
+    assert "etwa 2 Minuten" in printing.queue_hint(cfg, 3)
+
+
+def test_hint_never_promises_zero_minutes(cfg):
+    cfg["print_seconds_per_photo"] = 1
+    assert printing.queue_hint(cfg, 2) == "Ein Foto vor dir — etwa 1 Minute"
+
+
+def test_hint_stays_vague_when_queue_unreadable(cfg):
+    assert printing.queue_hint(cfg, None) == "Bitte am Drucker warten"
+
+
+def test_print_photo_reports_the_queue(cfg, cups, tmp_path):
+    cups(jobs=_queue(3))
+    photo = tmp_path / "foto.jpg"
+    Image.new("RGB", (600, 400)).save(photo, "JPEG")
+    ok, msg = printing.print_photo(str(photo), cfg)
+    assert ok is True and msg == "2 Fotos vor dir — etwa 2 Minuten"
+
+
+def test_print_photo_counts_after_submitting(cfg, cups, tmp_path):
+    """Vor dem lp gezaehlt waere die Auskunft um eins zu niedrig."""
+    calls = cups(jobs=_queue(2))
+    photo = tmp_path / "foto.jpg"
+    Image.new("RGB", (600, 400)).save(photo, "JPEG")
+    printing.print_photo(str(photo), cfg)
+    namen = [c[0] if c[0] != "lpstat" else " ".join(c[:2]) for c in calls]
+    assert namen.index("lp") < len(namen) - 1 - namen[::-1].index("lpstat -o")
+
+
+def test_status_carries_pending(cfg, cups):
+    cups(jobs=_queue(2))
+    assert printing.refresh_status(cfg)["pending"] == 2
+
+
+def test_pending_resets_when_printer_disappears(cfg, cups):
+    cups(jobs=_queue(2))
+    assert printing.refresh_status(cfg)["pending"] == 2
+    cups(p_out="")
+    assert printing.refresh_status(cfg)["pending"] is None

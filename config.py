@@ -230,6 +230,9 @@ _DEFAULTS: dict = {
     # oben und unten abgeschnitten). Alternativ "cover" oder "fit".
     "print_mode": "auto",
     "print_options": [],
+    # Wie lange der Drucker fuer ein Bild braucht. Geht nur in die Schaetzung
+    # ein, die der Box-Dialog anzeigt, wenn Auftraege in der Queue haengen.
+    "print_seconds_per_photo": 60,
     "camera_keepalive_s": 25,
     # Index aus `gphoto2 --get-config output`, NICHT der Klartextwert. Welche
     # Nummer TFT+PC meint, unterscheidet sich je nach Modell — steht der

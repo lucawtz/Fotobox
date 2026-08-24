@@ -169,8 +169,11 @@ def _do_print(ui: UI, path: str, cfg: dict) -> None:
     ui.show_notice("Wird gedruckt…", "Einen Moment bitte", seconds=0.8, error=False)
     ok, message = printing.print_photo(path, cfg)
     if ok:
-        ui.show_notice("Foto wird gedruckt", "Bitte am Drucker warten",
-                       seconds=2.5, error=False)
+        # `message` ist im Erfolgsfall die Auskunft zur Warteschlange —
+        # "Bitte am Drucker warten", oder "3 Fotos vor dir — etwa 3 Minuten",
+        # wenn schon welche haengen. Frueher stand hier fest der erste Satz,
+        # auch wenn der Gast in Wahrheit der Vierte war.
+        ui.show_notice("Foto wird gedruckt", message, seconds=2.5, error=False)
     else:
         logger.error("Drucken fehlgeschlagen: %s", message)
         ui.show_notice("Drucken nicht möglich", message, seconds=4.0)
