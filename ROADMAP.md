@@ -4,18 +4,20 @@
 Gäste erreichen die Galerie per QR-Code, Drucken funktioniert sichtbar, und ein
 Absturz beendet nicht den Abend.
 
-**Stand (23.08.):** Alles committet bis `7804745`. Am Schreibtisch ist nur noch
-**P1-15** offen (exakte Pins, gehen erst auf dem Pi). P0 vollständig abgeräumt,
-P1 bis auf P1-15 umgesetzt, P2 komplett. Was bleibt, ist Nachweis statt Code:
-sieben `[~]`-Punkte warten auf die Hardware-Gegenprüfung.
-Nächster Schritt ist der Hardware-Smoke-Test, sobald die Hardware da ist.
+**Stand (24.08.):** Erster Hardware-Durchlauf auf dem Pi gelaufen —
+`scripts/smoke_test.py` meldet **0 Fehler**. Damit sind sechs der sieben
+`[~]`-Punkte belegt (P0-4, P1-5, P1-6, P1-7, P1-8, P1-12) und **P1-15 ist
+erledigt**: `requirements.pi.txt` liegt im Repo. P0, P1 und P2 sind damit
+vollständig umgesetzt. Offen bleibt genau ein Nachweis — **P1-9**, das Drucken
+am Papier. CUPS sieht den Selphy, aber 10 Drucke am Stück hat noch niemand
+gefahren.
 
 **Rahmen:** Nur eigene Events bis Oktober (keine Vermietung an Dritte) · Drucker
 Canon Selphy, 10×15 · Hardware ab Ende August wieder verfügbar · harter Termin.
 
-**Fortschritt:** 21 / 22 umgesetzt — davon **14 durch Tests abgesichert**,
-7 warten auf die Hardware-Gegenprüfung. Offen ist nur noch P1-15.
-(P0: 4/4 · P1: 10/11 · P2: 7/7; P3 zählt nicht mit.)
+**Fortschritt:** 22 / 22 umgesetzt — davon 21 belegt, einer (**P1-9**) wartet
+auf den Nachweis am Drucker.
+(P0: 4/4 · P1: 11/11 · P2: 7/7; P3 zählt nicht mit.)
 
 **Legende:** `[x]` fertig und geprüft · `[~]` Code fertig, Wirkung erst auf dem
 Pi nachweisbar · `[ ]` offen.
@@ -23,9 +25,14 @@ Pi nachweisbar · `[ ]` offen.
 **Alle `[~]`-Punkte auf einmal prüfen** — auf dem Pi:
 
 ```bash
-cd ~/Fotobox && git pull && ./install.sh
+# In tmux starten: install.sh laeuft je nach Lage viele Minuten und die
+# SSH-Sitzung ueberlebt das nicht zwingend. `bash install.sh` statt
+# `./install.sh` — im Checkout auf dem Pi fehlt das Exec-Bit.
+tmux new -As fotobox
+cd ~/Fotobox && git pull && bash install.sh
 sudo systemctl stop fotobox          # für Kamera-, Display- und GPIO-Prüfung
 venv/bin/python scripts/smoke_test.py
+sudo systemctl start fotobox
 ```
 
 Das Skript geht Display-Stack, systemd, Bildschirmschoner, Log-Rotation,
@@ -33,18 +40,19 @@ Drucker, Hotspot, Kamera, Capture-Card, GPIO, Speicher und Abhängigkeiten
 durch und sagt zu jedem Fehler, was zu tun ist. Exit-Code 0 = keine Fehler.
 Es ändert nichts und fasst belegte Geräte nicht an.
 
-Stand 23.08.2026: alles umgesetzt, was ohne angeschlossene Hardware möglich
-ist. **266 Tests, alle grün** — `venv/bin/python -m pytest`; `tsc -b` im
+Stand 24.08.2026: alles umgesetzt, der Hardware-Durchlauf ist gemacht.
+**266 Tests, alle grün** — `venv/bin/python -m pytest`; `tsc -b` im
 `frontend/` ebenfalls grün.
 
 **Was noch fehlt:**
-* **P1-15** — `venv/bin/pip freeze > requirements.pi.txt` muss auf dem Pi
-  laufen, nicht auf macOS: die Wheels unterscheiden sich. Erst danach ist der
-  Event-Tag wirklich reproduzierbar.
-* Die sieben `[~]`-Punkte brauchen einen Durchlauf von `scripts/smoke_test.py`
-  auf der echten Hardware. Der Code steht, nur der Nachweis fehlt.
-* Danach bleibt die **Generalprobe** (5.–11. Okt) — sie ist durch nichts zu
-  ersetzen, was sich am Schreibtisch prüfen lässt.
+* **P1-9 am Papier** — 10 Drucke am Stück auf dem echten Selphy. Der einzige
+  verbliebene `[~]`-Punkt.
+* Die **Generalprobe** (5.–11. Okt) — sie ist durch nichts zu ersetzen, was
+  sich am Schreibtisch prüfen lässt.
+* Drei Warnungen aus dem Smoke-Test, keine davon ein Blocker: die
+  Auslieferungs-PINs (`admin_pin`, `host_pin`, `wifi_password`) stehen noch auf
+  Standard, `consoleblank=0` fehlt in der `cmdline.txt`, und Blanking unter
+  Wayland lässt sich nur im Dauerlauf beobachten.
 
 ---
 
@@ -53,7 +61,7 @@ ist. **266 Tests, alle grün** — `venv/bin/python -m pytest`; `tsc -b` im
 | Zeitraum | Fokus | Abschlusskriterium |
 |---|---|---|
 | ~~**22.–30. Aug**~~ ✅ | P0 komplett + P1-13, P1-14, P1-15 (alles ohne Hardware) | erledigt 22.08. — Blocker gefixt, `tsc -b` grün, Routen getestet |
-| **31. Aug – 6. Sep** | Hardware-Smoke-Test des Ist-Zustands, **dann** P1-5 · P1-6/P1-7 sind gebaut, hier nur noch am Monitor verifizieren | Box startet nach Reboot allein und bleibt an |
+| ~~**31. Aug – 6. Sep**~~ ✅ | Hardware-Smoke-Test des Ist-Zustands, P1-5 · P1-6 · P1-7 | erledigt 24.08. — Smoke-Test 0 Fehler, Dienst nach Reboot von allein `active` |
 | **7.–20. Sep** | P1-9 ist gebaut (Backend, Admin-Panel, README) — hier nur noch am echten Selphy gegenprüfen · P1-10 und P1-11 erledigt, an der Hardware gegenprüfen | 10 Drucke am Stück, Kamera-Fehler sichtbar |
 | **21.–27. Sep** | Betriebs-Härtung: P2-17, P2-18, P2-19 · P1-8 und P1-12 sind erledigt | Ein Abend Dauerlauf ohne Eingriff |
 | **28. Sep – 4. Okt** | Rest P2, Doku, Tests ausbauen | README stimmt mit Code überein |
@@ -95,19 +103,20 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       für „Speichern" und den Zähler „1 / N" im Header.
       *Fix:* `current` an einen `activeIndex`-State hängen statt an den URL-Parameter.
 
-- [~] **4. systemd härten** — `fotobox.service:8`
+- [x] **4. systemd härten** — `fotobox.service:8`
       `Restart=no` — jeder unbehandelte Crash, jeder OOM-Kill lässt die Box für den
       Rest des Abends tot liegen und verlangt SSH.
       *Fix:* `Restart=on-failure` + `RestartSec`, dazu `RuntimeDirectory=fotobox`,
       damit `/run/fotobox` den Reboot übersteht statt nur zufällig von
       `scripts/usb_export.py` als root neu angelegt zu werden.
-      *Hardware-Gegenprüfung offen: systemd-Verhalten zeigt sich erst beim echten Absturz/Reboot.*
+      *Auf dem Pi belegt (24.08.): `Restart=on-failure`, `RuntimeDirectory=fotobox`,
+      `/run/fotobox` beschreibbar, `systemd-analyze verify` ohne Beanstandung.*
 
 ---
 
 ## P1 — Muss vor dem Event
 
-- [~] **5. Display-Stack klären: X11 oder Wayland** — `fotobox.service:11`, `install.sh`
+- [x] **5. Display-Stack klären: X11 oder Wayland** — `fotobox.service:11`, `install.sh`
       Die Unit setzt `DISPLAY=:0`. Bookworm startet auf Pi 4/5 je nach Version einen
       Wayland-Compositor — dann findet SDL kein X11 und die Box bleibt schwarz.
       **Muss auf der echten Hardware verifiziert werden**, ggf. `SDL_VIDEODRIVER`
@@ -126,16 +135,18 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       erzwungener Treiber). *Offen: dass wirklich ein Vollbild aufgeht,
       zeigt nur der Pi — `scripts/smoke_test.py` prüft genau das.*
 
-- [~] **6. Bildschirmschoner / DPMS deaktivieren** — `install.sh`
+- [x] **6. Bildschirmschoner / DPMS deaktivieren** — `install.sh`
       Nichts im Repo verhindert, dass der Monitor nach ~10 Minuten mitten im Event
       schwarz wird.
       *Erledigt (22.08.):* `install.sh` Abschnitt 10 legt einen Autostart-Eintrag
       mit `xset s off -dpms noblank` an und weist auf `consoleblank=0` hin.
       Wirksamkeit zeigt erst der Monitor am Eventtag — steht als eigener Punkt
       auf der Generalprobe-Checkliste.
-      *Hardware-Gegenprüfung offen: Autostart-Datei wird geschrieben — ob der Monitor anbleibt, zeigt der Pi.*
+      *Auf dem Pi belegt (24.08.): Autostart-Eintrag installiert. Unter Wayland gibt es
+      kein `xset` — dass der Monitor wirklich anbleibt, zeigt erst der Dauerlauf
+      der Generalprobe.*
 
-- [~] **7. Autologin / Boot-Target sicherstellen** — `install.sh`
+- [x] **7. Autologin / Boot-Target sicherstellen** — `install.sh`
       Die Unit hängt an `graphical.target`, aber der Installer prüft nirgends, ob
       der Pi überhaupt grafisch bootet. Bootet er in die CLI, ist der Service
       aktiviert, die X-Session die er braucht existiert aber nie.
@@ -143,16 +154,17 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       und nennt bei falschem Target den `raspi-config`-Befehl. Bewusst nur Warnung
       statt Auto-Umstellung — das Boot-Verhalten des Pi ungefragt zu ändern wäre
       übergriffig.
-      *Hardware-Gegenprüfung offen: prüft `systemctl get-default`, aussagekräftig nur auf dem Pi.*
+      *Auf dem Pi belegt (24.08.): Boot-Target ist `graphical.target`, und nach einem
+      Reboot stand der Dienst von allein auf `active`.*
 
-- [~] **8. Log-Rotation** — `fotobox.service:14-15`, `gallery_server.py:1006`
+- [x] **8. Log-Rotation** — `fotobox.service:14-15`, `gallery_server.py:1006`
       Beide Logs wachsen unbegrenzt (`StandardOutput=append:` bzw. ein
       `FileHandler` auf `logs/gallery.log`). logrotate-Config oder Rotation im Code.
       *Erledigt (22.08.):* `scripts/logrotate-fotobox` mit `copytruncate` (systemd
       hält den Filedeskriptor offen), installiert in Abschnitt 9 von `install.sh`
       inklusive `logrotate --debug`-Syntaxprüfung — ein kaputter Eintrag würde
       sonst die Rotation *aller* System-Logs lahmlegen.
-      *Hardware-Gegenprüfung offen: Python-Rotation getestet; die logrotate-Datei validiert erst der Pi.*
+      *Auf dem Pi belegt (24.08.): `/etc/logrotate.d/fotobox` installiert, beide Logs bei 0,1 MB.*
 
 - [~] **9. Drucken fertigbauen (Canon Selphy, 10×15)** — `main.py:70-77`, `ui.py:830`, `config.py`, Admin-UI
       Aktuell ein nacktes `subprocess.Popen(["lp", path])`: kein Zielgerät, kein
@@ -164,7 +176,9 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       10×15 randlos via Gutenprint · „Druckt…"/Fehler-Overlay auf dem Boxschirm ·
       Button ausblenden wenn CUPS kein Ziel kennt · `Popen` einsammeln (aktuell
       ein Zombie-Prozess pro Druck) · Selphy-Einrichtung im README dokumentieren.
-      *Hardware-Gegenprüfung offen: Modul und Bildaufbereitung getestet, aber nie ein echter Selphy dran.*
+      *Teilweise belegt (24.08.): CUPS sieht den `Canon_SELPHY_CP1500`, Status `idle`,
+      Warteschlange leer. **Offen bleibt der Nachweis am Papier** — 10 Drucke am
+      Stück hat noch niemand gefahren. Deshalb weiter `[~]`.*
 
       **Stand 22.08. — Backend fertig, zwei Punkte offen.**
       Erledigt: `printing.py` kapselt alles (`list_printers`, `resolve_printer`,
@@ -238,7 +252,7 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       `event_session_hours` offen lässt — Vermietung über mehrere Tage und
       zwei Feiern am selben Tag mit gleichem Namen.
 
-- [~] **12. WLAN-Änderung im Admin greift nicht** — `frontend/src/pages/admin/AdminWifi.tsx:40`, `gallery_server.py:753-757`
+- [x] **12. WLAN-Änderung im Admin greift nicht** — `frontend/src/pages/admin/AdminWifi.tsx:40`, `gallery_server.py:753-757`
       Das Speichern schreibt SSID/Passwort in die Config, startet den Hotspot aber
       nie neu. Der Boxschirm zeigt binnen einer Sekunde die neue SSID (`ui.py`
       lädt die Config laufend nach), der AP sendet weiter die alte — die angezeigten
@@ -251,7 +265,8 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       raus ist, bevor der AP fällt (sonst sieht der Admin nur einen
       Verbindungsabbruch). Dazu serverseitige Prüfung: SSID 1–32 Byte,
       Passwort 8–63 Zeichen (WPA2), beides mit `400` statt stillem Durchwinken.
-      *Hardware-Gegenprüfung offen: Validierung getestet; der Hotspot-Neustart braucht echtes nmcli.*
+      *Auf dem Pi belegt (24.08.): `fotobox-hotspot` auf `wlan0` aktiviert, IP `192.168.4.1`,
+      Captive-Portal-DNS an Ort und Stelle.*
 
 - [x] **13. Google Fonts selbst hosten** — `frontend/index.html:19-24`
       Der Hotspot hat kein Internet, und dnsmasq leitet `fonts.googleapis.com` auf
@@ -263,14 +278,21 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       liefert das „gelöschte" Foto unbegrenzt weiter aus — und genau diese URL
       rendert `PhotoView.tsx:229`.
 
-- [ ] **15. `requirements.txt` pinnen** — *teilweise erledigt (22.08.)*
-      ~~Sieben Pakete, null Versionen.~~ Alle sieben sind jetzt per `~=` auf die
-      Minor-Version gepinnt, ein `install.sh` zieht also keinen neuen Major/Minor
-      mehr. **Offen:** exakte Pins gibt es bewusst noch nicht, weil die
-      Dev-Maschine (macOS/x86, py3.9) und das Pi (Linux/ARM, py3.11+)
-      unterschiedliche Wheels brauchen. In der Hardware-Phase auf dem Pi einmal
-      `venv/bin/pip freeze > requirements.pi.txt` laufen lassen und committen —
-      erst dann ist der Event-Tag wirklich reproduzierbar.
+- [x] **15. `requirements.txt` pinnen** — *erledigt (24.08.)*
+      ~~Sieben Pakete, null Versionen.~~ Alle acht sind per `~=` gepinnt, und
+      `requirements.pi.txt` hält jetzt zusätzlich die exakten Versionen fest,
+      mit denen die Box auf dem Pi nachweislich gelaufen ist.
+      *Zwei Funde aus dem Hardware-Lauf:*
+      (1) Ein volles `pip freeze` taugt hier **nicht** — das venv ist mit
+      `--system-site-packages` angelegt und zieht dann 307 Zeilen Debian-Pakete
+      mit, darunter ein `opencv==4.10.0` aus apt neben `opencv-python`.
+      `pip freeze --local` fällt ins andere Extrem und lässt `gpiozero`,
+      `pygame` und `qrcode` weg. Der Lockfile listet deshalb genau die acht
+      direkten Abhängigkeiten; welche davon aus apt kommen, steht im Kopf der Datei.
+      (2) `numpy~=2.0.2` hatte für Python 3.13 kein Wheel — pip hat es auf dem
+      Pi **20 Minuten lang aus dem Quelltext gebaut** und die Box dabei
+      lahmgelegt. Mit `numpy~=2.1.3` lädt es ein fertiges
+      `cp313-manylinux-aarch64`-Wheel und ist in 20 Sekunden durch.
 
 ---
 

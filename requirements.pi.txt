@@ -1,0 +1,33 @@
+# Exakte Versionen des Ziel-Pi — erzeugt am 24.08.2026 auf FotoboxRaspberry
+# (Debian trixie, Python 3.13.5, aarch64), gegengeprueft mit
+# scripts/smoke_test.py: 0 Fehler.
+#
+# Wozu: requirements.txt laesst per `~=` Patch-Updates zu. Das ist beim
+# Entwickeln richtig, am Event-Tag nicht — hier steht, womit die Box
+# nachweislich gelaufen ist.
+#
+# Absichtlich nur die acht direkten Abhaengigkeiten aus requirements.txt.
+# Ein volles `pip freeze` taugt hier NICHT: das venv ist mit
+# --system-site-packages angelegt, deshalb saugt es die kompletten
+# Debian-Pakete mit ein (307 Zeilen, darunter ein `opencv==4.10.0` aus apt,
+# das mit opencv-python kollidiert). `pip freeze --local` faellt ins andere
+# Extrem und laesst gpiozero, pygame und qrcode weg, obwohl die Box ohne sie
+# nicht startet.
+#
+# Aus apt bzw. dem User-Site kommen: gpiozero (python3-gpiozero), pygame
+# (python3-pygame), qrcode (~/.local). Die Zeilen stehen hier zur
+# Dokumentation des Ist-Zustands — installiert werden sie ueber das System.
+#
+# Verwendung auf einem frischen Pi:
+#     venv/bin/pip install -r requirements.pi.txt
+# Neu erzeugen nach einem bewussten Versionswechsel:
+#     venv/bin/pip freeze --local   # plus die drei Systempakete von Hand
+
+gpiozero==2.0.1
+pygame==2.6.1
+opencv-python==5.0.0.93
+numpy==2.1.3
+Flask==3.1.3
+waitress==3.0.2
+qrcode==8.2
+pillow==11.3.0
