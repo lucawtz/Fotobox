@@ -32,7 +32,11 @@ RuntimeDirectoryPreserve=yes
 StandardOutput=append:__INSTALL_DIR__/logs/fotobox.log
 StandardError=append:__INSTALL_DIR__/logs/fotobox.log
 KillSignal=SIGTERM
-TimeoutStopSec=10
+# Eine laufende Aufnahme (gphoto2 --capture-image-and-download) kann bis zu
+# 30 s dauern. Bei Stop/Neustart/Reboot mitten im Foto muss systemd so lange
+# warten, sonst wird gphoto2 hart gekillt und die Kamera haengt am USB (kommt
+# oft nur per Aus/An zurueck). 35 s = Capture-Timeout (30 s) + Reserve.
+TimeoutStopSec=35
 
 [Install]
 WantedBy=graphical.target
