@@ -17,6 +17,7 @@ import { api, EventInfo, OwnerLinks as Links, formatDate } from "../api";
 import TopBar from "../components/TopBar";
 import ViewToggle, { useGalleryView } from "../components/ViewToggle";
 import OwnerLinks from "../components/OwnerLinks";
+import CaptiveBanner from "../components/CaptiveNotice";
 
 const POLL_MS = 8000;
 
@@ -81,6 +82,8 @@ export default function Gallery() {
           flexDirection: "column",
         }}
       >
+        <CaptiveBanner />
+
         {maxAgeDays > 0 && items.length > 0 && (
           <Typography
             variant="caption"

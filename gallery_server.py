@@ -226,6 +226,50 @@ def _make_preview(event: str, filename: str) -> Optional[str]:
 # Erkannt wird das am Host-Header, nicht an einer Liste bekannter Probe-Pfade:
 # jede Anfrage, deren Host keine IP ist, kann nur ueber die DNS-Umleitung hier
 # gelandet sein. Das deckt auch Probe-URLs ab, die wir nicht kennen.
+#
+# Das Popup ist allerdings ein abgespeckter Mini-Browser (iOS: Captive Network
+# Assistant, Android: CaptivePortalLogin). Der kennt keine Downloads und kommt
+# nicht an die Fotos-App — ein Tipp auf "Speichern" schliesst dort nur das
+# Fenster, das Bild ist weg. Deshalb kann ein Geraet sich per
+# /api/captive/release freischalten: ab dann beantworten wir SEINE Probes mit
+# dem Erfolgs-Payload, den das OS sehen will. Das Handy wertet das WLAN als
+# "online", schliesst das Popup und laesst den Gast in den echten
+# Safari/Chrome — dort funktioniert Speichern.
+
+# Was das jeweilige OS an seiner Probe-URL lesen will, damit es die Verbindung
+# als offen ansieht. None = 204 ohne Body (Android/Chrome-Variante).
+_APPLE_SUCCESS = ("<HTML><HEAD><TITLE>Success</TITLE></HEAD>"
+                  "<BODY>Success</BODY></HTML>")
+_NM_SUCCESS = "NetworkManager is online\n"
+
+_PROBE_SUCCESS: dict[str, tuple[Optional[str], str]] = {
+    # iOS / macOS — erwartet exakt dieses Dokument, sonst bleibt das WLAN
+    # fuer das Geraet "captive" und das Popup kommt wieder.
+    "/hotspot-detect.html": (_APPLE_SUCCESS, "text/html"),
+    "/library/test/success.html": (_APPLE_SUCCESS, "text/html"),
+    # Android / Chrome OS
+    "/generate_204": (None, ""),
+    "/gen_204": (None, ""),
+    # Windows NCSI
+    "/connecttest.txt": ("Microsoft Connect Test", "text/plain"),
+    "/ncsi.txt": ("Microsoft NCSI", "text/plain"),
+    # Firefox
+    "/success.txt": ("success\n", "text/plain"),
+    "/canonical.html": ('<meta http-equiv="refresh" '
+                        'content="0;url=https://support.mozilla.org/kb/captive-portal"/>',
+                        "text/html"),
+    # NetworkManager auf Linux-Laptops
+    "/check_network_status.txt": (_NM_SUCCESS, "text/plain"),
+    "/nm-check.txt": (_NM_SUCCESS, "text/plain"),
+}
+
+# Kurz genug, dass eine per DHCP weitergereichte IP nicht den halben Abend
+# lang das Popup des naechsten Gastes unterdrueckt; lang genug, dass niemand
+# mitten in der Feier erneut durch die Portal-Schleife muss.
+_CAPTIVE_RELEASE_TTL_S = 3 * 3600
+_captive_released: dict[str, float] = {}
+_captive_lock = threading.Lock()
+
 
 def _looks_like_ip(host: str) -> bool:
     """Reine IPv4-Adresse? — IP-Aufrufe sind nie Captive-Portal-Probes."""
@@ -233,6 +277,57 @@ def _looks_like_ip(host: str) -> bool:
     if len(parts) != 4:
         return False
     return all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+
+
+def _client_ip() -> str:
+    """Hinter Hotspot/lokal — kein Proxy, remote_addr reicht.
+
+    Im Hotspot ist die DHCP-Adresse die Geraete-Identitaet. Ein Cookie taugt
+    dafuer nicht: die Captive-Probes kommen aus dem OS-Netzwerkstack, nicht
+    aus dem Browser, und teilen mit ihm keinen Cookie-Jar.
+    """
+    return request.remote_addr or "unknown"
+
+
+def _captive_release(ip: str) -> None:
+    # Ohne echte Adresse gibt es keine Geraete-Identitaet: eine Freigabe auf
+    # den Sammel-Key "unknown" wuerde fuer alle gelten. Dann lieber nicht.
+    if not ip or ip == "unknown":
+        return
+    now = time.time()
+    with _captive_lock:
+        # Abgelaufenes gleich mit rauswerfen — sonst waechst der Dict ueber
+        # eine ganze Vermietsaison mit jedem Geraet weiter.
+        for known, expiry in list(_captive_released.items()):
+            if expiry <= now:
+                del _captive_released[known]
+        _captive_released[ip] = now + _CAPTIVE_RELEASE_TTL_S
+
+
+def _captive_is_released(ip: str) -> bool:
+    if not ip or ip == "unknown":
+        return False
+    with _captive_lock:
+        expiry = _captive_released.get(ip, 0.0)
+        if expiry <= time.time():
+            _captive_released.pop(ip, None)
+            return False
+    return True
+
+
+def _probe_success(path: str) -> Response:
+    body, mime = _PROBE_SUCCESS.get(path, (None, ""))
+    if body is None:
+        resp = Response(status=204)
+    else:
+        resp = Response(body, status=200, mimetype=mime)
+    # NetworkManager liest den Status auch aus dem Header, nicht nur aus dem
+    # Body. Fuer die anderen Prober ist er schlicht ein unbekannter Header.
+    resp.headers["X-NetworkManager-Status"] = "online"
+    # Ohne das merkt sich das Geraet die Antwort und wir verlieren die
+    # Kontrolle darueber, wann das Popup wiederkommt.
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.before_request
@@ -246,12 +341,35 @@ def _captive_portal_redirect():
     if not host or _looks_like_ip(host) or host == "localhost" or host.endswith(".local"):
         return None
     # Hierher kommen wir nur via DNS-Hijack (Hostname statt IP).
+    probe = request.path.lower() in _PROBE_SUCCESS
+    if probe and _captive_is_released(_client_ip()):
+        return _probe_success(request.path.lower())
     # gallery_url enthält Port (oder lässt 80 weg) — entscheidend wenn
     # der Server beim preflight() auf 5000 zurückgefallen ist.
     target = config.cfg.get("gallery_url") or (
         f"http://{config.cfg.get('hotspot_ip', '192.168.4.1')}")
-    from flask import redirect
-    return redirect(f"{target.rstrip('/')}/", code=302)
+    target = target.rstrip("/") + "/"
+    # Ein Redirect aus einer Probe heraus landet im Popup-Browser, nicht in
+    # Safari. Andere Hostnamen tippt der Gast selbst — die kommen im echten
+    # Browser an. Das Flag unterscheidet beides fuer die Galerie, die im
+    # Popup den Hinweis zum Wechsel einblendet (frontend/src/captive.ts).
+    if probe:
+        target += "?cna=1"
+    return redirect(target, code=302)
+
+
+@app.route("/api/captive/release", methods=["POST"])
+def api_captive_release():
+    """Der Gast hat im Popup "Im Browser öffnen" getippt.
+
+    Ab jetzt sagen wir seinem Handy an den Probe-URLs, das WLAN sei online.
+    iOS schliesst daraufhin das Popup und behaelt das WLAN, statt es beim
+    naechsten Check als "kein Internet" fallen zu lassen.
+    """
+    ip = _client_ip()
+    _captive_release(ip)
+    logger.info("Captive-Portal freigegeben für %s", ip or "unbekannt")
+    return jsonify(ok=True, ttl=_CAPTIVE_RELEASE_TTL_S)
 
 
 # ── Galerie-Routen ─────────────────────────────────────────────────────────────
@@ -1143,11 +1261,6 @@ def _api_admin_required(f):
 def api_admin_me():
     role = _session_role()
     return jsonify(authenticated=bool(role), role=role)
-
-
-def _client_ip() -> str:
-    # Hinter Hotspot/lokal — kein Proxy. addr reicht.
-    return request.remote_addr or "unknown"
 
 
 def _login_check_locked(ip: str) -> Optional[int]:

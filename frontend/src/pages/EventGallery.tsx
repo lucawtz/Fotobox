@@ -30,6 +30,8 @@ import PhotoTile from "../components/PhotoTile";
 import ViewToggle, { useGalleryView } from "../components/ViewToggle";
 import KindFilter from "../components/KindFilter";
 import OwnerLinks from "../components/OwnerLinks";
+import CaptiveBanner, { CaptiveDialog } from "../components/CaptiveNotice";
+import { isCaptivePopup } from "../captive";
 
 const POLL_MS = 8000;
 
@@ -123,12 +125,18 @@ export default function EventGallery() {
 
   const handleDownload = () => {
     if (!folder || shown.length === 0) return;
+    // Im WLAN-Anmeldefenster gibt es keine Downloads: das ZIP wuerde dort
+    // kommentarlos verpuffen. Also erst den Weg in den richtigen Browser
+    // anbieten (siehe captive.ts).
+    if (isCaptivePopup()) { setCaptiveAsk(true); return; }
     // Was gefiltert auf dem Schirm steht, kommt auch so aus dem ZIP.
     window.location.href = api.zipUrl(folder, hasCollages ? kind : "alle");
   };
 
   const subtitle = loading ? "Lade…"
                  : `${shown.length} Bild${shown.length === 1 ? "" : "er"}${eventDate ? ` · ${formatDate(eventDate)}` : ""}`;
+
+  const [captiveAsk, setCaptiveAsk] = useState(false);
 
   const [view, setView] = useGalleryView("photos", "grid");
 
@@ -272,6 +280,10 @@ export default function EventGallery() {
           flexDirection: "column",
         }}
       >
+        <Box sx={{ px: { xs: 1.25, sm: 3 }, pt: { xs: 1.25, sm: 2 } }}>
+          <CaptiveBanner />
+        </Box>
+
         {/* Eigene Zeile statt in die Kopfleiste: dort draengeln sich schon
             Zurueck, Ansicht, ZIP und Aktualisieren, und drei Filterknoepfe
             mit Zahl passen auf einem Handy nicht mehr daneben. */}
@@ -435,6 +447,8 @@ export default function EventGallery() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <CaptiveDialog open={captiveAsk} onClose={() => setCaptiveAsk(false)} />
     </Box>
   );
 }

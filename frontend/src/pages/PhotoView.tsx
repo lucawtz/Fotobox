@@ -23,6 +23,8 @@ import "swiper/css/zoom";
 
 import { api, matchesFilter, Photo, photoKey } from "../api";
 import DeleteDialog from "../components/DeleteDialog";
+import { CaptiveDialog } from "../components/CaptiveNotice";
+import { isCaptivePopup } from "../captive";
 
 export default function PhotoView() {
   const { event, filename } = useParams<{ event: string; filename: string }>();
@@ -32,6 +34,7 @@ export default function PhotoView() {
   const [loading, setLoading] = useState(true);
   const [confirmDel, setConfirmDel] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [captiveAsk, setCaptiveAsk] = useState(false);
   const swiperRef = useRef<SwiperType | null>(null);
 
   useEffect(() => {
@@ -79,6 +82,16 @@ export default function PhotoView() {
   };
 
   const backTo = event ? `/event/${encodeURIComponent(event)}` : "/";
+
+  // Das WLAN-Anmeldefenster (iOS "Captive WLAN", Android CaptivePortalLogin)
+  // kann weder herunterladen noch in die Fotos-App schreiben: der Tipp auf
+  // Speichern schliesst dort nur das Fenster, das Bild ist weg. Also den
+  // Download gar nicht erst starten, sondern den Weg in den richtigen
+  // Browser anbieten (captive.ts).
+  const captive = isCaptivePopup();
+  const onSave = captive
+    ? (e: React.MouseEvent) => { e.preventDefault(); setCaptiveAsk(true); }
+    : undefined;
 
   // Esc schliesst die Detailansicht. Swiper belegt per Keyboard-Modul nur die
   // Pfeiltasten; Esc lief bisher ins Leere, obwohl die Ansicht als Vollbild-
@@ -196,6 +209,7 @@ export default function PhotoView() {
           <IconButton
             component="a"
             href={api.downloadUrl(current)}
+            onClick={onSave}
             sx={{ color: "#fff", display: { xs: "none", sm: "inline-flex" } }}
             aria-label="Herunterladen"
           >
@@ -236,6 +250,7 @@ export default function PhotoView() {
           label="Speichern"
           component="a"
           href={api.downloadUrl(current)}
+          onClick={onSave}
         />
         <BottomAction
           icon={<DeleteOutlineRoundedIcon />}
@@ -310,6 +325,8 @@ export default function PhotoView() {
         </>
       )}
 
+      <CaptiveDialog open={captiveAsk} onClose={() => setCaptiveAsk(false)} />
+
       <DeleteDialog
         open={confirmDel}
         photo={current}
@@ -334,7 +351,7 @@ export default function PhotoView() {
 interface BottomActionProps {
   icon: React.ReactNode;
   label: string;
-  onClick?: () => void;
+  onClick?: (e: React.MouseEvent) => void;
   href?: string;
   component?: "button" | "a";
   danger?: boolean;
