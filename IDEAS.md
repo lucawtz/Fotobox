@@ -52,6 +52,41 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
   und darf nicht zweite, unabhängige Einstellung werden — sonst sind
   Stil und Anzahl irgendwann widersprüchlich eingestellt.
 
+- **Standbild-Dauer im Admin-Panel einstellbar** — *notiert 24.08.2026*
+  *Heute:* Sobald gphoto2 für die Aufnahme das USB-Gerät übernimmt, endet der
+  Live-View, und die Kamera legt ihr eigenes Aufnahmemenü auf HDMI. Die Box
+  zeigt deshalb währenddessen das letzte echte Live-Bild weiter — aber
+  höchstens `UI._LIVE_HOLD_S = 8.0` (`ui.py:907`), danach kommt wieder
+  „Bitte Display an der Kamera einschalten". Die Zahl steht fest im Code.
+  *Warum verstellbar:* Acht Sekunden sind gegen die heutige Aufnahmedauer
+  gerechnet (gut zwei Sekunden) plus Reserve für den halbstündlichen Wechsel
+  der Halte-Sitzung. Beides verschiebt sich mit anderer Kamera, anderem Kabel
+  oder anderer Collage-Länge, und dann ist die richtige Zahl eine andere —
+  heute hieße das eine Code-Änderung und ein Deploy.
+  *Wo das landet:* ein Feld in `config._DEFAULTS` (`config.py`) neben den
+  anderen Kamera-Werten, durchgereicht wie `camera_hold_session_s`.
+  Bedienelement im Admin-Panel unter `frontend/src/pages/admin/`, und `UI`
+  liest den Wert aus der Config statt aus der Klassenkonstante.
+  *Offen bleibt:*
+  (1) **Wem der Wert gehört.** `countdown_duration` steht in `_MIETER_FIELDS`
+  (`config.py:16`), weil der Gastgeber ihn sinnvoll wählen kann. Die
+  Standbild-Dauer ist dagegen eine Eigenschaft der Hardware, nicht des Abends:
+  sie hängt daran, wie lange *diese* Kamera für eine Aufnahme braucht. Dann
+  gehört sie zu den box-spezifischen Einstellungen und in den Wartungs-Teil
+  des Panels — nicht neben Eventname und Countdown.
+  (2) **Eine Zahl oder mehrere.** In derselben Ecke stehen zwei weitere feste
+  Werte: `_LAECHELN_MAX_MS` (`ui.py:1500`, wie lange „Lächeln!" auf ein
+  ausbleibendes Auslöse-Signal wartet) und `capture_lead_s` (`config.py`,
+  schon konfigurierbar, aber nirgends im Panel). Drei einzelne Regler für
+  Dinge, die alle an derselben Kameraverzögerung hängen, wären drei
+  Gelegenheiten, sie widersprüchlich einzustellen. Vielleicht ist der
+  ehrlichere Schnitt ein einziger Wert — „wie träge ist diese Kamera" — aus
+  dem die Box den Rest ableitet.
+  (3) **Obergrenze.** Ein eingefrorenes Bild sieht aus wie ein lebendes. Wer
+  60 Sekunden einstellt, baut sich eine Box, die bei toter Kamera minutenlang
+  behauptet, alles sei in Ordnung. Das Feld braucht eine Grenze, und die
+  Begründung dafür gehört an das Bedienelement.
+
 - **Vorlagen-Layer (Rahmen, Eventname, Logo aufs Bild)**
   *Heute:* Was aus dem Drucker kommt, ist ein nacktes Foto — Branding gibt es
   nur auf dem Boxschirm und in der Galerie. Ein PNG mit Alphakanal, das
