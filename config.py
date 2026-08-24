@@ -149,6 +149,22 @@ _DEFAULTS: dict = {
     # — die Luft ist hier Absicht, kein uebrig gebliebener Platz.
     # Die Breite bleibt Reserve fuer breitere Formate.
     "live_view_rect": [345, 539, 1160, 450],
+    # Format, auf das die Live-Vorschau zugeschnitten wird — NICHT das Format
+    # des Fotos, das bleibt, was die Kamera aufnimmt.
+    #
+    # Ohne Zuschnitt bestimmt die Quelle die Breite, und weil die Hoehe bindet,
+    # blieb von den 1160 px der Box viel ungenutzt: ein 3:2-Signal kam auf
+    # 675x450 und liess 485 px liegen. Mit 16:9 sind es 800x450.
+    #
+    # Beschnitten wird nur die VORSCHAU, nie das Foto: der Gast sieht weniger,
+    # als die Kamera aufnimmt. Der Zuschnitt geht damit in die sichere
+    # Richtung — wer in die Vorschau passt, passt garantiert aufs Bild.
+    # Umgekehrt waere es fatal.
+    #
+    # Breiter geht, kostet aber Vorschauhoehe: bei 2:1 sind es 900x450 und
+    # ein Viertel der Bildhoehe. Bei Ganzkoerper-Aufnahmen sieht der Gast dann
+    # wenig von sich. null = kein Zuschnitt, die Quelle bestimmt das Format.
+    "live_view_aspect": [16, 9],
     "instagram_url": "https://www.instagram.com/lucawtz",
     # Instagrams eigener QR-Code, in der App im eigenen Profil exportierbar.
     # Leer = ui.py zeichnet stattdessen das Instagram-Glyph.

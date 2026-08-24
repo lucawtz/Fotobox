@@ -868,27 +868,74 @@ class UI:
     # der Rahmen beim Start aus wie ein Briefkasten statt wie ein Monitor.
     _LIVE_FALLBACK_ASPECT = 16 / 9
 
+    def _target_aspect(self) -> Optional[float]:
+        """Format, auf das die Vorschau zugeschnitten wird — None = keins.
+
+        Kommt aus live_view_aspect. Kaputte Werte werden verworfen statt zu
+        einer Division durch Null zu fuehren; ohne Zuschnitt sieht die
+        Vorschau nur schmaler aus, mit einem Absturz waere der Abend vorbei.
+        """
+        raw = self._cfg.get("live_view_aspect")
+        if not raw:
+            return None
+        try:
+            w, h = raw
+            if w > 0 and h > 0:
+                return w / h
+        except (TypeError, ValueError):
+            pass
+        logger.warning("live_view_aspect ist unbrauchbar (%r) — Vorschau "
+                       "bleibt im Format der Quelle", raw)
+        return None
+
     def _live_geometry(self):
         """(Rect, Bild oder None, Meldung oder None).
 
-        Das Rect ist der Ausschnitt von _live_box, den das Kamerabild
-        seitenverhaeltnistreu wirklich fuellt, zentriert auf dessen Mitte.
+        Mit live_view_aspect steht das Rect fest, egal was die Quelle
+        liefert — das Bild wird darauf zugeschnitten. Dadurch springt der
+        Rahmen auch bei Signalverlust nicht mehr.
 
-        Bei Signalverlust behaelt der Rahmen das zuletzt gesehene Format,
-        statt auf die Fallback-Form zu springen: ein kurz gezogenes
-        HDMI-Kabel liesse ihn sonst sichtbar die Groesse wechseln.
+        Ohne Zielformat bestimmt die Quelle das Rect wie zuvor; bei
+        Signalverlust behaelt es dann das zuletzt gesehene Format, statt
+        auf die Fallback-Form zu springen: ein kurz gezogenes HDMI-Kabel
+        liesse den Rahmen sonst sichtbar die Groesse wechseln.
         """
-        box = self._live_box()
+        box    = self._live_box()
+        target = self._target_aspect()
         frame, msg = self._live_frame_rgb()
-        if frame is None:
-            return self._fit_rect(box, self._live_aspect), None, msg
 
-        fh, fw = frame.shape[:2]
-        self._live_aspect = fw / fh
-        rect  = self._fit_rect(box, self._live_aspect)
+        if frame is None:
+            return (self._fit_rect(box, target or self._live_aspect),
+                    None, msg)
+
+        if target is None:
+            fh, fw = frame.shape[:2]
+            self._live_aspect = fw / fh
+            rect = self._fit_rect(box, self._live_aspect)
+        else:
+            rect  = self._fit_rect(box, target)
+            frame = self._crop_to_aspect(frame, rect.w / rect.h)
+
         frame = cv2.resize(frame, (rect.w, rect.h),
                            interpolation=cv2.INTER_LINEAR)
         return rect, self._live_surface(frame, rect.w, rect.h), None
+
+    @staticmethod
+    def _crop_to_aspect(frame, target: float):
+        """Mittiger Ausschnitt im Zielformat.
+
+        Schneidet je nach Quelle oben/unten oder links/rechts weg. Gibt
+        einen numpy-View zurueck, keine Kopie — cv2.resize kommt damit
+        klar, und auf dem Pi spart das eine Kopie je Frame.
+        """
+        h, w = frame.shape[:2]
+        if w > h * target:
+            nw = max(1, int(round(h * target)))
+            x0 = (w - nw) // 2
+            return frame[:, x0:x0 + nw]
+        nh = max(1, int(round(w / target)))
+        y0 = (h - nh) // 2
+        return frame[y0:y0 + nh, :]
 
     @staticmethod
     def _fit_rect(box: pygame.Rect, aspect: float) -> pygame.Rect:
