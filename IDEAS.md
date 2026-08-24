@@ -407,6 +407,75 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
   Transfer — sonst ersetzt ein halb hochgeladener Ordner den vollständigen auf
   der SD-Karte, und das fällt erst auf, wenn niemand mehr etwas retten kann.
 
+- **Bilder direkt in die Cloud sichern, statt erst am Ende**
+  *Heute:* Jedes Bild existiert genau einmal — auf der SD-Karte des Pi.
+  `camera.capture` (`camera.py:200`) schreibt `foto_<ms>.jpg` in den
+  Event-Ordner, `make_collage` legt die fertige Collage daneben, und das war
+  es. Geht die Karte kaputt, wird die Box gestohlen oder rutscht sie vom
+  Tisch, ist der Abend weg. Gleichzeitig räumt `disk_monitor` selbsttätig
+  auf: nach `photo_max_age_days` (7) und ab `max_photos` (500) löscht die
+  Box vor jeder Aufnahme ältere Bilder (`main.py:385-397`) — die einzige
+  Kopie also, ohne dass jemand zustimmt.
+  *Die Idee:* Sobald ein Bild fertig ist, schiebt die Box es hoch — Nextcloud,
+  WebDAV, S3, Google Drive, was auch immer. Nicht als Aktion am Ende des
+  Abends, sondern als Nebenläufigkeit während des Betriebs.
+  *Warum das mehr ist als Backup:* Liegen die Bilder schon oben, während die
+  Feier läuft, kann der Gastgeber sie am nächsten Morgen abrufen, ohne dass
+  jemand einen USB-Stick eingesteckt hat — und die Frage „darf die Box
+  löschen?" beantwortet sich von selbst, weil eine zweite Kopie existiert.
+  Aus dem Aufräumen von `disk_monitor` wird damit vom Datenverlust ein
+  reines Platzschaffen.
+  *Der Haken, der alles bestimmt — es gibt kein Internet:* Die Box *ist* der
+  Access-Point (`hotspot_enabled: True`, `config.py:93`), `hotspot.py` legt
+  `wlan0` als AP an und trennt in `_free_interface` (`hotspot.py:102`) sogar
+  bestehende Client-Verbindungen auf demselben Interface. „Direkt in die
+  Cloud" heißt also zuerst: **Uplink besorgen** — zweites WLAN-Interface,
+  LTE-Stick, Tethering oder Ethernet. Das ist exakt dieselbe Vorbedingung wie
+  bei der Fernwartung darunter; wer den einen Punkt baut, hat den anderen zur
+  Hälfte mit.
+  *Der ehrliche Ausweg, falls kein Uplink kommt:* Ein Ausgangskorb, der beim
+  nächsten Start im Heim-WLAN abgearbeitet wird. Dann ist es kein „direkt"
+  mehr, aber der Gastgeber und die Box müssen am Eventabend nichts tun und
+  niemand denkt um drei Uhr nachts an einen Stick. Für den Datenverlust
+  während der Feier hilft das allerdings nicht — genau dafür ist der Upload
+  gedacht.
+  *Wo das im Code hängt:* Auf keinen Fall in `_capture_sequence`
+  (`main.py:91`) oder `_do_countdown` — dort wartet der Gast bereits auf
+  gphoto2, und ein Upload im selben Pfad legt die 30-fps-Renderschleife
+  (`main.py:465`) für die Dauer der Netzverbindung still. Der Upload gehört
+  in einen eigenen Thread mit Warteschlange, so wie `camera.py` den Watchdog
+  nebenher laufen lässt. **Ein Netzfehler darf den Auslöser nie erreichen.**
+  *Abgrenzung:* Nicht dasselbe wie „Der Gastgeber bekommt am Ende alles"
+  darüber (Übergabe an den Kunden, einmalig, mit Löschsperre) und nicht
+  dasselbe wie das automatische Backup (rsync/NAS) in der Roadmap (P3,
+  Sicherung im Heimnetz). Der Unterschied ist der Zeitpunkt: hier fällt die
+  Kopie während des Events an, nicht danach. Wahrscheinlich sind alle drei am
+  Ende **ein** Transportmechanismus mit drei Zielen — und genau so sollte man
+  es bauen, statt drei Uploader nebeneinander zu pflegen.
+  *Offen bleibt:*
+  (1) **Wessen Cloud?** Ein eigener Server heißt Pflegeaufwand, ein
+  Fremddienst heißt Abhängigkeit und Zugangsdaten. Bei Vermietung liegen die
+  Bilder sonst im Konto des Box-Besitzers, obwohl es die Gäste des Mieters
+  sind — dann eher pro Event ein Ziel, das der Gastgeber selbst hinterlegt.
+  (2) **Zugangsdaten auf einer vermieteten Box.** Ein Token in `config.json`
+  liegt auf einer SD-Karte, die den ganzen Abend in fremder Hand ist. Nicht
+  in `_MIETER_FIELDS` (`config.py:16-26`) aufnehmen, ohne vorher zu klären,
+  wer es lesen darf — und in `HANDOVER_FIELDS`, damit „Box vorbereiten" es
+  für den nächsten Mieter löscht.
+  (3) **Datenschutz.** Gästefotos verlassen das Gerät, und zwar während die
+  Leute noch davorstehen. Das gehört in die Absprache mit dem Mieter und
+  sichtbar ins Panel, nicht in ein stilles Häkchen.
+  (4) **Was gilt als „gesichert"?** Erst nach bestätigtem Upload darf
+  `disk_monitor` das lokale Bild wegräumen — sonst löscht die Automatik ein
+  Foto, dessen Upload nur halb durchging.
+  (5) **Was wird hochgeladen?** Nur die Collage oder auch die vier
+  Einzelaufnahmen (`collage_<gid>_n.jpg`)? Alles ist ehrlicher, kostet aber
+  das Fünffache an Datenvolumen — auf einem LTE-Tarif ist das der
+  Unterschied zwischen läuft und läuft nicht.
+  (6) **Sichtbarkeit.** Fällt der Upload den ganzen Abend still aus, darf das
+  nicht erst am nächsten Tag auffallen. Eine Zeile im Admin-Panel — „12 von
+  87 Bildern warten" — ist der Mindestpreis dafür.
+
 - **Fernwartung: an die vermietete Box kommen, ohne hinzufahren**
   *Der Anlass:* Steht die Box beim Mieter und klemmt etwas, ist die einzige
   Antwort heute Hinfahren. Ein Fernzugang wäre die Abkürzung.

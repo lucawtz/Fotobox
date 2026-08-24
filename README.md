@@ -227,6 +227,27 @@ kommt und leitet dann selbst weiter. Klappt das nicht, erklärt sie stattdessen
 den Weg (WLAN trennen / mobile Daten an), statt den Gast im Fehler stehen zu
 lassen.
 
+### Warum die Galerie aus dem WLAN-Fenster herausführt
+
+Weil der Hijack auch die Verbindungstests der Handys abfängt, öffnet iOS bzw.
+Android nach dem Verbinden von selbst ein Anmeldefenster mit der Galerie darin
+(iOS: „Captive WLAN“). Bequem — der Gast muss keinen QR-Code scannen und keine
+Adresse tippen.
+
+Dieses Fenster ist aber ein abgespeckter Browser: **keine Downloads, kein
+Zugriff auf die Fotos-App**. Ein Tipp auf „Speichern“ schließt dort nur das
+Fenster, das Bild ist weg.
+
+Deshalb blendet die Galerie im Anmeldefenster einen Hinweis ein, und
+„Speichern“ bzw. der ZIP-Download bieten dort erst den Wechsel an. Der läuft
+über `POST /api/captive/release`: die Box merkt sich die IP des Geräts und
+beantwortet **dessen** Verbindungstests (`/hotspot-detect.html`,
+`/generate_204`, …) ab dann mit „online“. Das Handy sieht das Portal als
+erledigt an, schließt das Fenster und behält das WLAN, statt es als tot zu
+verwerfen — und der Gast ist in Safari/Chrome, wo Speichern funktioniert.
+Die Freigabe gilt 3 Stunden pro Gerät; andere Hostnamen landen weiterhin in
+der Galerie, damit `fotobox.box` auch danach noch funktioniert.
+
 ### Instagram-QR
 
 `instagram_qr_path` nimmt den Code, den Instagram im eigenen Profil zum Export
