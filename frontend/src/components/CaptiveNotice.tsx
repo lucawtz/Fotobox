@@ -13,6 +13,7 @@ import {
 } from "@mui/material";
 import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
 import WifiRoundedIcon from "@mui/icons-material/WifiRounded";
+import { BrandLogo } from "./TopBar";
 import {
   galleryAddress, isCaptivePopup, isIOS, landingSeen, leaveCaptivePopup,
   markLandingSeen,
@@ -202,11 +203,12 @@ export function CaptiveLanding({ onSkip }: { onSkip: () => void }) {
     return () => { alive = false; };
   }, []);
 
+  // Keine eigene Rundung: das Theme gibt Buttons ohnehin borderRadius 999,
+  // und die Seite soll aussehen wie die Galerie dahinter.
   const btn = {
     py: 1.75,
     fontSize: "1.05rem",
     fontWeight: 600,
-    borderRadius: 0,
     textTransform: "none" as const,
   };
 
@@ -214,22 +216,28 @@ export function CaptiveLanding({ onSkip }: { onSkip: () => void }) {
     <Dialog open fullScreen>
       {leaving ? <FinishingView /> : (
         <Box sx={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
+          {/* Heller Grund wie im Galerie-Header. Das Logo bringt seinen
+              eigenen blauen Verlauf mit — auf einer farbigen Flaeche
+              verschwindet es darin. */}
           <Box
             sx={{
-              bgcolor: "primary.main",
-              color: "primary.contrastText",
               px: 3,
               pt: { xs: 6, sm: 8 },
-              pb: { xs: 5, sm: 6 },
+              pb: { xs: 4, sm: 5 },
               textAlign: "center",
             }}
           >
-            <WifiRoundedIcon sx={{ fontSize: 44, opacity: 0.9, mb: 1 }} />
+            {/* Dasselbe Element wie im Galerie-Header: gleiches Logo,
+                gleicher Rueckfall (fehlt die Datei, blendet es sich aus
+                statt ein Fragezeichen zu zeigen). */}
+            <Box sx={{ display: "flex", justifyContent: "center", mb: 1.5 }}>
+              <BrandLogo size={{ xs: 56, sm: 64 }} />
+            </Box>
             <Typography variant="h4" sx={{ fontWeight: 700, letterSpacing: "-.02em" }}>
               Fotobox
             </Typography>
             {count !== null && (
-              <Typography sx={{ opacity: 0.85, mt: 0.5 }}>
+              <Typography color="text.secondary" sx={{ mt: 0.5 }}>
                 {count} {count === 1 ? "Foto" : "Fotos"}
               </Typography>
             )}

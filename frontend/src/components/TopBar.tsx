@@ -18,7 +18,7 @@ interface Props {
  * hochgeladene Logo. Wenn die Datei fehlt, wird das Bild ausgeblendet
  * statt das Browser-Fragezeichen anzuzeigen.
  */
-function BrandLogo({ size }: { size: { xs: number; sm: number } }) {
+export function BrandLogo({ size }: { size: { xs: number; sm: number } }) {
   const [hidden, setHidden] = useState(false);
   if (hidden) return null;
   return (

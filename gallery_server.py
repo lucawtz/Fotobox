@@ -597,6 +597,11 @@ _TOP_LEVEL_STATIC = {
     "favicon-512.png":        "image/png",
     "apple-touch-icon.png":   "image/png",
     "manifest.webmanifest":   "application/manifest+json",
+    # Das Logo des Box-Besitzers, das TopBar und die Anmeldeseite zeigen.
+    # Es fehlte hier — die Datei lag in dist/, die Route nicht in dieser
+    # Liste, und der Browser bekam 404. Sichtbar wurde das nie: BrandLogo
+    # blendet sich bei einem Fehler aus, statt ein Fragezeichen zu zeigen.
+    "logo-mark.svg":          "image/svg+xml",
 }
 
 
