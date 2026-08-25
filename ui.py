@@ -2888,27 +2888,33 @@ class UI:
         self._draw_social_links(cx, hint_y + hint.get_height() + 16)
 
     def _qr_caption(self) -> str:
-        """Beschriftung unter dem Code — zugleich die Anleitung.
+        """Beschriftung unter dem Code — Ziel zuerst, dann die Bedingung.
 
-        Der Code traegt den Galerie-Link. Wer ihn scannt, ohne im WLAN zu
-        sein, bekommt eine Fehlerseite von Safari und keinen Hinweis, was
-        fehlt — deshalb steht die Reihenfolge hier, und zwar bevor er
-        scannt. Die Zeile zeigt nach unten auf die WLAN-Box, wo SSID und
-        Passwort stehen.
+        Hier stand nur "Erst WLAN, dann scannen". Das erklaert die
+        Reihenfolge, sagt aber nicht, wohin der Code fuehrt — der Gast
+        weiss nach dem Lesen, was er tun soll, und nicht, wofuer. Deshalb
+        steht die Galerie jetzt vorn.
+
+        Der Hinweis bleibt trotzdem dahinter: der Code traegt den
+        Galerie-Link, und wer ihn ohne WLAN scannt, bekommt eine
+        Fehlerseite von Safari und keinen Hinweis, was fehlt. Die Zeile
+        zeigt dabei nach unten auf die WLAN-Box, wo SSID und Passwort
+        stehen.
 
         Eine Zeile, keine zwei: in der Sidebar sind 503 px verfuegbar und
         503 px gebraucht (_qr_group_bounds). Was hier dazukommt, nimmt der
-        Instagram-Code seine 130 px — das ist heute schon zweimal
-        passiert. Die ausfuehrliche Fassung steht auf dem Ergebnis-Schirm,
-        der Platz hat (_wifi_hint).
+        Instagram-Code seine 130 px — das ist schon zweimal passiert.
+        Gemessen sind es 263 px bei 280 verfuegbaren, es bleibt also bei
+        einer Zeile. Die ausfuehrliche Fassung steht auf dem
+        Ergebnis-Schirm, der Platz hat (_wifi_hint).
 
         Ohne eigenen Hotspot haengt die Box in einem fremden Netz, in dem
-        der Gast ohnehin schon steckt. Dann waere die Reihenfolge eine
-        Belehrung ohne Anlass.
+        der Gast ohnehin schon steckt. Dann faellt die Bedingung weg und
+        es bleibt beim blossen Ziel.
         """
         if self._cfg.get("hotspot_enabled", True):
-            return "Erst WLAN, dann scannen"
-        return "Fotos auf's Handy"
+            return "Galerie — erst ins WLAN"
+        return "Fotos aufs Handy"
 
     def _social_rows(self) -> list:
         """[(icon_type, zeile1, zeile2|None, qr_surface|None)]."""
