@@ -468,7 +468,10 @@ class Camera:
     def _run_capture(self, filename: str, directory: str, on_shutter):
         """Startet gphoto2 und meldet den Ausloesemoment, sobald er kommt.
 
-        Rueckgabe: (Returncode, gesammelte Ausgabe).
+        Rueckgabe: (Returncode, gesammelte Ausgabe, Zeitmarken). Die
+        Zeitmarken sind monotone Sekunden: "start" der Prozessstart,
+        "shutter" der Moment der Marker-Zeile oder None, wenn sie ausblieb.
+        Ausgewertet werden sie in _log_capture_timing.
 
         Statt subprocess.run, weil hier die Ausgabe waehrend des Laufs
         gebraucht wird und nicht erst danach — subprocess.run gibt sie
@@ -486,6 +489,7 @@ class Camera:
         if self._stdbuf:
             cmd = [self._stdbuf, "-oL"] + cmd
 
+        marks = {"start": time.monotonic(), "shutter": None}
         proc = subprocess.Popen(
             cmd, cwd=directory, text=True, bufsize=1,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -496,7 +500,14 @@ class Camera:
         def _read():
             for line in proc.stdout:
                 lines.append(line.rstrip())
-                if on_shutter is None or self._SHUTTER_MARKER not in line:
+                if self._SHUTTER_MARKER not in line:
+                    continue
+                # Zeitmarke auch dann, wenn niemand auf den Moment wartet:
+                # sie ist die einzige Stelle, an der die Verzoegerung dieser
+                # Kamera ueberhaupt messbar wird.
+                if marks["shutter"] is None:
+                    marks["shutter"] = time.monotonic()
+                if on_shutter is None:
                     continue
                 try:
                     on_shutter()
@@ -516,7 +527,29 @@ class Camera:
             # kill kann das einen Wimpernschlag dauern, deshalb ueberhaupt ein
             # join — und deshalb einer mit Grenze.
             reader.join(timeout=2.0)
-        return proc.returncode, "\n".join(lines)
+        return proc.returncode, "\n".join(lines), marks
+
+    def _log_capture_timing(self, t_req: float, t_dark: float,
+                            marks: dict) -> None:
+        """Schreibt die Zahlen ins Log, an denen das Standbild haengt.
+
+        Waehrend einer Aufnahme zeigt die Box zwangslaeufig ein eingefrorenes
+        Bild: gphoto2 braucht das USB-Geraet exklusiv, der Halte-Prozess
+        stirbt dafuer, und damit ist der Live-View der Kamera aus. Das
+        Standbild steht also schon, bevor der Verschluss faellt.
+
+        Wie lang, ist eine Eigenschaft der Kamera und nicht der Software —
+        auf der EOS 700D per EXIF gemessen rund 1,1 s, beim ersten Schuss
+        nach Ruhe eher 1,9 s. An genau dieser Zahl haengt capture_lead_s.
+        Wer sie fuer seine Kamera wissen will, liest sie hier ab, statt sie
+        zu schaetzen.
+        """
+        shutter = marks.get("shutter")
+        blind = "?" if shutter is None else f"{shutter - t_dark:.2f}"
+        logger.info(
+            "Aufnahme-Zeiten: Geraet frei nach %.2f s, Standbild %s s vor "
+            "dem Verschluss, Bild geladen nach %.2f s",
+            t_dark - t_req, blind, time.monotonic() - t_req)
 
 
     def capture(self, directory: str, on_shutter=None) -> str:
@@ -542,6 +575,9 @@ class Camera:
         before = set(os.listdir(directory))
 
         self._capturing = True
+        t_req = time.monotonic()
+        t_dark = None
+        marks: dict = {}
         try:
             # Nicht unbegrenzt auf das Geraet warten: sonst zaehlt die
             # Wartezeit eines fremden gphoto2-Aufrufs voll gegen den
@@ -553,9 +589,17 @@ class Camera:
             # wieder. Genau dort schaut ohnehin niemand hin: es folgt der
             # Result-Screen.
             with self._usb(timeout=self.BUSY_TIMEOUT_S):
-                rc, output = self._run_capture(filename, directory, on_shutter)
+                # Ab hier ist der Halte-Prozess tot und der Live-View damit
+                # aus: das ist der Moment, in dem das Bild auf dem Schirm
+                # einfriert. Der Verschluss faellt erst am Ende der Kette.
+                t_dark = time.monotonic()
+                rc, output, marks = self._run_capture(
+                    filename, directory, on_shutter)
         finally:
             self._capturing = False
+
+        if t_dark is not None:
+            self._log_capture_timing(t_req, t_dark, marks)
 
         if rc != 0:
             tail = " / ".join(output.split("\n")[-3:]).strip()

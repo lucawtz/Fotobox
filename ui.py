@@ -618,6 +618,12 @@ class UI:
         # dieses stehen, statt Menue oder Schwarz durchzureichen.
         self._live_hold = None
         self._live_hold_at: float = 0.0
+        # True, solange _live_frame_rgb das gehaltene Standbild durchreicht
+        # statt eines frischen Bildes. Daran haengt der Schleier waehrend der
+        # Aufnahme — siehe _draw_live_fullscreen.
+        self._live_is_hold = False
+        self._veil_key: Optional[tuple] = None
+        self._veil_surf: Optional[pygame.Surface] = None
         self._live_wake_last: float = 0.0
         self._autowake_paused = False
 
@@ -989,6 +995,7 @@ class UI:
         frame = self._fresh_live_frame()
         if frame is not None:
             self._note_live_signal(True)
+            self._live_is_hold = False
             self._live_hold = frame
             self._live_hold_at = time.monotonic()
             return frame, None
@@ -996,6 +1003,7 @@ class UI:
         self._note_live_signal(False)
         if (self._live_hold is not None
                 and time.monotonic() - self._live_hold_at < self._LIVE_HOLD_S):
+            self._live_is_hold = True
             return self._live_hold, None
         return None, "Bitte Display an der Kamera einschalten"
 
@@ -2371,13 +2379,34 @@ class UI:
 
     # ── Live-View ──────────────────────────────────────────────────────────────
 
+    # Wie stark das Standbild zurueckgenommen wird, sobald kein frisches
+    # Bild mehr kommt: erst auf 1/_VEIL_BLUR_DIV der Kantenlaenge runter und
+    # wieder hoch (das ist die Unschaerfe), dann ein Schleier mit
+    # _VEIL_ALPHA darueber. Beide Werte sind so gewaehlt, dass man noch
+    # erkennt, wo man steht — aber nicht mehr glaubt, das Bild lebe.
+    _VEIL_BLUR_DIV = 14
+    _VEIL_ALPHA    = 120
+
     def _draw_live_fullscreen(self):
-        """Live-Bild ueber den ganzen Schirm — Countdown und Slideshow.
+        """Live-Bild ueber den ganzen Schirm — Countdown, "Lächeln!", Warten.
 
         Anders als _draw_live_view bleiben die schwarzen Balken hier
         stehen: es gibt keinen Rahmen, an dem sie stoeren wuerden, und ein
         formatfuellender Zuschnitt haette dem Gast im Countdown genau den
         Bildrand genommen, an dem er sich ausrichtet.
+
+        Ist das Bild nur noch das gehaltene Standbild, wird es unscharf und
+        abgedunkelt gezeigt. Der Grund steckt in der Reihenfolge einer
+        Aufnahme: gphoto2 braucht das USB-Geraet exklusiv, also stirbt der
+        Halte-Prozess und mit ihm der Live-View der Kamera — der Verschluss
+        faellt aber erst gut eine Sekunde spaeter (camera._log_capture_timing
+        misst es mit). Dazwischen stand hier ein gestochen scharfes,
+        unbewegtes Bild des Gastes, und das liest sich wie "Foto ist im
+        Kasten": der Gast entspannt sich, und genau dann wird ausgeloest.
+
+        Unscharf und dunkel behauptet dasselbe Bild nichts mehr. Fertig ist
+        die Aufnahme erst mit dem Blitz, und der haengt am echten
+        Ausloese-Signal.
         """
         self._screen.fill(C_BLACK)
         frame, _ = self._live_frame_rgb()
@@ -2386,9 +2415,49 @@ class UI:
         fh, fw = frame.shape[:2]
         scale = min(W / fw, H / fh)
         nw, nh = int(fw * scale), int(fh * scale)
-        frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
-        surf = pygame.image.frombuffer(frame.tobytes(), (nw, nh), "RGB")
+        if self._live_is_hold:
+            surf = self._veiled_surface(frame, nw, nh)
+        else:
+            frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+            surf = pygame.image.frombuffer(frame.tobytes(), (nw, nh), "RGB")
         self._screen.blit(surf, ((W - nw) // 2, (H - nh) // 2))
+
+    def _veiled_surface(self, frame, w: int, h: int) -> pygame.Surface:
+        """Das gehaltene Standbild, unscharf und abgedunkelt.
+
+        Das Ergebnis wird gecached: waehrend eines Halts aendert sich das
+        Bild per Definition nicht, die Schleife laeuft aber mit 30 fps.
+        Ohne Cache kostete jede Aufnahme rund sechzig Weichzeichner auf
+        1920x1080 — auf dem Pi genau in der Sekunde, in der die Box sonst
+        nichts falsch machen darf. Der Schluessel ist der Zeitstempel des
+        Halts: kommt ein frisches Bild, ist er neu, und der Cache faellt.
+
+        Weichgezeichnet wird ueber Verkleinern und Vergroessern statt mit
+        cv2.GaussianBlur — dasselbe Aussehen fuer einen Bruchteil der Zeit,
+        und die Unschaerfe soll hier grob sein, nicht fein dosiert.
+        """
+        key = (self._live_hold_at, w, h)
+        if key == self._veil_key and self._veil_surf is not None:
+            return self._veil_surf
+
+        small = cv2.resize(frame,
+                           (max(1, w // self._VEIL_BLUR_DIV),
+                            max(1, h // self._VEIL_BLUR_DIV)),
+                           interpolation=cv2.INTER_AREA)
+        blurred = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+        # Eigene Surface statt der aus frombuffer: die haengt am
+        # unveraenderlichen bytes-Objekt, auf sie laesst sich der Schleier
+        # nicht blitten.
+        surf = pygame.Surface((w, h))
+        surf.blit(pygame.image.frombuffer(blurred.tobytes(), (w, h), "RGB"),
+                  (0, 0))
+        veil = pygame.Surface((w, h))
+        veil.fill(C_BLACK)
+        veil.set_alpha(self._VEIL_ALPHA)
+        surf.blit(veil, (0, 0))
+
+        self._veil_key, self._veil_surf = key, surf
+        return surf
 
     # ── QR-Code ────────────────────────────────────────────────────────────────
 

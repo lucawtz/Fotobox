@@ -5,6 +5,7 @@ war das Problem auf der echten Box: jeder Aufruf ist ein eigener Prozess mit
 USB-Init, jeder Live-View-Wechsel klappt hoerbar den Spiegel, und beides lag
 frueher mitten in der Wartezeit des Gastes.
 """
+import logging
 import os
 
 import pytest
@@ -229,6 +230,40 @@ def test_capture_survives_a_missing_shutter_marker(cam, tmp_path):
 
     assert os.path.isfile(path)
     assert fired == []
+
+
+def test_capture_writes_down_how_long_the_still_stands(cam, tmp_path, caplog):
+    """Die Zahl, an der capture_lead_s haengt, gehoert ins Log.
+
+    Waehrend einer Aufnahme zeigt die Box zwangslaeufig ein Standbild: der
+    Halte-Prozess stirbt, damit gphoto2 das USB-Geraet bekommt, und der
+    Verschluss faellt erst am Ende der Kette. Wie gross dieser Abstand ist,
+    ist eine Eigenschaft der Kamera — auf einer anderen ist es eine andere
+    Zahl, und dann muss man sie ablesen koennen statt sie zu schaetzen.
+    """
+    cam.state["on_capture"] = _write
+
+    with caplog.at_level(logging.INFO, logger="camera"):
+        cam.capture(str(tmp_path))
+
+    line = next((r.getMessage() for r in caplog.records
+                 if "Aufnahme-Zeiten" in r.getMessage()), None)
+    assert line is not None, "ohne Messpunkt bleibt der Wert Raterei"
+    assert "Standbild ? s" not in line, "der Marker war da, also auch die Zahl"
+
+
+def test_the_timing_line_survives_a_missing_marker(cam, tmp_path, caplog):
+    """Ohne Marker ist der Abstand unbekannt — und wird als unbekannt
+    gemeldet, statt eine Zahl zu erfinden."""
+    cam.state["on_capture"] = _write
+    cam.state["lines"] = ["Saving file as foto_1.jpg"]
+
+    with caplog.at_level(logging.INFO, logger="camera"):
+        cam.capture(str(tmp_path))
+
+    line = next(r.getMessage() for r in caplog.records
+                if "Aufnahme-Zeiten" in r.getMessage())
+    assert "Standbild ? s" in line
 
 
 def test_capture_asks_for_line_buffering_when_stdbuf_exists(cam, tmp_path):
