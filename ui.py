@@ -2458,6 +2458,11 @@ class UI:
             rows.append(("WLAN", ssid, self._f_normal))
         if pwd:
             rows.append(("Passwort", pwd, self._f_normal))
+        elif self._cfg.get("hotspot_enabled", True):
+            # Ohne diese Zeile sucht der Gast nach einem Passwort, das es
+            # nicht gibt. Sie kostet nichts: sie steht an der Stelle, die
+            # die Passwort-Zeile sonst belegt.
+            rows.append(("Passwort", "nicht nötig", self._f_normal))
         return rows
 
     def _wifi_box_metrics(self) -> tuple:

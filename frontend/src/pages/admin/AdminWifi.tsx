@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import {
+  FormControlLabel,
   Stack,
+  Switch,
   TextField,
   Button,
   Box,
@@ -24,6 +26,9 @@ export default function AdminWifi() {
   const [ssid, setSsid] = useState("");
   const [pwd, setPwd] = useState("");
   const [showPwd, setShowPwd] = useState(false);
+  // Kein eigener Config-Wert: "offen" heisst schlicht "kein Passwort
+  // gesetzt". Ein zweites Flag koennte dem Passwortfeld widersprechen.
+  const [open_, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ severity: "success" | "error" | "info"; msg: string } | null>(null);
 
@@ -31,6 +36,7 @@ export default function AdminWifi() {
     setCfg(c);
     setSsid(c.wifi_ssid ?? "");
     setPwd(c.wifi_password ?? "");
+    setOpen(!(c.wifi_password ?? ""));
   };
 
   useEffect(() => {
@@ -101,27 +107,54 @@ export default function AdminWifi() {
         <SettingsCard
           icon={<LockRoundedIcon />}
           title="WLAN-Passwort"
-          description="8 bis 63 Zeichen (WPA2). Gäste müssen es nicht abtippen — der QR-Code auf dem Boxbildschirm trägt es mit und verbindet das Handy von selbst."
+          description="8 bis 63 Zeichen (WPA2) — oder ganz weglassen, dann ist das Netz offen."
         >
           {cfg ? (
-            <TextField
-              type={showPwd ? "text" : "password"}
-              value={pwd}
-              onChange={(e) => setPwd(e.target.value)}
-              fullWidth
-              inputProps={{ maxLength: 63 }}
-              InputProps={{
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton onClick={() => setShowPwd((s) => !s)} edge="end" size="small">
-                      {showPwd ? <VisibilityOffRoundedIcon /> : <VisibilityRoundedIcon />}
-                    </IconButton>
-                  </InputAdornment>
-                ),
-              }}
-              helperText={pwd.length > 0 && pwd.length < 8 ? "Passwort zu kurz" : " "}
-              error={pwd.length > 0 && pwd.length < 8}
-            />
+            <Stack spacing={1.5}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={open_}
+                    onChange={(e) => {
+                      setOpen(e.target.checked);
+                      // Leeres Feld IST die Einstellung — der Server liest
+                      // "offen" nicht aus einem Flag, sondern daraus, dass
+                      // kein Passwort ankommt (gallery_server, hotspot.py).
+                      if (e.target.checked) setPwd("");
+                    }}
+                  />
+                }
+                label="Offenes WLAN — kein Passwort"
+              />
+              {open_ ? (
+                <Alert severity="warning" variant="outlined">
+                  Jeder in Funkreichweite kommt ins Netz und damit in die
+                  Galerie — auch aus der Nachbarwohnung. Auf einer Feier in
+                  geschlossenen Räumen ist das meist folgenlos und spart den
+                  Gästen das Abtippen, was am Abend die eigentliche Hürde ist.
+                  iPhones zeigen „Ungesichertes Netzwerk“ an.
+                </Alert>
+              ) : (
+                <TextField
+                  type={showPwd ? "text" : "password"}
+                  value={pwd}
+                  onChange={(e) => setPwd(e.target.value)}
+                  fullWidth
+                  inputProps={{ maxLength: 63 }}
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton onClick={() => setShowPwd((s) => !s)} edge="end" size="small">
+                          {showPwd ? <VisibilityOffRoundedIcon /> : <VisibilityRoundedIcon />}
+                        </IconButton>
+                      </InputAdornment>
+                    ),
+                  }}
+                  helperText={pwd.length > 0 && pwd.length < 8 ? "Passwort zu kurz" : " "}
+                  error={pwd.length > 0 && pwd.length < 8}
+                />
+              )}
+            </Stack>
           ) : <Skeleton variant="rounded" height={56} />}
         </SettingsCard>
 
@@ -150,7 +183,13 @@ export default function AdminWifi() {
             Verwerfen
           </Button>
           <Button
-            disabled={!dirty || busy || pwd.length < 8 || ssid.trim().length === 0}
+            // Leeres Passwort ist gueltig (offenes Netz) — nur 1 bis 7
+            // Zeichen sind es nicht, die haelt auch der Server ab.
+            disabled={
+              !dirty || busy ||
+              (pwd.length > 0 && pwd.length < 8) ||
+              ssid.trim().length === 0
+            }
             onClick={save}
             variant="contained"
             sx={{ flex: { xs: 1, sm: "0 0 auto" } }}

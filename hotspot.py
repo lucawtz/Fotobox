@@ -233,6 +233,23 @@ def _build_connection(ifname: str, ssid: str, password: str,
     # Aus 192.168.4.1 wird 192.168.4.1/24 für den ipv4.addresses-Wert
     ipv4_addr = f"{hotspot_ip}/24"
 
+    # Ohne Passwort wird der AP offen aufgespannt: die wifi-sec-Settings
+    # entfallen dann komplett. Sie mit leerem PSK zu setzen geht nicht —
+    # NetworkManager lehnt 'wpa-psk' ohne Schluessel ab, und die
+    # Connection kaeme gar nicht erst zustande.
+    #
+    # Offen ist eine bewusste Wahl des Betreibers, keine Panne: am
+    # Eventabend ist das Abtippen des Passworts die Huerde, an der Gaeste
+    # haengenbleiben. Wer im Funkbereich steht, kommt dann allerdings
+    # ohne Weiteres ins Netz und damit in die Galerie.
+    security = [] if not password else [
+        "wifi-sec.key-mgmt", "wpa-psk",
+        "wifi-sec.proto", "rsn",
+        "wifi-sec.pairwise", "ccmp",
+        "wifi-sec.group", "ccmp",
+        "wifi-sec.psk", password,
+    ]
+
     r = _nmcli([
         "connection", "add",
         "type", "wifi",
@@ -246,12 +263,7 @@ def _build_connection(ifname: str, ssid: str, password: str,
         "ipv4.method", "shared",
         "ipv4.addresses", ipv4_addr,
         "ipv6.method", "ignore",
-        "wifi-sec.key-mgmt", "wpa-psk",
-        "wifi-sec.proto", "rsn",
-        "wifi-sec.pairwise", "ccmp",
-        "wifi-sec.group", "ccmp",
-        "wifi-sec.psk", password,
-    ], timeout=15)
+    ] + security, timeout=15)
     if r is None or r.returncode != 0:
         logger.warning("Hotspot-Add fehlgeschlagen: %s",
                        (r.stderr if r else "no result").strip()[:200])
@@ -311,9 +323,17 @@ def start() -> bool:
     ifname = cfg.get("hotspot_interface", "wlan0")
     hotspot_ip = cfg.get("hotspot_ip", "192.168.4.1")
 
-    if len(password) < 8:
-        logger.warning("Hotspot: WPA2 verlangt min. 8 Zeichen Passwort — abgebrochen")
+    # Leer heisst "offen und so gewollt". Zwischen 1 und 7 Zeichen ist
+    # dagegen immer ein Versehen: WPA2 verlangt mindestens 8, der AP kaeme
+    # gar nicht hoch, und ein stillschweigend offenes Netz waere die
+    # schlechteste aller Antworten darauf.
+    if 0 < len(password) < 8:
+        logger.warning("Hotspot: WPA2 verlangt min. 8 Zeichen Passwort — "
+                       "abgebrochen (leer lassen fuer ein offenes Netz)")
         return False
+    if not password:
+        logger.warning("Hotspot '%s' wird OHNE Passwort aufgespannt — jeder "
+                       "in Funkreichweite kommt in die Galerie", ssid)
 
     if not _interface_exists(ifname):
         logger.warning(

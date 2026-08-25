@@ -226,7 +226,13 @@ def test_handover_clears_photos_and_repins_the_event(app, cfg, photo_factory):
 # ── WLAN-Validierung (P1-12) ───────────────────────────────────────────────────
 
 @pytest.mark.parametrize("pw,ok", [
-    ("", False), ("kurz", False), ("1234567", False),
+    # Leer ist erlaubt und heisst "offenes Netz": am Eventabend ist das
+    # Abtippen des Passworts die Huerde, an der Gaeste haengenbleiben.
+    ("", True),
+    # 1 bis 7 Zeichen bleiben verboten. Das ist immer ein Versehen — der AP
+    # kaeme mit WPA2 gar nicht hoch, und ihn stattdessen stillschweigend
+    # offen aufzuspannen waere die schlechteste Antwort darauf.
+    ("kurz", False), ("1234567", False),
     ("12345678", True), ("x" * 63, True), ("x" * 64, False),
 ])
 def test_wifi_password_length_enforced_server_side(app, pw, ok):

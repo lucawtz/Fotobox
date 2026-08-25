@@ -1687,9 +1687,15 @@ def api_admin_config():
     if not 1 <= len(new_ssid.encode("utf-8")) <= 32:
         return jsonify(ok=False,
                        error="WLAN-Name muss 1–32 Zeichen lang sein"), 400
-    if not 8 <= len(new_pw) <= 63:
+    # Leer ist erlaubt und heisst "offenes Netz" — am Eventabend ist das
+    # Abtippen des Passworts die Huerde, an der Gaeste haengenbleiben.
+    # 1 bis 7 Zeichen sind dagegen immer ein Versehen: der AP kaeme gar
+    # nicht hoch (hotspot.py) und ein stillschweigend offenes Netz waere
+    # die schlechteste Antwort darauf.
+    if new_pw and not 8 <= len(new_pw) <= 63:
         return jsonify(ok=False,
-                       error="WLAN-Passwort muss 8–63 Zeichen lang sein (WPA2)"), 400
+                       error="WLAN-Passwort muss 8–63 Zeichen lang sein "
+                             "(WPA2) — oder leer für ein offenes Netz"), 400
     wifi_changed = (new_ssid != config.cfg.get("wifi_ssid")
                     or new_pw != config.cfg.get("wifi_password"))
 
