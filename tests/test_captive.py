@@ -242,12 +242,18 @@ def test_thumbnails_bleiben_draussen(app, caplog):
     assert not any("/thumb/" in l for l in _log_lines(caplog))
 
 
-def test_freigabe_gilt_nur_kurz():
-    """Der Wert darf nicht unbemerkt zurueckwachsen.
+def test_freigabe_ueberdauert_den_abend_aber_nicht_die_lease():
+    """Beide Grenzen sind am Geraet erarbeitet, keine ist gegriffen.
 
-    Mit drei Stunden bekam ein Geraet nach dem ersten "In Safari oeffnen"
-    bei jedem Beitritt ein "du bist online" — iOS oeffnete danach nie
-    wieder ein Portal, und fuer den Gast passierte nach dem Scannen
-    sichtbar gar nichts. Jeder Durchlauf verlaengerte das Fenster erneut.
+    Zu kurz: die Freigabe laeuft ab, waehrend der Gast noch da ist. iOS
+    haelt das Netz dann wieder fuer unangemeldet und leitet jeden
+    Netzzugriff ins Anmeldefenster um — auch einen gescannten Galerie-Link,
+    der in Safari gehoert.
+
+    Zu lang: eine per DHCP weitergereichte IP erbt die Freigabe ihres
+    Vorgaengers, und der naechste Gast bekommt kein Portal. Die Leases
+    laufen nach einer Stunde ab, viel mehr als ein paar Stunden darf die
+    Freigabe deshalb nicht halten.
     """
-    assert gallery_server._CAPTIVE_RELEASE_TTL_S <= 30 * 60
+    ttl = gallery_server._CAPTIVE_RELEASE_TTL_S
+    assert 60 * 60 <= ttl <= 6 * 3600

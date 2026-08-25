@@ -192,7 +192,8 @@ export default function CaptiveBanner() {
           "& .MuiAlert-message": { py: 0.5 },
         }}
       >
-        Fotos speichern geht in diesem Fenster nicht.{" "}
+        <strong>Verbinden</strong> beendet dieses Fenster. Sonst kommt es
+        immer wieder — und Fotos speichern geht darin nicht.{" "}
         <Box
           component="button"
           onClick={() => setAsk(true)}

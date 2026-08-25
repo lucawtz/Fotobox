@@ -327,26 +327,29 @@ _PROBE_SUCCESS: dict[str, tuple[Optional[str], str]] = {
 
 # Wie lange eine Freigabe gilt.
 #
-# Hier standen einmal drei Stunden, und das war der teuerste Wert im ganzen
-# Captive-Teil. Am Geraet nachgewiesen: wer einmal "In Safari oeffnen" tippt,
-# bekommt danach bei JEDEM Beitritt ein "du bist online" zurueck — iOS
-# schliesst daraus, dass es hier kein Portal gibt, und oeffnet nichts mehr.
-# Kein Popup, kein WLAN-Symbol, nach dem Scannen passiert sichtbar gar nichts.
-# Jeder Durchlauf verlaengerte das Fenster wieder, im Log stand die Freigabe
-# ueber zwei Tage hinweg siebenmal. Der Mechanismus, der den Gast einmal aus
-# dem Anmeldefenster herauslassen sollte, hat ihm das Anmeldefenster dauerhaft
-# verbaut.
+# Der Wert ist zweimal in die Irre gegangen, in beide Richtungen.
 #
-# 15 Minuten reichen fuer ihren eigentlichen Zweck: das Handy soll den Wechsel
-# nach Safari nicht sofort wieder einkassieren. Danach ist das Portal wieder
-# scharf, und der naechste Beitritt fuehrt wieder in die Galerie.
+# Zu lang (drei Stunden, per IP): wer einmal "Verbinden" tippt, bekommt auch
+# nach einem NEUEN Beitritt "du bist online" zurueck — iOS sieht kein Portal
+# mehr und oeffnet nichts. Das kostete einen halben Tag Fehlersuche.
 #
-# Der Preis ist bewusst in Kauf genommen: prueft iOS zwischendurch erneut,
-# kann das Anmeldefenster ein zweites Mal aufgehen. Das ist ein Popup zu viel
-# — die Alternative war ein Portal, das nie wieder aufging. Ausserdem ist der
-# Wechsel nach Safari seit dem Foto-Code auf dem Ergebnis-Schirm nicht mehr
-# der Hauptweg zum eigenen Bild (ui.py: _draw_qr_result).
-_CAPTIVE_RELEASE_TTL_S = 15 * 60
+# Zu kurz (15 Minuten): die Freigabe laeuft ab, waehrend der Gast noch da
+# ist. iOS haelt das Netz dann wieder fuer unangemeldet und leitet JEDEN
+# Netzzugriff des Geraets ins Anmeldefenster um — auch einen gescannten
+# Galerie-Link, der eigentlich in Safari gehoert. Genau das ist am Geraet
+# passiert: Code gescannt, und statt Safari kam wieder "Captive WLAN".
+#
+# Drei Stunden sind der Kompromiss, und der erste Fehler wiegt inzwischen
+# leichter: der Sidebar-Code traegt den Galerie-Link, nicht mehr die
+# WLAN-Daten. Wer nach einem Neubeitritt kein Portal bekommt, scannt ihn und
+# ist in Safari — der Weg existiert also auch ohne Portal. Kuerzer duerfen
+# sie trotzdem nicht werden, sonst faengt das Fenster mitten am Abend wieder
+# die Scans ab.
+#
+# Nach oben begrenzt bleibt der Wert durch die DHCP-Leases: die laufen nach
+# einer Stunde ab, und eine weitergereichte IP wuerde die Freigabe ihres
+# Vorgaengers erben.
+_CAPTIVE_RELEASE_TTL_S = 3 * 3600
 _captive_released: dict[str, float] = {}
 _captive_lock = threading.Lock()
 
