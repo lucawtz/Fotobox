@@ -118,6 +118,15 @@ SOCIAL_QR_PAD   = 12
 # Codes oder kleinere Schrift.
 SOCIAL_QR_MIN   = 100
 
+# Wie weit der Rahmen um eine Reihe ohne eigenen Code ueber ihren Text
+# hinausragt. Bewusst aus SOCIAL_ROW_GAP geborgt statt zur Zeilenhoehe
+# addiert: jedes zusaetzliche Pixel fehlt der QR-Gruppe darueber. Mit 8 px
+# Innenabstand gemessen, drueckte der Rahmen die Instagram-Kachel von 116 auf
+# 100 px — bei 41 Modulen 2,4 px je Modul und damit unter die Grenze, ab der
+# eine Handykamera den Code noch liest. Der Rahmen darf auffallen, aber nicht
+# auf Kosten eines Codes.
+SOCIAL_BOX_PAD  = 6
+
 # ── Header-Grenzen ────────────────────────────────────────────────────────────
 # Untergrenzen, unter die _fit_text den Header NICHT senken darf. Darunter
 # liest der Gast aus 2 m Abstand nichts mehr — dann lieber mitten im Wort
@@ -1411,6 +1420,29 @@ class UI:
     _social_cache     = None
     _HEADER_LINE_GAP  = 2     # zwischen umgebrochenen Zeilen eines Blocks
     _HEADER_BLOCK_GAP = 8     # zwischen Event-Name und Untertitel
+
+    # Untergrenze fuer Text auf der Sidebar. 4,5:1 ist der WCAG-Wert fuer
+    # Fliesstext; darunter liest das niemand aus zwei Metern.
+    TEXT_MIN_CONTRAST = 4.5
+
+    def _readable(self, *candidates) -> tuple:
+        """Erste Farbe aus `candidates`, die auf der Sidebar lesbar ist.
+
+        Gebraucht, weil der Mieter jede Theme-Farbe frei setzen darf und
+        manche dabei als Textfarbe unbrauchbar werden. Im dunklen Theme der
+        Box liegt `accent` bei (45,45,45) auf einem (26,26,26)-Grund —
+        gemessen 1,26:1. Die Domain unter "Fotobox mieten" stand damit
+        praktisch unsichtbar da, und `accent_dim` ist dort sogar exakt die
+        Hintergrundfarbe.
+
+        Der Mieter darf sich seine Farben verderben, aber nicht die
+        Lesbarkeit: reicht keine, wird die Textfarbe der Sidebar genommen.
+        """
+        bg = self._theme["sidebar_bg"]
+        for c in candidates:
+            if c is not None and UI._contrast(c, bg) >= self.TEXT_MIN_CONTRAST:
+                return c
+        return self._theme["sidebar_text"]
 
     def _switch_hint(self, key: Optional[str]) -> Optional[str]:
         """Beschriftung "linker/mittlerer/rechter Taster" zu einer Aktion.
@@ -2837,7 +2869,8 @@ class UI:
         for row in rows:
             icon_type, line1, line2, surf = row
             lbl = self._f_sub.render(line1, True, self._theme["sidebar_text"])
-            sub = (self._f_label.render(line2, True, self._theme["accent"])
+            sub = (self._f_label.render(line2, True,
+                                        self._readable(self._theme["accent"]))
                    if line2 else None)
 
             if surf is not None:
@@ -2861,6 +2894,19 @@ class UI:
                 block_w = (SOCIAL_ICON + 10 if glyphs else 0) + text_w
                 x0 = cx - block_w // 2
                 row_h = self._social_row_height(row, qr_size) - SOCIAL_ROW_GAP
+                # Rahmen um die Reihe. Die Kacheln darueber tragen ihre
+                # cremefarbene Karte, diese Reihe hat nichts — ohne Rahmen
+                # steht sie als loser Text darunter und wird ueberlesen.
+                #
+                # Er ragt ueber row_h hinaus und borgt sich das aus dem
+                # Abstand zur naechsten Reihe. Die Zeilenhoehe bleibt damit
+                # unveraendert, und die QR-Gruppe verliert kein Pixel.
+                box = pygame.Rect(0, 0, block_w + 32,
+                                  row_h + 2 * SOCIAL_BOX_PAD)
+                box.center = (cx, ry + row_h // 2)
+                pygame.draw.rect(self._screen,
+                                 self._readable(self._theme["panel_border"]),
+                                 box, width=2, border_radius=10)
                 if glyphs:
                     iy = ry + (row_h - SOCIAL_ICON) // 2
                     if icon_type == "instagram":
