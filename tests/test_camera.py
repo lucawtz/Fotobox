@@ -14,6 +14,8 @@ import camera as camera_mod
 # Vor allen Fixtures festgehalten: die cam-Fixture ersetzt _init durch
 # einen No-op, und genau das echte _init soll hier laufen.
 _REAL_INIT = camera_mod.Camera._init
+# Dasselbe fuer die Watchdog-Schleife, die die Fixture stilllegt.
+_REAL_WATCHDOG = camera_mod.Camera._watchdog
 
 
 class FakeResult:
@@ -406,34 +408,13 @@ def cam_init(monkeypatch, cam):
     return cam
 
 
-def test_init_sets_an_af_method(cam_init):
-    """_init muss die AF-Methode ueberhaupt setzen.
-
-    0 LiveFace, 1 LiveMulti, 2 Live, 3 Quick. Ohne das bleibt stehen, was
-    zuletzt jemand am Geraet gedreht hat — die Methode ueberlebt anders als
-    `output` das Prozessende in der Kamera.
-
-    Welcher Wert richtig ist, ist Geschmack des Betreibers und steht in der
-    Config; deshalb pinnt der Test ihn nicht fest, sondern nur, dass er
-    ankommt.
+def test_init_turns_face_detection_off(cam_init):
+    """LiveFace zeichnet einen Rahmen um jedes erkannte Gesicht und laesst ihn
+    mitwandern — auf dem grossen Schirm der unruhigste Teil des Live-Bildes.
+    'Live' ist ein kleines festes Feld in der Mitte. Ganz ohne Rahmen geht
+    keine der Methoden, den zeichnet die Kamera in ihr HDMI-Signal.
     """
-    method = camera_mod.Camera.DEFAULT_AF_METHOD
-    assert (f"--set-config-index afmethod={method}"
-            in _gphoto_verbs(cam_init.calls))
-
-
-def test_init_passes_a_deviating_af_method_through(monkeypatch, cam):
-    """Ein von der Voreinstellung abweichender Wert muss auch ankommen.
-
-    Sonst waere camera_af_method in der Config eine Attrappe: der Test darueber
-    liest denselben Standardwert wie der Code und wuerde ein hartverdrahtetes
-    afmethod nicht bemerken.
-    """
-    monkeypatch.setattr(camera_mod.Camera, "_detect", lambda self: True)
-    cam._af_method = "1"
-    cam.calls.clear()
-    _REAL_INIT(cam)
-    assert "--set-config-index afmethod=1" in _gphoto_verbs(cam.calls)
+    assert "--set-config-index afmethod=2" in _gphoto_verbs(cam_init.calls)
 
 
 def test_init_turns_the_image_review_off(cam_init):
@@ -447,3 +428,65 @@ def test_init_leaves_a_holder_running(cam_init):
     """Ohne ihn faellt der Live-View sofort wieder zusammen."""
     assert cam_init._hold_wanted
     assert cam_init._hold_alive()
+
+
+# ── Watchdog ───────────────────────────────────────────────────────────────────
+
+class _StopWatchdog(Exception):
+    """Bricht die Endlosschleife der Watchdog nach einem Durchgang ab."""
+
+
+def _run_watchdog_once(monkeypatch, cam):
+    """Laesst genau einen Durchgang der Watchdog-Schleife laufen.
+
+    Ueber den Schlaf am Schleifenanfang statt ueber _running: der Durchgang
+    soll unter denselben Bedingungen laufen wie im Betrieb, und an _running
+    haengt auch, ob _usb den Halte-Prozess hinterher zurueckbringt.
+    """
+    slept = {"n": 0}
+
+    def fake_sleep(_seconds):
+        slept["n"] += 1
+        if slept["n"] > 1:
+            raise _StopWatchdog
+
+    monkeypatch.setattr(camera_mod.time, "sleep", fake_sleep)
+    cam._running = True
+    with pytest.raises(_StopWatchdog):
+        _REAL_WATCHDOG(cam)
+
+
+def test_watchdog_picks_up_a_camera_switched_on_after_the_box(monkeypatch, cam):
+    """Der Pi laeuft schon, die Kamera geht erst danach an.
+
+    Beim App-Start scheitert _init am fehlenden Geraet: es gibt keinen
+    Halte-Prozess, und _hold_wanted bleibt False. Haengt das Nachsehen der
+    Watchdog an _hold_wanted, kommt sie aus diesem Zustand nie wieder heraus
+    und der Fehlerbanner steht bis zum naechsten Neustart — auch dann noch,
+    wenn die Kamera laengst am USB haengt.
+    """
+    # Die Fixture legt _init still; hier muss die Watchdog es wirklich rufen.
+    monkeypatch.setattr(camera_mod.Camera, "_init", _REAL_INIT)
+    monkeypatch.setattr(camera_mod.Camera, "_detect", lambda self: False)
+    cam._init()
+    assert not cam.available and not cam._hold_wanted
+
+    monkeypatch.setattr(camera_mod.Camera, "_detect", lambda self: True)
+    _run_watchdog_once(monkeypatch, cam)
+
+    assert cam.available
+    assert cam.error_message == ""
+    assert cam._hold_alive(), "ohne Halter faellt der Live-View sofort zusammen"
+    assert camera_mod.latest_status()["available"], "der Galerie-Server liest das"
+
+
+def test_watchdog_reports_a_camera_that_vanished(monkeypatch, cam_init):
+    """Halter tot und kein Geraet mehr: das muss die Box sagen, statt weiter
+    'bereit' zu zeigen und den Gast ins Leere ausloesen zu lassen."""
+    cam_init._hold_stop()
+    monkeypatch.setattr(camera_mod.Camera, "_detect", lambda self: False)
+
+    _run_watchdog_once(monkeypatch, cam_init)
+
+    assert not cam_init.available
+    assert "USB" in cam_init.error_message

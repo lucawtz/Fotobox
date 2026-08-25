@@ -259,12 +259,11 @@ _DEFAULTS: dict = {
     # fuer einen Prozessstart lang, also gut eine Sekunde.
     "camera_hold_session_s": 1800,
     # AF-Methode als Index aus `gphoto2 --get-config afmethod`:
-    # 0 LiveFace, 1 LiveMulti, 2 Live, 3 Quick. Voreinstellung 0 —
-    # Gesichtserkennung, ein mitwandernder Rahmen um jedes erkannte Gesicht.
-    # 2 waere ein kleines festes Feld in der Mitte, 1 ein groesserer
-    # Klammerrahmen. Ganz ohne Rahmen geht keine der Methoden: den zeichnet die
-    # Kamera in ihr HDMI-Signal, und die EOS 700D hat keinen sauberen Ausgang.
-    "camera_af_method": "0",
+    # 0 LiveFace, 1 LiveMulti, 2 Live, 3 Quick. Voreinstellung 2 — ein kleines
+    # festes Feld in der Bildmitte. 0 waere Gesichtserkennung: ein Rahmen um
+    # jedes erkannte Gesicht, der mitwandert und damit der unruhigste Teil des
+    # Live-Bildes ist. Ganz ohne Rahmen geht keine der Methoden.
+    "camera_af_method": "2",
     # Wie viele Sekunden vor dem Ende des Countdowns ausgeloest wird. Zwischen
     # dem gphoto2-Aufruf und der Belichtung liegt eine Verzoegerung, die die
     # Kamera vorgibt und die Box nicht wegbekommt — auf der EOS 700D per EXIF
