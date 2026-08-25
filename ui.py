@@ -1881,10 +1881,15 @@ class UI:
         speichern wollte, musste sich aus dem Anmeldefenster freischalten
         und die Adresse von Hand eintippen. Jetzt ist es ein Scan.
 
-        Der Gast muss dafuer schon im WLAN sein — dorthin bringt ihn der
-        Code in der Sidebar. Laesst sich keine Foto-URL bilden, faellt der
-        Schirm auf genau diesen Sidebar-Code zurueck: der bringt ihn
-        wenigstens ins Netz.
+        Der Gast muss dafuer schon im WLAN sein, sonst laeuft der Scan in
+        eine Fehlerseite von Safari — und die sagt ihm nicht, was fehlt.
+        Deshalb steht die Kurzanleitung mit SSID und Passwort direkt
+        darunter: hier hat der Schirm Platz dafuer, anders als die Sidebar
+        (die Rechnung steht in _qr_group_bounds).
+
+        Laesst sich keine Foto-URL bilden, faellt der Schirm auf den
+        Sidebar-Code zurueck: der fuehrt in die Galerie statt auf ein
+        bestimmtes Bild.
         """
         qr = self._photo_qr(photo_path)
         hint = "Dein Foto aufs Handy" if qr is not None else "Fotos aufs Handy"
@@ -1898,11 +1903,25 @@ class UI:
         label = self._f_sub.render(hint, True, self._theme["panel_bg"])
         card_w = QR + PAD * 2
         card_h = QR + PAD * 2 + label.get_height() + 6
+
+        # Kurzanleitung darunter. Sie beantwortet die einzige Frage, an der
+        # der Scan scheitern kann: "ich bin noch gar nicht im WLAN".
+        head, lines = self._wifi_hint(self.RESULT_QR_COL - 32)
+        hint_h = 0
+        if head is not None:
+            hint_h = head.get_height() + 8 + sum(l.get_height() + 4
+                                                 for l in lines)
+        GAP = 22
+        group_h = card_h + (GAP + hint_h if hint_h else 0)
+
         # Mittig in der reservierten Spalte, und vertikal mittig ueber dem
         # Button-Verlauf — nicht oben in der Ecke: dort sass der Code, als er
         # noch auf dem Bild lag, und neben dem Bild wirkt das aus der Achse.
-        x = W - self.RESULT_QR_COL + (self.RESULT_QR_COL - card_w) // 2
-        y = max(PAD, (H - self._SCRIM_H - card_h) // 2)
+        # Zentriert wird die ganze Gruppe, sonst haengt die Anleitung den
+        # Code aus der Mitte.
+        cx = W - self.RESULT_QR_COL + self.RESULT_QR_COL // 2
+        x = cx - card_w // 2
+        y = max(PAD, (H - self._SCRIM_H - group_h) // 2)
 
         # Creme statt Weiss: der Code bringt seine Quiet-Zone selbst in
         # dieser Farbe mit, ein weisser Rahmen zöge eine sichtbare Kante
@@ -1911,8 +1930,51 @@ class UI:
         card.fill(self._qr_card_color())
         self._screen.blit(card, (x, y))
         self._screen.blit(qr, (x + PAD, y + PAD))
-        self._screen.blit(label, label.get_rect(centerx=x + card_w // 2,
+        self._screen.blit(label, label.get_rect(centerx=cx,
                                                 top=y + PAD + QR + 4))
+
+        if head is None:
+            return
+        ty = y + card_h + GAP
+        self._screen.blit(head, head.get_rect(centerx=cx, top=ty))
+        ty += head.get_height() + 8
+        for line in lines:
+            self._screen.blit(line, line.get_rect(centerx=cx, top=ty))
+            ty += line.get_height() + 4
+
+    def _wifi_hint(self, max_w: int) -> tuple:
+        """(Ueberschrift, Zeilen) der Kurzanleitung — oder (None, []).
+
+        Gedacht fuer den Gast, der den Code scannt, ohne im WLAN zu sein:
+        Safari zeigt ihm dann eine Fehlerseite, die nichts erklaert. Hier
+        steht, was fehlt, und zwar auf dem Schirm, den er ohnehin ansieht.
+
+        Ohne konfiguriertes WLAN gibt es nichts anzuleiten — dann bleibt es
+        beim blanken Code.
+        """
+        rows = self._wifi_rows()
+        if not rows:
+            return (None, [])
+        head = self._f_label.render("Noch nicht im WLAN?", True,
+                                    self._theme["sidebar_dim"])
+        lines = [self._fit_width(
+                     self._f_sub.render(f"{lbl}: {val}", True,
+                                        self._theme["sidebar_text"]), max_w)
+                 for lbl, val, _ in rows]
+        return (self._fit_width(head, max_w), lines)
+
+    @staticmethod
+    def _fit_width(surf: pygame.Surface, max_w: int) -> pygame.Surface:
+        """Schrumpft eine Textzeile, die breiter ist als ihr Platz.
+
+        Ein langer WLAN-Name laeuft sonst stumm ueber den Rand der Spalte
+        hinaus — dasselbe Problem, das die WLAN-Box in der Sidebar schon
+        hatte."""
+        if surf.get_width() <= max_w:
+            return surf
+        scale = max_w / surf.get_width()
+        return pygame.transform.smoothscale(
+            surf, (max_w, max(1, int(surf.get_height() * scale))))
 
     _SCRIM_H = 300
 
