@@ -1617,56 +1617,29 @@ class UI:
         # bevorstand, und kostete zusaetzlich 300 ms Vorlauf.
         self._flash()
 
-    # Wie stark der Uebertragungs-Screen das Bild dahinter abdunkelt, und wie
-    # lange er dafuer braucht. Kurz genug, dass niemand darauf wartet, lang
-    # genug, dass es kein Schnitt ist.
-    _SHADE_ALPHA = 150
-    _SHADE_FADE_S = 0.35
-
-    def wait_for_capture(self, done, timeout: float = 35.0,
-                         message: str = "Foto wird übertragen…") -> bool:
+    def wait_for_capture(self, done, timeout: float = 35.0) -> bool:
         """Haelt die Render-Schleife am Leben, waehrend gphoto2 laeuft.
 
-        Vorher wartete main.py hier blockierend — der Bildschirm stand bis zu
-        35 s auf dem letzten "Lächeln!"-Frame, ohne jedes Lebenszeichen. Der
-        Gast konnte nicht unterscheiden, ob die Box arbeitet oder haengt.
+        Ohne sie wartete main.py blockierend, und der Bildschirm stand bis zum
+        Timeout auf dem letzten Frame — kein Lebenszeichen, sah abgestuerzt
+        aus. Die Schleife bleibt deshalb, auch wenn sie nichts Eigenes mehr
+        zeichnet: sie haelt das Bild aktuell und die Event-Queue leer.
+
+        Zu sehen ist waehrenddessen das stehende Live-Bild, also der Gast
+        selbst. Hier lag frueher ein abgedunkelter Schleier mit "Foto wird
+        uebertragen…" und laufenden Punkten darueber. Der ist bewusst raus:
+        seit der Verschluss auf "Lächeln!" faellt (capture_lead_s) dauert die
+        Uebertragung nur noch kurz, und ein Schleier, der fuer eine Sekunde
+        aufzieht und gleich wieder verschwindet, ist mehr Unruhe als Auskunft.
 
         Rueckgabe: True wenn `done` rechtzeitig gesetzt wurde, sonst False.
         """
         deadline = time.monotonic() + timeout
-        start = time.monotonic()
-        dots = 0
-
-        # Einmal angelegt statt 30x/s: die Flaeche aendert sich nicht, nur
-        # ihre Deckkraft.
-        shade = pygame.Surface((W, H))
-        shade.fill(C_BLACK)
-        lbl = self._f_medium.render(message, True, C_WHITE)
-        lbl_rect = lbl.get_rect(center=(W // 2, H // 2 - 30))
 
         while not done.is_set():
-            now = time.monotonic()
-            if now >= deadline:
+            if time.monotonic() >= deadline:
                 return False
-
-            # Aufziehen statt umschalten. Hinter dem Schleier steht das
-            # eingefrorene letzte Live-Bild, also der Gast selbst — ein
-            # harter Schnitt darauf sah aus wie ein Fehler, ein weicher
-            # Uebergang sieht aus wie Absicht.
-            fade = min(1.0, (now - start) / self._SHADE_FADE_S)
-
             self._draw_live_fullscreen()
-            shade.set_alpha(int(self._SHADE_ALPHA * fade))
-            self._screen.blit(shade, (0, 0))
-            lbl.set_alpha(int(255 * fade))
-            self._screen.blit(lbl, lbl_rect)
-            # Laufende Punkte als Lebenszeichen — reicht, um "arbeitet" von
-            # "eingefroren" zu unterscheiden.
-            dots = (dots + 1) % 60
-            pips = "•" * (1 + dots // 20)
-            pip = self._f_large.render(pips, True, C_GOLD)
-            pip.set_alpha(int(255 * fade))
-            self._screen.blit(pip, pip.get_rect(center=(W // 2, H // 2 + 70)))
             pygame.display.flip()
             pygame.event.pump()
             pygame.time.wait(30)

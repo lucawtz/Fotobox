@@ -150,8 +150,8 @@ def test_capture_is_a_single_gphoto_call(cam, tmp_path):
 
     Frueher haengte capture() noch output=, viewfinder=1 und capture-preview
     an — drei zusaetzliche Prozessstarts und zwei Spiegelhuebe, alle in der
-    Zeit, in der auf dem Bildschirm "Foto wird uebertragen" steht, obwohl
-    danach der Result-Screen kommt, der gar kein Live-Bild zeigt.
+    Zeit zwischen Verschluss und Result-Screen — und der zeigt gar kein
+    Live-Bild.
     """
     cam.state["on_capture"] = _write
 

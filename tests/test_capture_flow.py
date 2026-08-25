@@ -38,7 +38,7 @@ class FakeUI:
         # "Lächeln!" abraeumt — dass es gesetzt wird, sichert der Test unten.
         self.shutter_set.append(shutter.is_set() if shutter else None)
 
-    def wait_for_capture(self, done, timeout=35.0, message=""):
+    def wait_for_capture(self, done, timeout=35.0):
         return done.is_set()
 
     def show_notice(self, title, detail="", seconds=3.5, error=True):
@@ -126,7 +126,7 @@ def test_single_failure_is_reported_not_swallowed(cfg, flow):
 # Kamera im Live-View-Modus steht (Spiegel hoch). Jeder Wechsel dorthin
 # klappert hoerbar und kostet einen gphoto2-Prozessstart. Deshalb darf er nur
 # dort passieren, wo gleich wieder ein Live-Bild sichtbar wird — und nie in
-# der Zeit, in der der Gast auf "Foto wird uebertragen" wartet.
+# der Zeit, in der der Gast auf das fertige Foto wartet.
 
 
 def test_liveview_is_woken_after_the_shot_not_during(cfg, flow):
@@ -220,8 +220,8 @@ def test_countdown_gets_a_lead_from_the_config(cfg, flow):
     """Der Verschluss soll fallen, waehrend "Lächeln!" steht — nicht danach.
 
     Zwischen dem gphoto2-Aufruf und der Belichtung liegen auf der EOS 700D
-    rund 1,1 s. Ohne Vorlauf loest die Box also erst aus, wenn der Bildschirm
-    laengst auf "Foto wird uebertragen" umgeschaltet hat.
+    rund 1,1 s. Ohne Vorlauf loest die Box also erst aus, wenn "Lächeln!"
+    laengst wieder weg ist.
     """
     ui, _ = flow
     cfg["capture_lead_s"] = 1.4
