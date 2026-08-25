@@ -244,7 +244,12 @@ _DEFAULTS: dict = {
     # sonst vollstaendig mit weissem Rand (2x2-Collage wuerde sonst
     # oben und unten abgeschnitten). Alternativ "cover" oder "fit".
     "print_mode": "auto",
-    "print_options": [],
+    # StpBorderless: der Gutenprint-Treiber des Selphy steht von Haus aus auf
+    # False und schrumpft das Bild per StpiShrinkOutput=Shrink in den
+    # bedruckbaren Bereich — es kam also mit weissem Rand heraus, egal was
+    # prepare() vorher aufs Papierformat gerechnet hatte. Welche Optionen der
+    # Treiber kennt, zeigt `lpoptions -p <drucker> -l` (siehe README).
+    "print_options": ["StpBorderless=True"],
     # Wie lange der Drucker fuer ein Bild braucht. Geht nur in die Schaetzung
     # ein, die der Box-Dialog anzeigt, wenn Auftraege in der Queue haengen.
     "print_seconds_per_photo": 60,
