@@ -93,6 +93,12 @@ LIVE_RADIUS     = 6
 # hoch, und _social_row_height nimmt davon ohnehin das Maximum.
 SOCIAL_ICON     = 30
 SOCIAL_ROW_GAP  = 18      # Luft zwischen den Reihen.
+# Zusaetzliche Luft UEBER einer Reihe ohne eigenen Code. Sie steht sonst
+# direkt unter der Beschriftung der Kachel darueber und liest sich wie deren
+# dritte Zeile statt wie ein eigener Eintrag. Kommt zur Zeilenhoehe dazu und
+# geht damit von der QR-Gruppe ab — gemessen bleiben danach 26 px Reserve,
+# die Instagram-Kachel behaelt ihre Groesse.
+SOCIAL_TEXT_TOP = 18
 # Kantenlaenge fuer instagram_qr_path und booking_qr_path. Instagrams
 # Code hat 41 Module (Version 6) — bei 96 px waeren das 2,3 px pro Modul,
 # und mit runden Punkten und dem Gradient-Kontrast ist das zu wenig zum
@@ -2817,7 +2823,10 @@ class UI:
             side = surf.get_height() if qr_size is None else qr_size
             # Code über der Beschriftung — wie die Galerie-Card darüber.
             return (side + self._qr_pad() * 2 + 6 + text_h + SOCIAL_ROW_GAP)
-        return max(text_h, SOCIAL_ICON) + SOCIAL_ROW_GAP
+        # Ohne Code: Inhalt plus die Luft darueber. Der Wert steht hier UND in
+        # _draw_social_links — laufen die auseinander, sitzt der Text neben
+        # seinem Platz statt darin.
+        return (max(text_h, SOCIAL_ICON) + SOCIAL_TEXT_TOP + SOCIAL_ROW_GAP)
 
     @staticmethod
     def _fit_social(surf: pygame.Surface, side: int) -> pygame.Surface:
@@ -2894,20 +2903,23 @@ class UI:
                              sub.get_width() if sub else 0)
                 block_w = SOCIAL_ICON + 12 + text_w
                 x0 = cx - block_w // 2
+                # row_h enthaelt die Luft oben mit, der Inhalt sitzt darunter.
                 row_h = self._social_row_height(row, qr_size) - SOCIAL_ROW_GAP
+                top = ry + SOCIAL_TEXT_TOP
+                inner_h = row_h - SOCIAL_TEXT_TOP
                 # Das Symbol traegt dieselbe erzwungen lesbare Farbe wie die
                 # Domain darunter. Ohne _readable naehme es theme["accent"] —
                 # im dunklen Theme der Box 1,26:1 gegen den Grund, es waere
                 # also da und trotzdem nicht zu sehen.
                 icon_color = self._readable(self._theme["accent"])
-                iy = ry + (row_h - SOCIAL_ICON) // 2
+                iy = top + (inner_h - SOCIAL_ICON) // 2
                 if icon_type == "instagram":
                     self._draw_instagram_icon(x0, iy, SOCIAL_ICON, icon_color)
                 else:
                     self._draw_calendar_icon(x0, iy, SOCIAL_ICON, icon_color)
                 tx = x0 + SOCIAL_ICON + 12
                 text_h = lbl.get_height() + (sub.get_height() + 2 if sub else 0)
-                ty = ry + (row_h - text_h) // 2
+                ty = top + (inner_h - text_h) // 2
                 self._screen.blit(lbl, (tx, ty))
                 if sub:
                     self._screen.blit(sub, (tx, ty + lbl.get_height() + 2))
