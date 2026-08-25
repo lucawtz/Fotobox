@@ -111,6 +111,15 @@ def cam(monkeypatch):
 
     monkeypatch.setattr(camera_mod.subprocess, "run", fake_run)
     monkeypatch.setattr(camera_mod.subprocess, "Popen", fake_popen)
+    # Camera() startet zwei Daemon-Threads. _watchdog ist oben stillgelegt,
+    # _hold_supervisor war es nicht — und er ueberlebte den Test: er pollt
+    # jede Sekunde und startet den Halter nach, sobald keiner laeuft. Nach
+    # dem Teardown ist subprocess.Popen wieder das echte, also startet er
+    # ein echtes gphoto2. Auf einer Dev-Maschine ohne Kamera faellt das nie
+    # auf; auf dem Pi belegt der Prozess das USB-Geraet, und die laufende
+    # Box meldet "Kamera getrennt", waehrend ihr Live-Bild weiterlaeuft.
+    monkeypatch.setattr(camera_mod.Camera, "_hold_supervisor",
+                        lambda self: None)
 
     c = camera_mod.Camera()
     c.available = True
@@ -121,7 +130,10 @@ def cam(monkeypatch):
     c._stdbuf = None
     c.calls = calls
     c.state = state
-    return c
+    yield c
+    # Threads, die dieser Test angelegt hat, sterben lassen — auch die, die
+    # kuenftig dazukommen. Ohne das laufen sie in den naechsten Test hinein.
+    c._running = False
 
 
 def _write(cwd, filename):
