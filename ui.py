@@ -1605,12 +1605,13 @@ class UI:
         Aufrufer wartet nach dieser Methode auf das done-Event.
 
         `lead_s` zieht diesen Start um Sekunden vor das Ende des Countdowns.
-        Grund: zwischen der Anfrage und der Belichtung liegen auf der EOS 700D
-        Ø 3,73 s (min 3,18 / max 4,40, gemessen ueber 29 Aufnahmen) — das
-        Freiraeumen des USB-Geraets und die Eigenlatenz der Kamera zusammen.
-        Ohne Vorlauf faellt der Verschluss also erst, wenn "Lächeln!" schon
-        wieder weg ist. Der Wert steht als capture_lead_s in der Config, die
-        Herleitung im Kommentar dort.
+        Grund: zwischen Anfrage und Belichtung liegen auf der EOS 700D Ø 3,25 s
+        — das Freiraeumen des USB-Geraets (Ø 1,24 s) und das Ausloesen selbst
+        (Ø 2,0 s, inklusive Live-View-Ausstieg). Ohne Vorlauf faellt der
+        Verschluss also erst, wenn "Lächeln!" schon wieder weg ist. Der Wert
+        steht als capture_lead_s in der Config, die Herleitung im Kommentar
+        dort — samt der Warnung, dass die Log-Zeile den Marker misst und
+        nicht den Verschluss.
 
         Ist `lead_s` groesser als `seconds`, startet die Aufnahme mit dem
         Countdown — frueher geht nicht, und genau das ist bei der

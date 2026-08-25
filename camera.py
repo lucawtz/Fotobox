@@ -539,20 +539,26 @@ class Camera:
         Standbild steht also schon, bevor der Verschluss faellt.
 
         Wie lang, ist eine Eigenschaft der Kamera und nicht der Software.
-        Auf der EOS 700D ueber 29 Aufnahmen: Standbild Ø 2,48 s vor dem
-        Verschluss, davor Ø 1,24 s fuers Freiraeumen des Geraets — von der
-        Anfrage bis zur Belichtung also Ø 3,73 s (min 3,18 / max 4,40).
+        Auf der EOS 700D ueber 29 Aufnahmen: Ø 1,24 s fuers Freiraeumen des
+        Geraets, danach Ø 2,48 s bis zum Marker.
 
-        An dieser Summe haengt capture_lead_s, NICHT am zweiten Teil allein:
-        das Bild friert schon ein, wenn der Halte-Prozess stirbt. Wer die
-        Zahlen fuer seine Kamera braucht, liest sie hier ab, statt sie zu
-        schaetzen — genau dafuer steht die Zeile im Log.
+        Der Marker ist NICHT der Verschluss: _SHUTTER_MARKER meldet die
+        fertige Datei auf der Kamera und liegt per EXIF nachgemessen 0,34 bis
+        0,49 s nach der Belichtung. Diese Zeile misst also Ø 3,73 s ab
+        Anfrage, der Verschluss faellt rund 0,4 s frueher — bei Ø 3,25 s.
+        Genau darauf ist capture_lead_s kalibriert, und zwar auf die SUMME:
+        das Bild friert schon ein, wenn der Halte-Prozess stirbt.
+
+        Wer die Zahlen fuer seine Kamera braucht, liest sie hier ab statt sie
+        zu schaetzen — und zieht fuer den echten Verschluss die 0,4 s ab oder
+        misst EXIF gegen den Prozessstart.
         """
         shutter = marks.get("shutter")
         blind = "?" if shutter is None else f"{shutter - t_dark:.2f}"
         logger.info(
             "Aufnahme-Zeiten: Geraet frei nach %.2f s, Standbild %s s vor "
-            "dem Verschluss, Bild geladen nach %.2f s",
+            "der Datei-Meldung (Verschluss ~0,4 s frueher), Bild geladen "
+            "nach %.2f s",
             t_dark - t_req, blind, time.monotonic() - t_req)
 
 
@@ -563,8 +569,11 @@ class Camera:
         Live-View wird dort geweckt, wo er wieder sichtbar wird — siehe
         request_liveview() und main._capture_sequence.
 
-        `on_shutter` wird aufgerufen, sobald die Kamera die Belichtung hinter
-        sich hat — daran haengt die UI ihr "Lächeln!". Der Aufruf kommt aus
+        `on_shutter` wird aufgerufen, sobald die Kamera die Datei geschrieben
+        hat — also rund 0,4 s NACH der Belichtung (per EXIF nachgemessen).
+        Daran haengt die UI ihr "Lächeln!", das damit einen Wimpernschlag
+        laenger steht als noetig; frueher ist ueber die gphoto2-Ausgabe nicht
+        zu erfahren. Der Aufruf kommt aus
         dem Lese-Thread, muss also selbst thread-sicher sein und darf nicht
         blockieren. Bleibt der Marker aus, kommt der Callback gar nicht; die
         UI braucht dafuer eine eigene Obergrenze.

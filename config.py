@@ -290,29 +290,43 @@ _DEFAULTS: dict = {
     # Live-Bildes ist. Ganz ohne Rahmen geht keine der Methoden.
     "camera_af_method": "2",
     # Wie viele Sekunden vor dem Ende des Countdowns ausgeloest wird. Zwischen
-    # der Anfrage und der Belichtung liegt eine Verzoegerung, die die Box nicht
-    # wegbekommt. Sie hat ZWEI Teile, und der frueher hier genannte EXIF-Wert
-    # (1,1 s / 1,9 s) mass nur den zweiten:
+    # Anfrage und Belichtung liegt eine Verzoegerung, die die Box nicht
+    # wegbekommt — auf der EOS 700D:
     #
-    #   1. Geraet freiraeumen   Ø 1,24 s — der Halte-Prozess wird beendet,
-    #      damit gphoto2 das USB-Geraet exklusiv bekommt. Hier friert das
-    #      Live-Bild ein, lange bevor der Verschluss faellt.
-    #   2. Kamera-Eigenlatenz   Ø 2,48 s — Spiegel, AF, Belichtung.
+    #   1. Geraet freiraeumen    Ø 1,24 s — der Halte-Prozess wird beendet,
+    #      damit gphoto2 das USB-Geraet exklusiv bekommt. HIER friert das
+    #      Live-Bild ein, rund zwei Sekunden vor dem Verschluss.
+    #   2. Ausloesen             Ø 2,0 s — Live-View verlassen, Spiegel, AF,
+    #      Belichtung.
+    #   ────────────────────────────────
+    #   Anfrage → BELICHTUNG     Ø 3,25 s
     #
-    # Zusammen Ø 3,73 s (min 3,18 / max 4,40), gemessen ueber 29 Aufnahmen auf
-    # der EOS 700D aus den "Aufnahme-Zeiten"-Zeilen im Log. Mit den alten 0,9 s
-    # fiel der Verschluss also rund 2,8 s NACH der Null: der Gast sah 3-2-1,
-    # "Lächeln!", das Standbild — und wartete dann noch drei Sekunden.
+    # ACHTUNG bei eigenen Messungen: die "Aufnahme-Zeiten"-Zeile im Log haengt
+    # am Marker "New file is in location", und der meldet die fertige Datei
+    # AUF DER KAMERA — per EXIF nachgemessen 0,34 bis 0,49 s NACH der
+    # Belichtung. Die dort genannten Ø 3,73 s sind also der Marker, nicht der
+    # Verschluss. Wer den Verschluss will, misst EXIF (DateTimeOriginal +
+    # SubSecTimeOriginal) gegen den Prozessstart und rechnet den Versatz der
+    # Kamera-Uhr heraus — die geht selten richtig.
     #
-    # 3,1 liegt knapp unter dem gemessenen MINIMUM, nicht unter dem Mittel:
-    # damit loest auch die schnellste Aufnahme nicht vor der Null aus. Zu spaet
-    # ist unkritisch, weil "Lächeln!" bis zum echten Ausloesesignal stehen
-    # bleibt — zu frueh trifft einen Gast, der noch nicht bereit ist.
+    # Der frueher hier stehende Wert 0,9 kam aus genau so einer EXIF-Messung,
+    # mass aber nur Teil 2 ab gphoto2-Start und uebersah Teil 1 und den
+    # Live-View-Ausstieg. Der Verschluss fiel damit rund 2,4 s nach der Null.
     #
-    # Ist der Countdown kuerzer als der Vorlauf (Standard: 3 s), startet die
-    # Aufnahme mit dem Countdown. Die Totzeit ist dann nicht weg, sie liegt
-    # aber IM Countdown statt dahinter — und dort ist Warten das, was der
-    # Gast ohnehin tut.
+    # 3,1 liegt knapp unter den gemessenen 3,25 s: der Verschluss faellt damit
+    # rund 0,15 s NACH der Null. Zu spaet ist unkritisch, weil "Lächeln!" bis
+    # zum Ausloesesignal stehen bleibt — zu frueh trifft einen Gast, der noch
+    # nicht bereit ist.
+    #
+    # Der Countdown darf laenger sein als der Vorlauf, und laenger ist besser:
+    # der Verschluss sitzt dann immer noch 0,15 s nach der Null, aber die
+    # Gaeste bekommen mehr Live-Bild zum Ausrichten, bevor es einfriert.
+    #
+    #   Live-Zeit zum Ausrichten = countdown_duration - 3,1 + 1,24
+    #
+    # Bei countdown_duration = 3 bleibt nur gut eine Sekunde. Ist der Countdown
+    # kuerzer als der Vorlauf, startet die Aufnahme mit ihm — frueher geht
+    # nicht.
     "capture_lead_s": 3.1,
     # Holt den Live-View selbsttaetig zurueck, wenn ueber Sekunden kein Bild
     # ueber HDMI kommt. Auf false bleibt es beim manuellen Wecken per Q bzw.
