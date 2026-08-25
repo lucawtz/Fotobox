@@ -538,11 +538,15 @@ class Camera:
         stirbt dafuer, und damit ist der Live-View der Kamera aus. Das
         Standbild steht also schon, bevor der Verschluss faellt.
 
-        Wie lang, ist eine Eigenschaft der Kamera und nicht der Software —
-        auf der EOS 700D per EXIF gemessen rund 1,1 s, beim ersten Schuss
-        nach Ruhe eher 1,9 s. An genau dieser Zahl haengt capture_lead_s.
-        Wer sie fuer seine Kamera wissen will, liest sie hier ab, statt sie
-        zu schaetzen.
+        Wie lang, ist eine Eigenschaft der Kamera und nicht der Software.
+        Auf der EOS 700D ueber 29 Aufnahmen: Standbild Ø 2,48 s vor dem
+        Verschluss, davor Ø 1,24 s fuers Freiraeumen des Geraets — von der
+        Anfrage bis zur Belichtung also Ø 3,73 s (min 3,18 / max 4,40).
+
+        An dieser Summe haengt capture_lead_s, NICHT am zweiten Teil allein:
+        das Bild friert schon ein, wenn der Halte-Prozess stirbt. Wer die
+        Zahlen fuer seine Kamera braucht, liest sie hier ab, statt sie zu
+        schaetzen — genau dafuer steht die Zeile im Log.
         """
         shutter = marks.get("shutter")
         blind = "?" if shutter is None else f"{shutter - t_dark:.2f}"

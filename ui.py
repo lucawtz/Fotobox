@@ -1605,10 +1605,17 @@ class UI:
         Aufrufer wartet nach dieser Methode auf das done-Event.
 
         `lead_s` zieht diesen Start um Sekunden vor das Ende des Countdowns.
-        Grund: zwischen dem gphoto2-Aufruf und der Belichtung liegen auf der
-        EOS 700D rund 1,1 s (gemessen ueber EXIF, erster Schuss nach Ruhe eher
-        1,9 s) — ohne Vorlauf faellt der Verschluss also erst, wenn "Lächeln!"
-        schon wieder weg ist. Der Wert steht als capture_lead_s in der Config.
+        Grund: zwischen der Anfrage und der Belichtung liegen auf der EOS 700D
+        Ø 3,73 s (min 3,18 / max 4,40, gemessen ueber 29 Aufnahmen) — das
+        Freiraeumen des USB-Geraets und die Eigenlatenz der Kamera zusammen.
+        Ohne Vorlauf faellt der Verschluss also erst, wenn "Lächeln!" schon
+        wieder weg ist. Der Wert steht als capture_lead_s in der Config, die
+        Herleitung im Kommentar dort.
+
+        Ist `lead_s` groesser als `seconds`, startet die Aufnahme mit dem
+        Countdown — frueher geht nicht, und genau das ist bei der
+        Standard-Dauer von 3 s der Fall. Die Totzeit ist dann nicht
+        verschwunden, sie liegt aber im Countdown statt dahinter.
 
         `shutter` ist ein Event, das die Kamera setzt, sobald ausgeloest wurde.
         Damit endet "Lächeln!" am echten Ereignis statt nach blind gesetzten

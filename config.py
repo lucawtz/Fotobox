@@ -290,13 +290,30 @@ _DEFAULTS: dict = {
     # Live-Bildes ist. Ganz ohne Rahmen geht keine der Methoden.
     "camera_af_method": "2",
     # Wie viele Sekunden vor dem Ende des Countdowns ausgeloest wird. Zwischen
-    # dem gphoto2-Aufruf und der Belichtung liegt eine Verzoegerung, die die
-    # Kamera vorgibt und die Box nicht wegbekommt — auf der EOS 700D per EXIF
-    # gemessen 1,1 s im Betrieb, rund 1,9 s beim ersten Schuss nach Ruhe. Ohne
-    # Vorlauf faellt der Verschluss erst, wenn "Lächeln!" schon wieder weg ist.
-    # Etwas unter der gemessenen Verzoegerung ist Absicht: lieber kurz nach dem
-    # "Lächeln!" ausloesen als davor.
-    "capture_lead_s": 0.9,
+    # der Anfrage und der Belichtung liegt eine Verzoegerung, die die Box nicht
+    # wegbekommt. Sie hat ZWEI Teile, und der frueher hier genannte EXIF-Wert
+    # (1,1 s / 1,9 s) mass nur den zweiten:
+    #
+    #   1. Geraet freiraeumen   Ø 1,24 s — der Halte-Prozess wird beendet,
+    #      damit gphoto2 das USB-Geraet exklusiv bekommt. Hier friert das
+    #      Live-Bild ein, lange bevor der Verschluss faellt.
+    #   2. Kamera-Eigenlatenz   Ø 2,48 s — Spiegel, AF, Belichtung.
+    #
+    # Zusammen Ø 3,73 s (min 3,18 / max 4,40), gemessen ueber 29 Aufnahmen auf
+    # der EOS 700D aus den "Aufnahme-Zeiten"-Zeilen im Log. Mit den alten 0,9 s
+    # fiel der Verschluss also rund 2,8 s NACH der Null: der Gast sah 3-2-1,
+    # "Lächeln!", das Standbild — und wartete dann noch drei Sekunden.
+    #
+    # 3,1 liegt knapp unter dem gemessenen MINIMUM, nicht unter dem Mittel:
+    # damit loest auch die schnellste Aufnahme nicht vor der Null aus. Zu spaet
+    # ist unkritisch, weil "Lächeln!" bis zum echten Ausloesesignal stehen
+    # bleibt — zu frueh trifft einen Gast, der noch nicht bereit ist.
+    #
+    # Ist der Countdown kuerzer als der Vorlauf (Standard: 3 s), startet die
+    # Aufnahme mit dem Countdown. Die Totzeit ist dann nicht weg, sie liegt
+    # aber IM Countdown statt dahinter — und dort ist Warten das, was der
+    # Gast ohnehin tut.
+    "capture_lead_s": 3.1,
     # Holt den Live-View selbsttaetig zurueck, wenn ueber Sekunden kein Bild
     # ueber HDMI kommt. Auf false bleibt es beim manuellen Wecken per Q bzw.
     # Tasterkombination.
