@@ -17,6 +17,28 @@
 /** Ueberlebt einen Reload im Popup — die URL-Markierung sehen wir nur einmal. */
 const FLAG_KEY = "fotobox.captive";
 
+/** Hat der Gast die Anmeldeseite hinter sich? Ueberlebt Reloads und die
+ *  Navigation zwischen Event und Foto, damit sie nicht dauernd wiederkommt. */
+const SEEN_KEY = "fotobox.captive.seen";
+
+export function landingSeen(): boolean {
+  try {
+    return sessionStorage.getItem(SEEN_KEY) === "1";
+  } catch {
+    // Storage gesperrt (privates Fenster): dann eben jedes Mal wieder. Die
+    // Anmeldeseite ist ein Hinweis, kein Zustand, an dem etwas haengt.
+    return false;
+  }
+}
+
+export function markLandingSeen(): void {
+  try {
+    sessionStorage.setItem(SEEN_KEY, "1");
+  } catch {
+    /* siehe landingSeen */
+  }
+}
+
 /** So lange warten wir auf den echten Browser, bevor wir das Popup
  *  schliessen — und so lange steht der Zwischenschritt auf dem Schirm.
  *

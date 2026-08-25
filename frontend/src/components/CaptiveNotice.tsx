@@ -13,7 +13,10 @@ import {
 } from "@mui/material";
 import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
 import WifiRoundedIcon from "@mui/icons-material/WifiRounded";
-import { galleryAddress, isCaptivePopup, isIOS, leaveCaptivePopup } from "../captive";
+import {
+  galleryAddress, isCaptivePopup, isIOS, landingSeen, leaveCaptivePopup,
+  markLandingSeen,
+} from "../captive";
 
 /** Wie der Gast seinen richtigen Browser nennt. */
 const browserName = () => (isIOS() ? "Safari" : "deinem Browser");
@@ -158,6 +161,76 @@ export function CaptiveDialog({ open, onClose }: DialogProps) {
       </>}
     </Dialog>
   );
+}
+
+/**
+ * Die Anmeldeseite — das Erste, was im WLAN-Fenster steht.
+ *
+ * Vorher stand dort die Galerie mit einem Hinweisstreifen obendrauf, und
+ * genau das war das Problem: das Fenster sah aus wie die echte Galerie. Der
+ * Gast wusste nicht, wo er ist, und hatte keinen Grund, irgendetwas zu
+ * tippen. Solange die Anmeldung aber offen steht, faengt iOS JEDEN
+ * Netzzugriff des Geraets ab — auch einen gescannten Galerie-Code, der in
+ * Safari gehoert. Am Geraet sah das so aus, als waere der Code kaputt.
+ *
+ * Deshalb steht das Verbinden vorn und nicht als Fussnote. Es kostet einen
+ * Tipp vor dem ersten Bild und macht dafuer den Rest des Abends
+ * berechenbar. Wer nur schnell gucken will, kommt ueber den Link darunter
+ * trotzdem sofort in die Galerie — im Fenster, mit dessen Grenzen.
+ */
+export function CaptiveLanding({ onSkip }: { onSkip: () => void }) {
+  const [leaving, setLeaving] = useState(false);
+  return (
+    <Dialog open fullScreen>
+      {leaving ? <FinishingView /> : (
+        <DialogContent
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            alignItems: "center",
+            textAlign: "center",
+            gap: 2,
+            px: 3,
+          }}
+        >
+          <WifiRoundedIcon color="primary" sx={{ fontSize: 56 }} />
+          <Typography variant="h5" sx={{ fontWeight: 600 }}>
+            Fast geschafft
+          </Typography>
+          <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 340 }}>
+            Noch ein Tipp, dann bist du richtig im WLAN — und die Fotos
+            lassen sich auf dein Handy speichern.
+          </Typography>
+          <Button
+            variant="contained"
+            size="large"
+            onClick={() => setLeaving(true)}
+            startIcon={<WifiRoundedIcon />}
+            sx={{ mt: 1, py: 1.5, px: 5, fontSize: "1.1rem", borderRadius: 99 }}
+          >
+            Verbinden
+          </Button>
+          <Box
+            component="button"
+            onClick={() => { markLandingSeen(); onSkip(); }}
+            sx={{
+              mt: 1, p: 1, border: 0, bgcolor: "transparent",
+              color: "text.secondary", font: "inherit",
+              textDecoration: "underline", cursor: "pointer",
+            }}
+          >
+            Nur gucken? Fotos ansehen
+          </Box>
+        </DialogContent>
+      )}
+    </Dialog>
+  );
+}
+
+/** Steht die Anmeldeseite noch an? */
+export function captiveLandingPending(): boolean {
+  return isCaptivePopup() && !landingSeen();
 }
 
 /**

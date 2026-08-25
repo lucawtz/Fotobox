@@ -1,8 +1,9 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import Gallery from "./pages/Gallery";
 import EventGallery from "./pages/EventGallery";
 import PhotoView from "./pages/PhotoView";
+import { CaptiveLanding, captiveLandingPending } from "./components/CaptiveNotice";
 
 // Admin-Pages lazy laden — Gäste brauchen den Code nie, also nicht in den
 // Gallery-Bundle reinmischen. Spart ~300 KB+ beim ersten Galerie-Aufruf.
@@ -17,6 +18,11 @@ const AdminMaintenance = lazy(() => import("./pages/admin/AdminMaintenance"));
 const RequireAuth      = lazy(() => import("./pages/admin/RequireAuth"));
 
 export default function App() {
+  // Vor allen Routen, nicht in der Galerie: das Fenster kann auch direkt auf
+  // einem Event oder einem einzelnen Foto aufgehen, und die Anmeldung steht
+  // dann genauso an.
+  const [landing, setLanding] = useState(captiveLandingPending);
+  if (landing) return <CaptiveLanding onSkip={() => setLanding(false)} />;
   return (
     <Routes>
       <Route path="/" element={<Gallery />} />
