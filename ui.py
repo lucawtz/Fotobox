@@ -2465,10 +2465,15 @@ class UI:
         if pwd:
             rows.append(("Passwort", pwd, self._f_normal))
         elif self._cfg.get("hotspot_enabled", True):
-            # Ohne diese Zeile sucht der Gast nach einem Passwort, das es
-            # nicht gibt. Sie kostet nichts: sie steht an der Stelle, die
-            # die Passwort-Zeile sonst belegt.
-            rows.append(("Passwort", "nicht nötig", self._f_normal))
+            # Ohne einen Hinweis sucht der Gast nach einem Passwort, das es
+            # nicht gibt. Er darf aber nicht aussehen wie eines: hier stand
+            # "Passwort / nicht nötig" im selben 38-pt-Fettdruck, in dem
+            # sonst das echte Passwort steht — auf zwei Meter Abstand liest
+            # sich das wie eine Zugangsdatei, die man abtippen soll.
+            #
+            # Deshalb ohne Label und in der kleinen Schrift: eine Notiz zur
+            # Zeile darueber statt eines eigenen Werts.
+            rows.append((None, "Kein Passwort nötig", self._f_sub))
         return rows
 
     def _wifi_box_metrics(self) -> tuple:
@@ -2477,9 +2482,10 @@ class UI:
         rows = self._wifi_rows()
         if not rows:
             return (H, 0)
+        # Zeilen ohne Label (siehe _wifi_rows) tragen auch dessen Hoehe nicht.
         label_h = self._f_label.get_height()
-        box_h   = 22 + sum(label_h + 4 + f.get_height() + 14
-                           for _, _, f in rows)
+        box_h   = 22 + sum((label_h + 4 if label else 0) + f.get_height() + 14
+                           for label, _, f in rows)
         # Knapp ueber der Status-Bar: die ist seit der echten Schrift
         # hoeher, und ein fester Randwert liess die WLAN-Box in sie
         # hineinlaufen. 12 px Luft dazwischen reichen optisch.
@@ -3007,9 +3013,11 @@ class UI:
 
         ty = y + 14
         for label, value, font in rows:
-            lbl = self._f_label.render(label, True, self._theme["sidebar_dim"])
-            self._screen.blit(lbl, (x + 16, ty))
-            ty += lbl.get_height() + 2
+            if label:
+                lbl = self._f_label.render(label, True,
+                                           self._theme["sidebar_dim"])
+                self._screen.blit(lbl, (x + 16, ty))
+                ty += lbl.get_height() + 2
             val = font.render(value, True, self._theme["sidebar_text"])
             # Falls zu breit: skalieren.
             if val.get_width() > box_w - 32:
