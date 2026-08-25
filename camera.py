@@ -247,7 +247,28 @@ class Camera:
         # Live-Bild ab dem App-Start und niemand muss erst den Q-Knopf oder
         # den Display-Knopf an der Kamera druecken.
         self._hold_wanted = True
-        self._hold_start()
+        # Unter dem Kommando-Lock, wie ueberall sonst auch. _hold_start prueft
+        # erst, ob schon einer laeuft, und startet dann — ohne Lock koennen
+        # zwei Threads beides gleichzeitig tun. Startberechtigt sind drei:
+        # der Supervisor, _usb nach jedem gphoto2-Aufruf und _init hier aus
+        # dem Watchdog-Thread; die ersten beiden nehmen den Lock, diese
+        # Stelle tat es als einzige nicht.
+        #
+        # Der zweite Start ueberschreibt dann self._holder, und der erste
+        # Prozess laeuft als Waise weiter. Er haelt das USB-Geraet, jeder
+        # folgende Aufruf scheitert mit "Could not claim the USB device" —
+        # und weil _hold_alive() nur den bekannten Prozess kennt, meldet der
+        # Watchdog "Kamera getrennt", waehrend die Waise den Live-View munter
+        # weiterlaufen laesst. Genau diese Kombination war zu sehen:
+        # Fehlerbanner ueber einem laufenden Live-Bild.
+        if self._cmd_lock.acquire(timeout=self.BUSY_TIMEOUT_S):
+            try:
+                self._hold_start()
+            finally:
+                self._cmd_lock.release()
+        else:
+            logger.warning("Init: Kamera belegt — den Halter startet der "
+                           "Supervisor nach")
 
         self.available = True
         self.error_message = ""
