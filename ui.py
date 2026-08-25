@@ -1,4 +1,5 @@
 import functools
+import io
 import logging
 import math
 import os
@@ -3272,26 +3273,55 @@ class UI:
         out = np.concatenate([new_rgb, new_alpha], axis=2).astype(np.uint8)
         return Image.fromarray(out, "RGBA")
 
+    # Standard-Logo der Box: dieselbe Marke, die Galerie und Admin-Panel
+    # zeigen (frontend/src/components/TopBar.tsx). Bewusst die Datei aus dem
+    # Frontend statt einer Kopie unter Layout/ — eine Marke, eine Datei;
+    # zwei Kopien laufen beim naechsten Redesign auseinander.
+    #
+    # Hier stand Layout/logo_default.png, und die Datei gibt es nicht. Die
+    # Box fiel deshalb still auf die Initialen im Cream-Kreis zurueck, und
+    # niemand sah, dass ein Standard-Logo ueberhaupt vorgesehen war.
+    DEFAULT_LOGO = os.path.join("frontend", "public", "logo-mark.svg")
+
+    @staticmethod
+    def _load_logo_file(path: str, px: int = 512) -> pygame.Surface:
+        """Bilddatei laden — eine SVG dabei in `px` rastern.
+
+        SDL_image rastert eine SVG ohne width/height in der Groesse ihrer
+        viewBox. logo-mark.svg hat 96x96, der Cream-Kreis der Sidebar misst
+        aber 160 — hochskaliert waere die Marke sichtbar weich. Die
+        Attribute werden deshalb vor dem Laden gesetzt; die viewBox sorgt
+        dafuer, dass die Zeichnung mitwaechst.
+        """
+        if not path.lower().endswith(".svg"):
+            return pygame.image.load(path)
+        with open(path, "rb") as fh:
+            data = fh.read()
+        head = data.split(b">", 1)[0]
+        if b"<svg" in head and b"width=" not in head:
+            data = data.replace(b"<svg",
+                                b'<svg width="%d" height="%d"' % (px, px), 1)
+        return pygame.image.load(io.BytesIO(data), path)
+
     @staticmethod
     def _load_logo(path: str) -> Optional[pygame.Surface]:
-        """Lädt das aktive Logo. Wenn der konfigurierte Pfad fehlt,
-        wird auf Layout/logo_default.png (Box-Besitzer-Standard) zurück-
-        gefallen — das Default-Logo wird nicht durch Mieter-Uploads
-        überschrieben.
+        """Lädt das aktive Logo. Wenn der konfigurierte Pfad fehlt, wird auf
+        die Marke der Galerie zurückgefallen (DEFAULT_LOGO) — der Standard
+        wird nicht durch Mieter-Uploads überschrieben.
 
         Skalierung erfolgt nur grob (max 200 px). Die finale runde Form
         macht _make_circular_logo später, weil die Größe des Cream-Kreises
         in der Sidebar Layout-fest ist.
         """
         here = os.path.dirname(os.path.abspath(__file__))
-        fallback = os.path.join(here, "Layout", "logo_default.png")
+        fallback = os.path.join(here, UI.DEFAULT_LOGO)
         candidates = ([path] if path else []) + [fallback]
 
         for candidate in candidates:
             if not candidate or not os.path.isfile(candidate):
                 continue
             try:
-                img = pygame.image.load(candidate).convert_alpha()
+                img = UI._load_logo_file(candidate).convert_alpha()
                 max_h = 200
                 max_w = SIDEBAR_W - 40
                 sw, sh = img.get_size()
