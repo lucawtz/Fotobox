@@ -605,6 +605,10 @@ class UI:
         # _live_dst ist die wiederverwendete Ziel-Surface aus _live_surface,
         # _live_aspect das Format, nach dem sich der Rahmen richtet.
         self._live_dst: Optional[pygame.Surface] = None
+        # Ob das zuletzt gelieferte Bild frisch war oder gehalten, und der
+        # Cache fuer seine verschleierte Fassung (_veiled_surface).
+        self._live_is_held = False
+        self._veil_cache: Optional[tuple] = None
         self._live_aspect: float = self._LIVE_FALLBACK_ASPECT
         self._live: Optional[_LiveReader] = None
         try:
@@ -992,6 +996,7 @@ class UI:
         frame = self._fresh_live_frame()
         if frame is not None:
             self._note_live_signal(True)
+            self._live_is_held = False
             self._live_hold = frame
             self._live_hold_at = time.monotonic()
             return frame, None
@@ -999,6 +1004,7 @@ class UI:
         self._note_live_signal(False)
         if (self._live_hold is not None
                 and time.monotonic() - self._live_hold_at < self._LIVE_HOLD_S):
+            self._live_is_held = True
             return self._live_hold, None
         return None, "Bitte Display an der Kamera einschalten"
 
@@ -1653,12 +1659,11 @@ class UI:
         # bevorstand, und kostete zusaetzlich 300 ms Vorlauf.
         self._flash()
 
-    # Wie stark das Standbild waehrend der Aufnahme abgedunkelt wird — 0.45
-    # heisst, es behaelt 45 % seiner Helligkeit. Frueher lag dafuer eine
-    # schwarze Flaeche mit Alpha 150 darueber, das entspricht in etwa
-    # demselben Wert; hier steckt es in der Pixelrechnung statt in einem
-    # zweiten Blit.
-    _CAPTURE_SHADE = 0.45
+    # Wie hell das gehaltene Standbild bleibt — 0.45 heisst 45 % der
+    # urspruenglichen Helligkeit. Frueher lag dafuer eine schwarze Flaeche
+    # mit Alpha 120 bis 150 darueber; hier steckt es in der Pixelrechnung
+    # statt in einem zweiten Blit.
+    _VEIL_KEEP = 0.45
 
     def wait_for_capture(self, done, timeout: float = 35.0) -> bool:
         """Haelt die Render-Schleife am Leben, waehrend gphoto2 laeuft.
@@ -1681,55 +1686,15 @@ class UI:
         Rueckgabe: True wenn `done` rechtzeitig gesetzt wurde, sonst False.
         """
         deadline = time.monotonic() + timeout
-        frozen = self._frozen_backdrop()
 
         while not done.is_set():
             if time.monotonic() >= deadline:
                 return False
-            if frozen is not None:
-                self._screen.blit(frozen, (0, 0))
-            else:
-                # Kein Bild zum Einfrieren — dann wenigstens der schwarze
-                # Grund, den _draw_live_fullscreen ohnehin legt.
-                self._draw_live_fullscreen()
+            self._draw_live_fullscreen()
             pygame.display.flip()
             pygame.event.pump()
             pygame.time.wait(30)
         return True
-
-    def _frozen_backdrop(self) -> Optional[pygame.Surface]:
-        """Das stehende Live-Bild als Vollbild, weich und dunkel — oder None.
-
-        None heisst, dass gerade gar kein Bild da ist; dann gibt es nichts
-        einzufrieren und der Aufrufer faellt auf schwarz zurueck.
-
-        Geblurrt wird auf einem Achtel und danach hochgezogen, wie beim
-        Hintergrund des Ergebnis-Schirms: nach dem Gauss steckt keine hohe
-        Frequenz mehr im Bild, deshalb faellt die Vergroesserung nicht auf,
-        und der Gauss selbst kostet auf dem Achtel fast nichts.
-        """
-        frame, _ = self._live_frame_rgb()
-        if frame is None:
-            return None
-        fh, fw = frame.shape[:2]
-        scale = min(W / fw, H / fh)
-        nw, nh = max(1, int(fw * scale)), max(1, int(fh * scale))
-
-        small = cv2.resize(frame, (max(1, nw // 8), max(1, nh // 8)),
-                           interpolation=cv2.INTER_AREA)
-        small = cv2.GaussianBlur(small, (0, 0), sigmaX=6)
-        big = cv2.resize(small, (nw, nh), interpolation=cv2.INTER_LINEAR)
-        # Abdunkeln in derselben Rechnung — spart den zweiten Blit.
-        big = np.ascontiguousarray(
-            (big * self._CAPTURE_SHADE).astype(np.uint8))
-
-        surf = pygame.Surface((W, H))
-        surf.fill(C_BLACK)
-        rect = pygame.Rect(0, 0, nw, nh)
-        rect.center = (W // 2, H // 2)
-        surf.blit(pygame.image.frombuffer(big.tobytes(), (nw, nh), "RGB"),
-                  rect)
-        return surf
 
     def wait_for_liveview(self, timeout: float) -> bool:
         """Haelt die Schleife am Leben, bis wieder ein echtes Live-Bild kommt.
@@ -2474,10 +2439,16 @@ class UI:
 
         Waehrend der Aufnahme steht hier das gehaltene Standbild — der
         Live-View der Kamera ist dann aus, weil gphoto2 das USB-Geraet
-        exklusiv braucht (siehe _live_frame_rgb). Es unscharf und
-        abgedunkelt zu zeigen, damit es nicht wie ein lebendes Bild
-        aussieht, war einen Versuch wert und sah schlechter aus als das
-        Problem: Standbild bleibt Standbild.
+        exklusiv braucht (siehe _live_frame_rgb). Es wird deshalb
+        weichgezeichnet und abgedunkelt: scharf sieht es aus wie ein
+        lebendes Bild und behauptet damit "Foto ist im Kasten", waehrend
+        der Verschluss noch bevorsteht.
+
+        Das gab es schon einmal (33a8f2e) und wurde verworfen (3824d8b) —
+        der Wisch sah in der Box schlechter aus als das Problem. Dort war
+        er allerdings ein Down-/Upscale um Faktor 14, also gekachelt statt
+        weich; das ist derselbe Fehler, den der Hintergrund des
+        Ergebnis-Schirms hatte. Mit echtem Gauss neu beurteilt.
         """
         self._screen.fill(C_BLACK)
         frame, _ = self._live_frame_rgb()
@@ -2486,9 +2457,39 @@ class UI:
         fh, fw = frame.shape[:2]
         scale = min(W / fw, H / fh)
         nw, nh = int(fw * scale), int(fh * scale)
-        frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
-        surf = pygame.image.frombuffer(frame.tobytes(), (nw, nh), "RGB")
+        if self._live_is_held:
+            surf = self._veiled_surface(frame, nw, nh)
+        else:
+            frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+            surf = pygame.image.frombuffer(frame.tobytes(), (nw, nh), "RGB")
         self._screen.blit(surf, ((W - nw) // 2, (H - nh) // 2))
+
+    def _veiled_surface(self, frame, w: int, h: int) -> pygame.Surface:
+        """Gehaltenes Standbild: weichgezeichnet und abgedunkelt.
+
+        Gerechnet wird einmal je Standbild, nicht je Frame: solange das
+        Bild gehalten wird, aendert es sich nicht, und der Schirm laeuft
+        mit 30 fps. Der Schluessel ist der Zeitstempel des Standbilds —
+        kommt ein neues, faellt der Cache von selbst.
+
+        Gauss auf einem Achtel und danach hoch: nach dem Gauss steckt keine
+        hohe Frequenz mehr im Bild, deshalb faellt die Vergroesserung nicht
+        auf. Der frueher hier verwendete Down-/Upscale sparte den Gauss und
+        hinterliess dafuer sichtbare Kacheln.
+        """
+        key = (self._live_hold_at, w, h)
+        if self._veil_cache and self._veil_cache[0] == key:
+            return self._veil_cache[1]
+
+        small = cv2.resize(frame, (max(1, w // 8), max(1, h // 8)),
+                           interpolation=cv2.INTER_AREA)
+        small = cv2.GaussianBlur(small, (0, 0), sigmaX=6)
+        big = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+        # Abdunkeln in derselben Rechnung — spart den zweiten Blit.
+        big = np.ascontiguousarray((big * self._VEIL_KEEP).astype(np.uint8))
+        surf = pygame.image.frombuffer(big.tobytes(), (w, h), "RGB").copy()
+        self._veil_cache = (key, surf)
+        return surf
 
     # ── QR-Code ────────────────────────────────────────────────────────────────
 
