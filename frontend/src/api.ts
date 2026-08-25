@@ -309,8 +309,6 @@ export const api = {
     deleteLogo: () =>
       xfetch("/api/admin/logo", { method: "DELETE" })
         .then(json<{ ok: boolean; error?: string; has_logo: boolean; has_default_logo: boolean }>),
-    reset: (confirm: string) =>
-      postJson("/api/admin/reset", { confirm }).then(json<DeleteResult>),
     // confirm nur noetig, wenn `photos` angehakt ist — der Server prueft das.
     handover: (steps: HandoverSteps, confirm?: string) =>
       postJson("/api/admin/handover", { ...steps, confirm })
