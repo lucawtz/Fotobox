@@ -325,10 +325,28 @@ _PROBE_SUCCESS: dict[str, tuple[Optional[str], str]] = {
     "/nm-check.txt": (_NM_SUCCESS, "text/plain"),
 }
 
-# Kurz genug, dass eine per DHCP weitergereichte IP nicht den halben Abend
-# lang das Popup des naechsten Gastes unterdrueckt; lang genug, dass niemand
-# mitten in der Feier erneut durch die Portal-Schleife muss.
-_CAPTIVE_RELEASE_TTL_S = 3 * 3600
+# Wie lange eine Freigabe gilt.
+#
+# Hier standen einmal drei Stunden, und das war der teuerste Wert im ganzen
+# Captive-Teil. Am Geraet nachgewiesen: wer einmal "In Safari oeffnen" tippt,
+# bekommt danach bei JEDEM Beitritt ein "du bist online" zurueck — iOS
+# schliesst daraus, dass es hier kein Portal gibt, und oeffnet nichts mehr.
+# Kein Popup, kein WLAN-Symbol, nach dem Scannen passiert sichtbar gar nichts.
+# Jeder Durchlauf verlaengerte das Fenster wieder, im Log stand die Freigabe
+# ueber zwei Tage hinweg siebenmal. Der Mechanismus, der den Gast einmal aus
+# dem Anmeldefenster herauslassen sollte, hat ihm das Anmeldefenster dauerhaft
+# verbaut.
+#
+# 15 Minuten reichen fuer ihren eigentlichen Zweck: das Handy soll den Wechsel
+# nach Safari nicht sofort wieder einkassieren. Danach ist das Portal wieder
+# scharf, und der naechste Beitritt fuehrt wieder in die Galerie.
+#
+# Der Preis ist bewusst in Kauf genommen: prueft iOS zwischendurch erneut,
+# kann das Anmeldefenster ein zweites Mal aufgehen. Das ist ein Popup zu viel
+# — die Alternative war ein Portal, das nie wieder aufging. Ausserdem ist der
+# Wechsel nach Safari seit dem Foto-Code auf dem Ergebnis-Schirm nicht mehr
+# der Hauptweg zum eigenen Bild (ui.py: _draw_qr_result).
+_CAPTIVE_RELEASE_TTL_S = 15 * 60
 _captive_released: dict[str, float] = {}
 _captive_lock = threading.Lock()
 

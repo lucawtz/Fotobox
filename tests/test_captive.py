@@ -240,3 +240,14 @@ def test_thumbnails_bleiben_draussen(app, caplog):
     app.get("/thumb/egal/foto.jpg", base_url=GALLERY,
             environ_base={"REMOTE_ADDR": PHONE})
     assert not any("/thumb/" in l for l in _log_lines(caplog))
+
+
+def test_freigabe_gilt_nur_kurz():
+    """Der Wert darf nicht unbemerkt zurueckwachsen.
+
+    Mit drei Stunden bekam ein Geraet nach dem ersten "In Safari oeffnen"
+    bei jedem Beitritt ein "du bist online" — iOS oeffnete danach nie
+    wieder ein Portal, und fuer den Gast passierte nach dem Scannen
+    sichtbar gar nichts. Jeder Durchlauf verlaengerte das Fenster erneut.
+    """
+    assert gallery_server._CAPTIVE_RELEASE_TTL_S <= 30 * 60
