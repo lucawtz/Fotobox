@@ -357,18 +357,61 @@ def gallery_host(data: dict) -> str:
 
 
 # ── Was der QR-Code am Boxbildschirm traegt ───────────────────────────────────
-# Den Galerie-Link. Hier stand einmal der WLAN-Zugang (WIFI:T:WPA;S:...;;),
-# damit ein Scan das Handy ins Netz traegt und das Captive-Portal die Galerie
-# hinterherschiebt. Am Geraet ist das durchgefallen: iOS tritt zwar bei,
-# blendet bei einem Netz ohne Internet aber weder das WLAN-Symbol ein noch
-# oeffnet es etwas, solange keine App das Netz anfasst. Fuer den Gast passierte
-# nach dem Scan sichtbar gar nichts — und er stand ohne Weg weiter da.
+# Den WLAN-Zugang. Ein Scan traegt das Handy ins Netz, und das Captive-Portal
+# schiebt die Galerie unmittelbar hinterher — ein Scan bis zu den Fotos.
 #
-# Verbinden kann jeder von Hand, SSID und Passwort stehen gross auf dem
-# Boxschirm. Was niemand kann, ist eine Adresse erraten, nachdem er das
-# Anmeldefenster geschlossen hat. Genau dafuer ist der Code jetzt da: er
-# fuehrt jederzeit zurueck in die Galerie, und zwar im echten Browser, weil
-# ein gescannter Link immer dort landet.
+# Das war schon einmal ausgebaut, und der Grund lohnt sich zu kennen: am
+# Geraet passierte nach dem Beitritt sichtbar nichts. Die Ursache war aber
+# nicht der Code, sondern die Captive-Freigabe. Sie galt drei Stunden, das
+# Testgeraet stand seit dem ersten "In Safari oeffnen" dauerhaft darauf, und
+# die Box beantwortete jeden Verbindungstest mit "du bist online" — also kein
+# Portal, kein WLAN-Symbol, nichts. Seit die Freigabe 15 Minuten gilt, geht
+# das Anmeldefenster wieder von selbst auf (am Geraet bestaetigt).
+#
+# Die Alternative waere der Galerie-Link. Der ist aber der einzige Einstieg,
+# der in einer Sackgasse enden kann: wer ihn scannt, ohne im WLAN zu sein,
+# bekommt eine Fehlerseite von Safari und keinen Hinweis, was fehlt.
+#
+# Zurueck in die Galerie fuehrt stattdessen der Code neben dem Foto auf dem
+# Ergebnis-Schirm (photo_url) — der landet im echten Browser, wo Speichern
+# funktioniert.
+
+
+_WIFI_QR_SPECIALS = ("\\", ";", ",", ":", '"')
+
+
+def _wifi_qr_escape(value: str) -> str:
+    """Sonderzeichen fuer den WIFI:-Payload maskieren."""
+    for ch in _WIFI_QR_SPECIALS:
+        value = value.replace(ch, "\\" + ch)
+    return value
+
+
+def build_wifi_qr(ssid: str, password: str) -> str:
+    """WIFI:-Payload fuer den Sidebar-Code. Leerer String = nicht baubar.
+
+    Leer kommt zurueck, wenn kein SSID gesetzt ist oder das Passwort
+    zwischen 1 und 7 Zeichen liegt: WPA2 verlangt mindestens 8, und
+    hotspot.start() verweigert kuerzere ebenfalls — es gaebe dann gar kein
+    Netz, in das der Code fuehren koennte. Ganz ohne Passwort ist der
+    Hotspot offen, das ist ein gueltiger Fall (T:nopass).
+
+    Rein hexadezimale Werte muessten laut Spec in Anfuehrungszeichen — das
+    betrifft aber nur 64-stellige Roh-PSKs, die hier niemand eintraegt. Ein
+    achtstelliges Zahlenpasswort ist zu kurz, um als PSK durchzugehen, und
+    wird von jedem Parser als Text gelesen. Anfuehrungszeichen wuerden dort
+    mehr kaputt machen als retten.
+    """
+    ssid = (ssid or "").strip()
+    password = password or ""
+    if not ssid:
+        return ""
+    if 0 < len(password) < 8:
+        return ""
+    if not password:
+        return f"WIFI:T:nopass;S:{_wifi_qr_escape(ssid)};;"
+    return (f"WIFI:T:WPA;S:{_wifi_qr_escape(ssid)};"
+            f"P:{_wifi_qr_escape(password)};;")
 
 
 def photo_url(data: dict, path: str) -> str:
@@ -393,6 +436,21 @@ def photo_url(data: dict, path: str) -> str:
     if not filename or not event or folder == picture_dir:
         return ""
     return f"{base}/photo/{quote(event)}/{quote(filename)}"
+
+
+def box_qr_payload(data: dict) -> str:
+    """Inhalt des selbst erzeugten QR-Codes auf dem Boxbildschirm.
+
+    WLAN-Payload, wenn die Box selbst der Access-Point ist — sonst die
+    Galerie-URL. Ohne eigenen Hotspot haengt die Box in einem fremden Netz,
+    dessen Zugangsdaten sie nicht kennt; dort ist der Link das einzige, was
+    der Code sinnvoll tragen kann.
+    """
+    if not data.get("hotspot_enabled", True):
+        return data.get("gallery_url", "")
+    return (build_wifi_qr(data.get("wifi_ssid", ""),
+                          data.get("wifi_password", ""))
+            or data.get("gallery_url", ""))
 
 
 _save_lock = threading.Lock()
