@@ -1703,42 +1703,66 @@ class UI:
         accent = C_RED if error else C_GREEN
         end = time.monotonic() + seconds
         while time.monotonic() < end:
-            self._screen.fill((12, 8, 4))
-            box = pygame.Rect(0, 0, 1200, 380)
-            box.center = (W // 2, H // 2)
-            pygame.draw.rect(self._screen, (28, 20, 12), box, border_radius=28)
-            pygame.draw.rect(self._screen, accent, box, width=5, border_radius=28)
-            # Titel und Detail umbrechen statt roh rendern. `detail` kommt
-            # von aussen — printing.py reicht Drucker-Fehlermeldungen durch
-            # (auf 80 Zeichen gekuerzt). Mit der echten Schrift passen in die
-            # 1200 px breite Box nur noch rund 57 Zeichen, eine typische
-            # CUPS-Meldung stand also ausserhalb des Kastens, genau dann wenn
-            # der Gast sie lesen soll.
-            # Beide Bloecke als EINE mittig sitzende Gruppe stapeln. Feste
-            # Mittelpunkte (frueher H/2-55 und H/2+35) tragen nur solange,
-            # wie beides einzeilig bleibt — bei drei Detailzeilen lief der
-            # Titel in die erste Detailzeile.
-            blocks = [b for b in (self._notice_title(title) + (C_WHITE,),
-                                  self._notice_detail(detail) + (C_DIM,))
-                      if b[1]]
-            GAP = 24
-            total = sum(len(l) * f.get_height() for f, l, _ in blocks)
-            total += GAP * (len(blocks) - 1)
-            ly = H // 2 - total // 2
-            for lines_font, lines, color in blocks:
-                for line in lines:
-                    surf = lines_font.render(line, True, color)
-                    self._screen.blit(surf, surf.get_rect(centerx=W // 2, top=ly))
-                    ly += lines_font.get_height()
-                ly += GAP
             left = max(0.0, end - time.monotonic())
-            bar_w = int(box.width * (left / seconds)) if seconds > 0 else 0
-            pygame.draw.rect(self._screen, accent,
-                             (box.left, box.bottom - 8, bar_w, 8),
-                             border_bottom_left_radius=28)
+            self._draw_notice_frame(title, detail, accent,
+                                    left / seconds if seconds > 0 else 0.0)
             pygame.display.flip()
             pygame.event.pump()
             pygame.time.wait(30)
+
+    def show_busy(self, title: str, detail: str = "") -> None:
+        """Ein einzelner Hinweis-Frame, ohne zu warten.
+
+        Fuer Arbeit, die den Hauptthread ohnehin blockiert: der Frame bleibt
+        genau so lange stehen, wie die Arbeit dauert, und kostet keine
+        zusaetzliche Zeit. show_notice waere hier falsch — es wartet seine
+        Sekunden ab und kaeme damit ZU der Wartezeit dazu, statt sie zu
+        erklaeren.
+
+        Kein Fortschrittsbalken: wie lange es dauert, weiss hier niemand, und
+        ein Balken, der nicht laeuft, sagt weniger als keiner.
+        """
+        self._draw_notice_frame(title, detail, C_GREEN, None)
+        pygame.display.flip()
+        pygame.event.pump()
+
+    def _draw_notice_frame(self, title: str, detail: str, accent,
+                           bar: Optional[float]) -> None:
+        """Ein Frame des Hinweis-Kastens. `bar` ist der verbleibende Anteil
+        des Balkens unten, None laesst ihn weg."""
+        self._screen.fill((12, 8, 4))
+        box = pygame.Rect(0, 0, 1200, 380)
+        box.center = (W // 2, H // 2)
+        pygame.draw.rect(self._screen, (28, 20, 12), box, border_radius=28)
+        pygame.draw.rect(self._screen, accent, box, width=5, border_radius=28)
+        # Titel und Detail umbrechen statt roh rendern. `detail` kommt
+        # von aussen — printing.py reicht Drucker-Fehlermeldungen durch
+        # (auf 80 Zeichen gekuerzt). Mit der echten Schrift passen in die
+        # 1200 px breite Box nur noch rund 57 Zeichen, eine typische
+        # CUPS-Meldung stand also ausserhalb des Kastens, genau dann wenn
+        # der Gast sie lesen soll.
+        # Beide Bloecke als EINE mittig sitzende Gruppe stapeln. Feste
+        # Mittelpunkte (frueher H/2-55 und H/2+35) tragen nur solange,
+        # wie beides einzeilig bleibt — bei drei Detailzeilen lief der
+        # Titel in die erste Detailzeile.
+        blocks = [b for b in (self._notice_title(title) + (C_WHITE,),
+                              self._notice_detail(detail) + (C_DIM,))
+                  if b[1]]
+        GAP = 24
+        total = sum(len(l) * f.get_height() for f, l, _ in blocks)
+        total += GAP * (len(blocks) - 1)
+        ly = H // 2 - total // 2
+        for lines_font, lines, color in blocks:
+            for line in lines:
+                surf = lines_font.render(line, True, color)
+                self._screen.blit(surf, surf.get_rect(centerx=W // 2, top=ly))
+                ly += lines_font.get_height()
+            ly += GAP
+        if bar is not None:
+            pygame.draw.rect(self._screen, accent,
+                             (box.left, box.bottom - 8,
+                              int(box.width * bar), 8),
+                             border_bottom_left_radius=28)
 
     def _draw_countdown_frame(self, number: int, photo_num: int, total: int):
         self._draw_live_fullscreen()
@@ -1819,11 +1843,14 @@ class UI:
         canvas.blit(shade, (0, 0))
 
         # Vordergrund: contain statt cover — das komplette Foto bleibt sichtbar,
-        # es wird also niemandem der Kopf abgeschnitten.
-        fit = min(W / iw, H / ih)
+        # es wird also niemandem der Kopf abgeschnitten. Gerechnet wird in die
+        # Breite links der Code-Spalte, nicht in den ganzen Schirm: der Code
+        # soll neben dem Bild stehen und nicht darauf.
+        area_w = W - self.RESULT_QR_COL
+        fit = min(area_w / iw, H / ih)
         nw, nh = max(1, int(iw * fit)), max(1, int(ih * fit))
         sharp = pygame.transform.smoothscale(img, (nw, nh))
-        canvas.blit(sharp, sharp.get_rect(center=(W // 2, H // 2)))
+        canvas.blit(sharp, sharp.get_rect(center=(area_w // 2, H // 2)))
 
         self._result_cache[path] = canvas
         # Cap: älteste Einträge wegwerfen damit der Cache nicht endlos wächst
@@ -1876,7 +1903,11 @@ class UI:
         label = self._f_sub.render(hint, True, self._theme["panel_bg"])
         card_w = QR + PAD * 2
         card_h = QR + PAD * 2 + label.get_height() + 6
-        x, y = W - card_w, PAD
+        # Mittig in der reservierten Spalte, und vertikal mittig ueber dem
+        # Button-Verlauf — nicht oben in der Ecke: dort sass der Code, als er
+        # noch auf dem Bild lag, und neben dem Bild wirkt das aus der Achse.
+        x = W - self.RESULT_QR_COL + (self.RESULT_QR_COL - card_w) // 2
+        y = max(PAD, (H - self._SCRIM_H - card_h) // 2)
 
         # Creme statt Weiss: der Code bringt seine Quiet-Zone selbst in
         # dieser Farbe mit, ein weisser Rahmen zöge eine sichtbare Kante
@@ -3053,6 +3084,13 @@ class UI:
     # 130 px waeren das 3 px je Modul, bei 260 px sind es 6 bis 7. Platz
     # ist da: 260 px sind auf 1920 px Breite ein Siebtel.
     RESULT_QR_SIZE  = 260
+    # Breite der Spalte rechts, in der der Foto-Code sitzt. Das Foto wird nur
+    # in den Rest hineingerechnet, statt den ganzen Schirm zu fuellen: vorher
+    # lag der Code oben rechts AUF dem Bild und verdeckte genau das, was der
+    # Gast sich gerade ansieht. Aus der Kachelgroesse abgeleitet, damit beide
+    # nicht auseinanderlaufen — 16 px Innenrand je Seite wie in
+    # _draw_qr_result, dazu 24 px Luft nach aussen und zum Bild.
+    RESULT_QR_COL   = RESULT_QR_SIZE + 2 * 16 + 2 * 24
     QR_BOX          = 10     # Rendergrösse je Modul vor dem Herunterskalieren.
     QR_MIN_CONTRAST = 3.0    # WCAG-Verhältnis Modul zu Grund, sonst s/w.
     # Ab welcher Helligkeit logo_circle als Kartengrund taugt (Verhältnis

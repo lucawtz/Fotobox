@@ -155,6 +155,12 @@ def _collage(ui: UI, camera, cfg: dict) -> Optional[str]:
             _restore_liveview(ui, camera)
 
     if len(shots) == COLLAGE_SHOTS:
+        # Vier Bilder zusammenrechnen dauert auf dem Pi gut drei Sekunden.
+        # Ohne Ansage steht der Gast vor einem Schirm, auf dem nichts mehr
+        # passiert, und haelt die Box fuer haengen geblieben. show_busy statt
+        # show_notice: der Frame steht genau so lange wie die Arbeit und
+        # verlaengert sie nicht.
+        ui.show_busy("Collage wird erstellt", "Gleich fertig…")
         return collage_mod.make_collage(shots, events.current_event_dir(cfg))
 
     # Abgebrochene Collage: angefangene Einzelfotos nicht in der Galerie

@@ -23,6 +23,7 @@ class FakeUI:
 
     def __init__(self):
         self.notices = []
+        self.busy = []
         self.countdowns = []
         self.leads = []
         self.shutter_set = []
@@ -51,6 +52,9 @@ class FakeUI:
 
     def show_notice(self, title, detail="", seconds=3.5, error=True):
         self.notices.append((title, detail))
+
+    def show_busy(self, title, detail=""):
+        self.busy.append((title, detail))
 
     def pause_live_autowake(self, paused):
         self.autowake.append(paused)
@@ -161,6 +165,22 @@ def test_liveview_is_woken_between_collage_shots(cfg, flow):
 
     assert cam.wakes == [1, 2, 3, 4], \
         "nach jedem Shot einmal — nach dem letzten ueber _capture_sequence"
+
+
+def test_collage_says_it_is_working_before_it_starts_rendering(cfg, flow):
+    """Vier Bilder zusammenrechnen dauert sichtbar lange.
+
+    Ohne Ansage steht der Gast vor einem Schirm, auf dem nichts passiert.
+    Beim Einzelfoto gibt es nichts zusammenzurechnen, dort darf sie nicht
+    kommen.
+    """
+    ui, _ = flow
+    main._capture_sequence(ui, FakeCamera(), cfg, "collage")
+    assert [t for t, _ in ui.busy] == ["Collage wird erstellt"]
+
+    ui.busy.clear()
+    main._capture_sequence(ui, FakeCamera(), cfg, "single")
+    assert ui.busy == []
 
 
 def test_liveview_is_forced_back_when_the_picture_stays_away(cfg, flow):
