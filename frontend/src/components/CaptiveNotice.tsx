@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Box,
   Button,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -11,7 +12,6 @@ import {
   Typography,
 } from "@mui/material";
 import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
-import QrCodeScannerRoundedIcon from "@mui/icons-material/QrCodeScannerRounded";
 import WifiRoundedIcon from "@mui/icons-material/WifiRounded";
 import { galleryAddress, isCaptivePopup, isIOS, leaveCaptivePopup } from "../captive";
 
@@ -86,16 +86,18 @@ interface DialogProps {
  */
 export function CaptiveDialog({ open, onClose }: DialogProps) {
   const [busy, setBusy] = useState(false);
+  const [leaving, setLeaving] = useState(false);
 
   const go = async () => {
     setBusy(true);
-    await leaveCaptivePopup();
+    await leaveCaptivePopup(() => setLeaving(true));
     // Kein setBusy(false): ab hier verlaesst die Seite das Popup. Bliebe der
     // Gast wider Erwarten hier, waere ein zweiter Versuch ohnehin derselbe.
   };
 
   return (
     <Dialog open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs">
+      {leaving ? <FinishingView /> : <>
       <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1.25, pb: 1 }}>
         <PhotoCameraRoundedIcon color="primary" />
         So kommst du an dein Foto
@@ -153,6 +155,7 @@ export function CaptiveDialog({ open, onClose }: DialogProps) {
       <DialogActions>
         <Button onClick={onClose} disabled={busy}>Schließen</Button>
       </DialogActions>
+      </>}
     </Dialog>
   );
 }
@@ -163,15 +166,24 @@ export function CaptiveDialog({ open, onClose }: DialogProps) {
  */
 export default function CaptiveBanner() {
   const [ask, setAsk] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   if (!isCaptivePopup()) return null;
   return (
     <>
       <Alert
         severity="info"
-        icon={<QrCodeScannerRoundedIcon fontSize="inherit" />}
+        icon={<WifiRoundedIcon fontSize="inherit" />}
         action={
-          <Button color="inherit" size="small" onClick={() => setAsk(true)}>
-            Zeigen
+          // Der Knopf steht hier statt im Dialog. Vorher lag er hinter
+          // "Zeigen", also hinter einer Frage, die niemand hat — der Gast
+          // will an seine Fotos, nicht eine Erklaerung lesen.
+          <Button
+            color="inherit"
+            size="small"
+            variant="outlined"
+            onClick={() => setLeaving(true)}
+          >
+            Verbinden
           </Button>
         }
         sx={{
@@ -180,10 +192,67 @@ export default function CaptiveBanner() {
           "& .MuiAlert-message": { py: 0.5 },
         }}
       >
-        Dieses WLAN-Fenster kann keine Fotos speichern. In zwei Schritten
-        kommst du an deine Bilder.
+        Fotos speichern geht in diesem Fenster nicht.{" "}
+        <Box
+          component="button"
+          onClick={() => setAsk(true)}
+          sx={{
+            p: 0,
+            border: 0,
+            bgcolor: "transparent",
+            color: "inherit",
+            font: "inherit",
+            textDecoration: "underline",
+            cursor: "pointer",
+          }}
+        >
+          Wie es geht
+        </Box>
       </Alert>
       <CaptiveDialog open={ask} onClose={() => setAsk(false)} />
+      <LeavingDialog open={leaving} />
     </>
+  );
+}
+
+/**
+ * Was zwischen dem Tippen und der Erfolgsseite steht.
+ *
+ * Ohne diesen Schritt springt der Gast von der Galerie direkt auf eine
+ * weisse Seite, auf der nur "Success" steht — das sieht aus wie ein Fehler,
+ * ist aber die Losung, auf die sein Handy wartet. Genau dort sind Gaeste
+ * stehengeblieben. Hier steht vorher, was kommt und was danach zu tun ist.
+ *
+ * Der Dialog laesst sich nicht schliessen: die Seite verlaesst sich in
+ * OPEN_WAIT_MS von selbst, ein Abbrechen gibt es nicht mehr.
+ */
+function LeavingDialog({ open }: { open: boolean }) {
+  useEffect(() => {
+    if (open) void leaveCaptivePopup();
+  }, [open]);
+  return (
+    <Dialog open={open} fullWidth maxWidth="xs">
+      <FinishingView />
+    </Dialog>
+  );
+}
+
+/** Die Ansage selbst — geteilt von Banner und Dialog, damit derselbe Knopf
+ *  nicht an zwei Stellen zwei verschiedene Dinge tut. */
+function FinishingView() {
+  return (
+    <DialogContent sx={{ textAlign: "center", py: 4 }}>
+      <CircularProgress size={32} sx={{ mb: 2.5 }} />
+      <Typography variant="h6" sx={{ mb: 1.5 }}>
+        Fast fertig
+      </Typography>
+      <Typography variant="body2" color="text.secondary">
+        {finishHint()}
+      </Typography>
+      <Typography variant="body2" sx={{ mt: 2, fontWeight: 600 }}>
+        Danach: den QR-Code an der Box scannen — er öffnet dein Foto in{" "}
+        {browserName()}.
+      </Typography>
+    </DialogContent>
   );
 }

@@ -17,8 +17,14 @@
 /** Ueberlebt einen Reload im Popup — die URL-Markierung sehen wir nur einmal. */
 const FLAG_KEY = "fotobox.captive";
 
-/** So lange warten wir auf den echten Browser, bevor wir das Popup schliessen. */
-const OPEN_WAIT_MS = 1200;
+/** So lange warten wir auf den echten Browser, bevor wir das Popup
+ *  schliessen — und so lange steht der Zwischenschritt auf dem Schirm.
+ *
+ *  Frueher 1200 ms, gerade genug fuer den Sprungversuch. Der Gast bekommt in
+ *  dieser Zeit aber auch die Ansage zu lesen, was gleich passiert; darunter
+ *  ist die Erfolgsseite mit ihrem nackten "Success" wieder eine
+ *  Ueberraschung, und genau dort sind Gaeste stehengeblieben. */
+const OPEN_WAIT_MS = 2600;
 
 const ua = (): string => navigator.userAgent || "";
 
@@ -91,8 +97,15 @@ export const galleryAddress = (): string => location.host;
  * ihn nicht, faellt das still ins Leere — deshalb danach die Probe-URL: das
  * OS liest sie als "Anmeldung erledigt", schliesst das Popup und behaelt das
  * WLAN, statt es beim naechsten Test als tot zu verwerfen.
+ *
+ * `onWaiting` wird aufgerufen, sobald die Freigabe durch ist und die Seite
+ * gleich verlassen wird. Der Aufrufer blendet damit die Ansage ein, was als
+ * Naechstes passiert (CaptiveNotice). Klappt der Sprung in den echten
+ * Browser, sieht der Gast sie nie — dann ist er schon weg.
  */
-export async function leaveCaptivePopup(): Promise<void> {
+export async function leaveCaptivePopup(
+  onWaiting?: () => void,
+): Promise<void> {
   const target = `${location.origin}/`;
   try {
     await fetch("/api/captive/release", { method: "POST", cache: "no-store" });
@@ -100,6 +113,8 @@ export async function leaveCaptivePopup(): Promise<void> {
     // Freigabe nicht durchgekommen: dann bleibt das Popup eben offen. Der
     // Sprung in den echten Browser ist trotzdem einen Versuch wert.
   }
+
+  onWaiting?.();
 
   const deep = isIOS()
     ? target.replace(/^http:/, "x-safari-http:")
@@ -110,16 +125,13 @@ export async function leaveCaptivePopup(): Promise<void> {
         `S.browser_fallback_url=${encodeURIComponent(target)};end`
       : "";
 
-  if (!deep) {
-    location.href = probeUrl();
-    return;
-  }
-
+  // Auch ohne Sprungziel wird gewartet: die Ansage soll gelesen werden
+  // koennen, bevor die Erfolgsseite kommt.
   window.setTimeout(() => {
     // Seite im Hintergrund = der echte Browser ist aufgegangen. Dann hier
     // nichts mehr anfassen, sonst steht der Gast wieder im Popup.
     if (document.hidden) return;
     location.href = probeUrl();
   }, OPEN_WAIT_MS);
-  location.href = deep;
+  if (deep) location.href = deep;
 }
