@@ -522,15 +522,12 @@ class UI:
         # stehen darunter als Text (_draw_social_links) — beides fuehrt
         # ueber die Galerie, und drei Codes nebeneinander erschlagen den
         # Blick, ohne dass einer davon gewinnt.
-        # Was er traegt, entscheidet config.box_qr_payload: im Regelfall
-        # die WLAN-Zugangsdaten, nicht den Galerie-Link — die Begruendung
-        # steht dort.
+        # Er traegt den Galerie-Link — warum nicht den WLAN-Zugang, steht
+        # in config.py.
         # border=0: die Ruhezone liefert der Cremerand der Karte, damit
         # das Muster genauso gross ist wie bei den Codes darunter.
-        _payload = config.box_qr_payload(cfg)
-        self._qr_surf = self._make_qr(_payload, size=self.QR_SIZE, border=0,
-                                      label=self._qr_payload_log(_payload),
-                                      **self._qr_colors())
+        self._qr_surf = self._make_qr(self._qr_payload(), size=self.QR_SIZE,
+                                      border=0, **self._qr_colors())
         # Fassung des Galerie-Codes in Layout-Groesse — (Schluessel, Surface),
         # gefuellt von _gallery_qr.
         self._qr_scaled: Optional[tuple] = None
@@ -556,7 +553,7 @@ class UI:
         self._insta_qr_mtime    = self._mtime(self._insta_qr_seen)
         self._booking_qr_seen   = cfg.get("booking_qr_path", "")
         self._booking_qr_mtime  = self._mtime(self._booking_qr_seen)
-        self._qr_payload_seen   = config.box_qr_payload(cfg)
+        self._qr_payload_seen   = self._qr_payload()
         self._cfg_mtime         = self._mtime(config.CONFIG_PATH)
         self._theme_seen        = dict(cfg.get("theme") or {})
         # Von main.py gesetzt (gecachter CUPS-Zustand aus printing.status()).
@@ -756,11 +753,9 @@ class UI:
         # Theme-Wechsel.
         payload = self._qr_payload()
         if payload != self._qr_payload_seen or theme_changed:
-            logger.info("Live-Reload: QR neu erzeugt (%s)",
-                        self._qr_payload_log(payload))
+            logger.info("Live-Reload: QR neu erzeugt (%s)", payload)
             self._qr_surf         = self._make_qr(
-                payload, size=self.QR_SIZE, border=0,
-                label=self._qr_payload_log(payload), **self._qr_colors())
+                payload, size=self.QR_SIZE, border=0, **self._qr_colors())
             self._qr_payload_seen = payload
 
     # ── Homescreen ─────────────────────────────────────────────────────────────
@@ -2486,24 +2481,13 @@ class UI:
         return (245, 245, 245)
 
     def _qr_payload(self) -> str:
-        """Inhalt des Sidebar-Codes — WLAN-Zugang oder, ohne eigenen
-        Hotspot, der Galerie-Link. Entschieden wird das in
-        config.box_qr_payload; hier steht nur der kurze Weg dorthin, weil
-        Layout, Cache und Live-Reload alle danach fragen."""
-        return config.box_qr_payload(self._cfg)
+        """Inhalt des Sidebar-Codes: der Galerie-Link.
 
-    def _qr_payload_log(self, payload: str) -> str:
-        """Fassung des Payloads fuers Log.
-
-        Das WLAN-Passwort steht zwar gross auf dem Boxbildschirm, hat aber
-        im Journal nichts verloren — Logs werden weitergereicht, der
-        Bildschirm nicht. Ausserdem liest sich der maskierte WIFI:-String
-        in einer Logzeile grauenhaft.
+        Eigene Methode, weil Layout, Cache und Live-Reload alle danach
+        fragen — und weil hier einmal mehr stand als ein Dict-Zugriff
+        (siehe den Kommentar in config.py zum ausgebauten WLAN-Payload).
         """
-        if not payload.startswith("WIFI:"):
-            return payload
-        ssid = (self._cfg.get("wifi_ssid") or "").strip()
-        return f"WLAN '{ssid}'" if ssid else "WLAN-Zugang"
+        return self._cfg.get("gallery_url", "")
 
     def _qr_colors(self) -> dict:
         """Theme-Farben für den Galerie-QR: Module im Sidebar-Ton, Grund in
@@ -2593,7 +2577,6 @@ class UI:
         if cached and cached[0] == key:
             return cached[1]
         surf = self._make_qr(payload, size=side, border=0,
-                             label=self._qr_payload_log(payload),
                              **colors) or self._qr_surf
         self._qr_scaled = (key, surf)
         return surf
@@ -2635,27 +2618,7 @@ class UI:
         self._draw_social_links(cx, hint_y + hint.get_height() + 16)
 
     def _qr_caption(self) -> str:
-        """Beschriftung unter dem Code — sie muss sagen, was der Scan tut,
-        und nichts versprechen, was das Handy nicht einloest.
-
-        Hier stand einmal "Scannen: WLAN + Fotos". Am Geraet gemessen ist
-        das falsch: iOS tritt dem Netz zwar bei (der DHCP-Handshake steht
-        im Log der Box), blendet bei einem Netz ohne Internet aber weder
-        das WLAN-Symbol ein noch zieht es das Anmeldefenster hoch, solange
-        keine App das Netz anfasst. Fuer den Gast passiert nach dem Scan
-        also sichtbar gar nichts — und wer "+ Fotos" gelesen hat, wartet
-        auf eine Galerie, die nicht von selbst kommt.
-
-        Zu den Fotos fuehrt der Code neben dem Bild auf dem Ergebnis-Schirm
-        (_draw_qr_result). Der oeffnet Safari, weil ein gescannter Link das
-        immer tut. Dieser hier macht nur den ersten Schritt, und genau das
-        sagt er jetzt.
-
-        Traegt der Code den Galerie-Link statt der WLAN-Daten (kein eigener
-        Hotspot), fuehrt er tatsaechlich allein zu den Fotos.
-        """
-        if self._qr_payload().startswith("WIFI:"):
-            return "Scannen: WLAN verbinden"
+        """Beschriftung unter dem Code."""
         return "Fotos auf's Handy"
 
     def _social_rows(self) -> list:
@@ -3186,8 +3149,7 @@ class UI:
     @staticmethod
     def _make_qr(url: str, size: int = 160, border: int = 4,
                  fg: tuple = (0, 0, 0), bg: tuple = (255, 255, 255),
-                 eye: Optional[tuple] = None,
-                 label: Optional[str] = None) -> Optional[pygame.Surface]:
+                 eye: Optional[tuple] = None) -> Optional[pygame.Surface]:
         """QR-Surface in Theme-Farben, hochskaliert auf ein ganzzahliges
         Vielfaches der Modulbreite.
 
@@ -3207,18 +3169,14 @@ class UI:
         `fg`/`bg` sind Modul- und Grundfarbe, `eye` faerbt die inneren
         Kerne der drei Finder.
 
-        `label` ist das, was in den Logzeilen steht — gebraucht fuer den
-        WLAN-Payload, dessen Passwort nicht ins Journal gehoert.
-
         Reichen fg/bg nicht für QR_MIN_CONTRAST, fällt die Farbwahl still
         auf Schwarz-Weiss zurück: der Mieter kann jede Theme-Farbe frei
         setzen, und ein hübscher, aber unscannbarer Code wäre am
         Eventabend teurer als ein hässlicher.
         """
-        shown = label or url
         if not url:
-            logger.warning("QR-Code: leerer Inhalt — weder WLAN-Daten noch "
-                           "gallery_url in der config?")
+            logger.warning("QR-Code: keine Adresse — gallery_url leer in "
+                           "der config?")
             return None
         try:
             import qrcode
@@ -3264,7 +3222,7 @@ class UI:
                     "QR-Code für %s: nur %d px je Modul (%d Module auf "
                     "%d px) — kürzerer Inhalt oder grössere Kachel machen "
                     "das Muster gröber und damit besser scannbar",
-                    shown, scale, total, px)
+                    url, scale, total, px)
 
             img, styled = UI._qr_pil(qr, fg, bg, eye)
             # Runde Module leben von geglätteten Kanten, eckige von harten
@@ -3283,12 +3241,12 @@ class UI:
             if not UI._qr_readable(test):
                 logger.warning(
                     "QR-Code für %s ist bei %d px nicht decodierbar — "
-                    "QR-Card vergrössern oder Theme-Farben prüfen", shown, px)
+                    "QR-Card vergrössern oder Theme-Farben prüfen", url, px)
 
             surf = pygame.image.frombuffer(
                 img.tobytes("raw", "RGB"), (px, px), "RGB").copy()
             logger.info("QR-Code erstellt für %s (%d Module → %dx%d px, %s)",
-                        shown, total, px, px, "gestaltet" if styled else "eckig")
+                        url, total, px, px, "gestaltet" if styled else "eckig")
             return surf
         except ImportError as exc:
             logger.warning("qrcode/pillow fehlt: %s — QR deaktiviert", exc)

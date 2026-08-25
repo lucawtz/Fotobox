@@ -308,17 +308,12 @@ def check_network():
         else:
             warn(f"{ifname} hat keine IPv4-Adresse")
 
-    # Was der Code am Boxschirm traegt. Der WLAN-Payload ist der Normalfall:
-    # er verbindet das Handy, die Galerie kommt danach vom Captive-Portal.
-    payload = config.box_qr_payload(config.cfg)
-    if payload.startswith("WIFI:"):
-        ok("QR-Code am Boxschirm trägt den WLAN-Zugang",
-           f"SSID '{config.cfg.get('wifi_ssid', '')}' — ein Scan verbindet "
-           f"und öffnet die Galerie")
-    else:
-        warn("QR-Code am Boxschirm trägt nur den Galerie-Link",
-             f"{payload} — ohne eigenen Hotspot oder ohne gültige WLAN-Daten "
-             f"kann er das Handy nicht verbinden (config.box_qr_payload)")
+    # Was der Code in der Sidebar traegt: den Galerie-Link. Er ist der Weg
+    # zurueck, nachdem der Gast das Anmeldefenster geschlossen hat.
+    link = config.cfg.get("gallery_url", "")
+    (ok if link else warn)(
+        "QR-Code am Boxschirm trägt den Galerie-Link",
+        link or "gallery_url ist leer — dann zeichnet die Sidebar keinen Code")
 
     captive = "/etc/NetworkManager/dnsmasq-shared.d/captive.conf"
     try:

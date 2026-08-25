@@ -670,10 +670,10 @@ export default function ThemePreview(props: PreviewProps) {
               placeItems: "center",
             }}
           >
-            {/* 29 Module: der Code traegt die WLAN-Zugangsdaten, nicht den
-                Galerie-Link (config.box_qr_payload). "Fotobox" plus ein
-                zehnstelliges Passwort landen bei 29 — der Link waeren 25. */}
-            <QrArt size={socialQr} modules={29} />
+            {/* 25 Module: der Code traegt den Galerie-Link. Der WLAN-Zugang
+                stand hier einmal und waere bei 29 gelandet — warum er
+                wieder weg ist, steht in config.py. */}
+            <QrArt size={socialQr} modules={25} />
           </Box>
           <Box
             sx={{
@@ -687,9 +687,8 @@ export default function ThemePreview(props: PreviewProps) {
               color: c("sidebar_text"),
             }}
           >
-            {/* ui.py:_qr_caption — die Fassung mit eigenem Hotspot, also der
-                Normalfall. Ohne Hotspot steht dort "Fotos auf&apos;s Handy". */}
-            Scannen: WLAN + Fotos
+            {/* ui.py:_qr_caption */}
+            Fotos auf&apos;s Handy
           </Box>
 
           {/* Instagram / Terminbuchung — gestapelt wie ui.py:_draw_social_links.

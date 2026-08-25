@@ -305,9 +305,10 @@ andere.
 ### Warum die Galerie einen Namen hat
 
 `gallery_hostname` (Standard `fotobox.internal`) ist die Adresse, unter der die
-Galerie im Fotobox-WLAN läuft; sie steht als dritte Zeile in der WLAN-Box auf
-dem Boxschirm. Sie ist für den Gast da, **der schon verbunden ist**: der
-WLAN-QR-Code nützt ihm nichts mehr, und eine IP tippt niemand freiwillig ab.
+Galerie im Fotobox-WLAN läuft. Sie ist das, was der Gast im Anmeldefenster in
+der Adresszeile liest, und das Einzige, was sich abtippen lässt, wenn er das
+Fenster geschlossen hat — eine IP tippt niemand freiwillig ab. Der bequeme Weg
+zurück bleibt der QR-Code an der Box.
 
 Auflösen tut der Name über denselben Hijack, der auch die Verbindungstests
 fängt — `address=/#/<ip>` beantwortet jeden Namen mit der Box. Außerhalb des
@@ -329,43 +330,38 @@ Die Box selbst erreicht ihre Galerie **nicht** über den Namen: ihr Resolver
 hängt am Uplink, nicht am dnsmasq des Hotspots. `scripts/smoke_test.py` prüft
 deshalb über die IP und meldet den Namen nur zusätzlich.
 
-### Warum der QR-Code das WLAN trägt und nicht den Link
+### Warum die Codes zu den Fotos führen und nicht ins WLAN
 
-Der selbst erzeugte Code in der Sidebar enthält die **WLAN-Zugangsdaten**
-(`WIFI:T:WPA;S:…;P:…;;`), nicht `gallery_url`. Der Grund ist eine harte Grenze
-der Handys: **ein Link kann kein WLAN aufbauen.** Weder iOS noch Android geben
-einer Webseite diese Möglichkeit, und wer den Galerie-Link scannt, ohne im
-Fotobox-WLAN zu hängen, landet nur im Verbindungsfehler — die IP `192.168.4.1`
-ist von draußen nicht erreichbar.
+Beide selbst erzeugten Codes der Box zeigen in die Galerie: der in der Sidebar
+auf `gallery_url`, der auf dem Ergebnis-Schirm auf das einzelne Foto. Das
+WLAN steht daneben als Text, zum Abtippen.
 
-Der `WIFI:`-Payload dagegen wird von der Kamera-App selbst ausgewertet (iOS ab
-11, Android ab 10) und trägt das Handy ins Netz. Die Galerie kommt danach von
-allein: das Captive-Portal schiebt sie unmittelbar nach dem Verbinden ins
-Anmeldefenster (siehe Abschnitt oben). Für den Gast ist das **ein Scan** statt
-„abtippen, verbinden, dann scannen".
+Das war einmal anders, und der Umweg lohnt sich zu kennen. Der Sidebar-Code
+trug zeitweise die WLAN-Zugangsdaten als `WIFI:T:WPA;S:…;P:…;;`. Die Idee:
+ein Scan trägt das Handy ins Netz, und das Captive-Portal schiebt die Galerie
+unmittelbar hinterher — ein Scan statt „abtippen, verbinden, dann scannen".
 
-Entschieden wird der Inhalt in `config.box_qr_payload()`. Auf den Galerie-Link
-fällt der Code zurück, wenn die Box gar kein eigenes WLAN aufspannt
-(`hotspot_enabled: false` — dann kennt sie die Zugangsdaten des fremden Netzes
-nicht), wenn keine SSID gesetzt ist, oder wenn das Passwort zwischen 1 und 7
-Zeichen liegt: WPA2 verlangt 8, `hotspot.py` verweigert kürzere ebenfalls, es
-gäbe also gar kein Netz, in das der Code führen könnte. Die Beschriftung unter
-dem Code wechselt mit (`ui.py: _qr_caption`).
+**Am Gerät ist das durchgefallen.** iOS tritt dem Netz zwar bei — der volle
+DHCP-Handshake steht im Log der Box —, blendet bei einem Netz ohne Internet
+aber weder das WLAN-Symbol ein noch öffnet es etwas, solange keine App das
+Netz anfasst. Für den Gast passiert nach dem Scan sichtbar **gar nichts**: er
+steht weiter in der Kamera-App und hat keinen Hinweis, wie es weitergeht.
 
-Zwei Dinge, die dabei bewusst so sind:
+Die Rechnung dahinter ist einfach:
 
-* **Die Klartext-Daten in der WLAN-Box bleiben stehen.** Ältere Kameras lesen
-  keine WLAN-Codes, und ein Laptop hat gar keine.
-* **Wer schon verbunden ist, kommt über den Code nicht in die Galerie.** Sein
-  Handy meldet nur „bereits verbunden". Für ihn steht die Adresse als dritte
-  Zeile in der WLAN-Box (`gallery_hostname`, siehe oben) — abtippbar, statt
-  einer IP.
+* **Verbinden kann jeder.** SSID und Passwort stehen gross auf dem
+  Boxschirm, das kennt jeder aus jedem Café.
+* **Eine Adresse erraten kann niemand.** Wer das Anmeldefenster geschlossen
+  hat, steht ohne URL-Zeile, ohne Lesezeichen und ohne Verlauf da — das
+  Fenster ist ein abgespeckter WebView. „Wo finde ich das jetzt wieder?"
 
-Der Payload kostet Modulgröße: `Fotobox` + zehnstelliges Passwort ergeben 29
-Module gegenüber 25 beim Link. Ein langer Eventname als SSID treibt das auf 33
-und damit auf 3 px je Modul — dort warnt `ui.py` im Log und rät zu kürzerer
-SSID bzw. kürzerem Passwort. Die Stellschraube ist die Länge des Inhalts, nicht
-die Gestaltung des Codes.
+Ein QR-Code ist die einzige Antwort auf die zweite Frage, die auch für Gäste
+funktioniert, die keine Adressen tippen wollen. Deshalb gehört er dorthin und
+nicht auf ein Problem, das keines war.
+
+Dazu kommt ein Nebeneffekt, der den Ausschlag gibt: **ein mit der Kamera
+gescannter Code öffnet sich immer im echten Browser**, nie im
+Anmeldefenster — und nur dort kann der Gast ein Bild sichern.
 
 ### Der Code neben dem Foto
 
@@ -396,7 +392,8 @@ Zwei Dinge, die dabei zusammenhängen:
 
 Liegt ein Foto flach im `picture_dir` statt in einem Event-Ordner (Altbestand,
 den `events.migrate_flat_photos` noch nicht eingeräumt hat), lässt sich keine
-Adresse bilden — dann fällt der Schirm auf den WLAN-Code zurück. Ein geratener
+Adresse bilden — dann fällt der Schirm auf den Sidebar-Code zurück, der in die
+Galerie führt statt auf ein bestimmtes Bild. Ein geratener
 Link führte auf eine 404-Seite statt zum Bild.
 
 ### Instagram-QR
