@@ -121,6 +121,7 @@ Diese Tabelle wird aus `config.py` gepflegt — bei Änderungen dort bitte mitzi
 | `print_size_mm` | Papierformat in mm (Querformat, Breite × Höhe) | `[148, 100]` |
 | `print_dpi` | Auflösung für die Druckaufbereitung | `300` |
 | `print_options` | Zusätzliche rohe `lp -o`-Optionen | `[]` |
+| `print_scale_pct` | Anteil der Seite, den das Bild einnimmt (50–100). Gegen den Bleed des randlosen Treibers | `100` |
 | `camera_keepalive_s` | Intervall des Kamera-Watchdogs | `25` |
 | `camera_output_mode` | Index aus `gphoto2 --get-config output` | `"3"` |
 | `camera_preview_pull` | Preview-Frame nach jedem Live-View-Wake (siehe unten) | `true` |
@@ -513,6 +514,23 @@ lpoptions -p Selphy -l
 Passende Werte dann in `config.py` unter `print_media`, `print_size_mm` und
 `print_options` eintragen (z.&nbsp;B. `print_options: ["StpBorderless=True"]`
 für randlosen Druck).
+
+**Wenn der Druck über das Blatt hinausläuft:** randlos heisst beim
+Gutenprint-Treiber Bleed — er rechnet auf eine Fläche, die grösser als das
+Papier ist, und schiebt das fertig aufbereitete Bild damit über die Kante.
+`prepare()` kann dagegen nichts tun, die Vergrösserung passiert erst danach
+im Treiber. Zurückholen lässt sie sich mit `print_scale_pct` (Prozent der
+Seite, Standard `100`):
+
+```jsonc
+"print_scale_pct": 97,   // nimmt rundum knapp 1,5 mm weg
+```
+
+Einstellen am besten mit dem Testdruck aus dem Panel: die Massstab-Linie
+unten trägt ihren Sollwert im Klartext daneben, nachmessen und den Wert
+anpassen, bis Rahmen und Eckwinkel vollständig auf dem Papier liegen. Wer
+`scaling=` oder `fit-to-page` von Hand in `print_options` schreibt, behält
+Vorrang — dann bleibt `print_scale_pct` aussen vor.
 
 **Testdruck ohne die Box:**
 

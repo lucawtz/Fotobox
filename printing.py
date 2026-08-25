@@ -600,6 +600,29 @@ def _print_dpi(cfg: dict) -> int:
         return 300
 
 
+def _print_scale(cfg: dict) -> int:
+    """Skalierung des Druckbilds in Prozent der Seite, immer plausibel.
+
+    Nur noetig, weil randlos beim Gutenprint-Treiber Bleed bedeutet: der
+    Selphy rechnet auf eine Flaeche, die groesser als das Blatt ist, und
+    schiebt das fertig aufbereitete Bild damit ueber die Kante. prepare()
+    kann dagegen nichts machen — die Vergroesserung passiert erst im Treiber,
+    also muss sie auch dort zurueckgenommen werden.
+
+    Unter 50 % waere der Rand breiter als das Bild, ueber 100 % laeuft es
+    garantiert ueber; beides ist eher Tippfehler als Absicht.
+    """
+    raw = cfg.get("print_scale_pct", 100)
+    try:
+        pct = int(round(float(raw if raw is not None else 100)))
+    except (TypeError, ValueError) as exc:
+        logger.warning("Ungueltiges print_scale_pct %r (%s) — nutze 100", raw, exc)
+        return 100
+    if not 50 <= pct <= 100:
+        logger.warning("print_scale_pct %d ausserhalb 50..100 — begrenzt", pct)
+    return max(50, min(100, pct))
+
+
 def _paper_aspect(cfg: dict) -> float:
     """Seitenverhältnis des Papiers (Breite/Höhe) im Querformat."""
     long_mm, short_mm = _paper_mm(cfg)
@@ -683,9 +706,18 @@ def _lp_args(printer: str, cfg: dict, path: str) -> list:
         args += ["-o", f"media={media}"]
     # Rohe lp-Optionen aus der Config: welche der Selphy-Treiber genau will,
     # steht erst nach `lpoptions -p <drucker> -l` fest (siehe README).
-    for opt in cfg.get("print_options") or []:
-        if isinstance(opt, str) and opt.strip():
-            args += ["-o", opt.strip()]
+    raw_opts = [o.strip() for o in (cfg.get("print_options") or [])
+                if isinstance(o, str) and o.strip()]
+    for opt in raw_opts:
+        args += ["-o", opt.strip()]
+    # `scaling` sagt CUPS, wieviel Prozent der Seite das Bild einnimmt. Ohne
+    # die Option sucht sich der Filter das selbst aus, und mit Bleed heisst
+    # "selbst aussuchen" zuverlaessig zu gross. Wer scaling oder fit-to-page
+    # von Hand in print_options schreibt, hat aber Vorrang — sonst haette er
+    # zwei widersprechende -o auf derselben Kommandozeile.
+    if not any(o.split("=")[0].strip() in ("scaling", "fit-to-page")
+               for o in raw_opts):
+        args += ["-o", f"scaling={_print_scale(cfg)}"]
     return args + [path]
 
 
@@ -855,10 +887,11 @@ def test_page(cfg: dict, printer: Optional[str] = None) -> str:
         except (AttributeError, TypeError):   # Schrift ohne Laengenmessung
             return text
 
+    scale = _print_scale(cfg)
     lines = [
         f"Drucker:   {printer or 'Standarddrucker'}",
         f"Papier:    {long_mm:g} x {short_mm:g} mm · {dpi} dpi · Medium {media}",
-        f"Ausgabe:   {_MODE_LABEL.get(mode, mode)}",
+        f"Ausgabe:   {_MODE_LABEL.get(mode, mode)} · Skalierung {scale} %",
         f"Gedruckt:  {time.strftime('%d.%m.%Y %H:%M')}",
     ]
     for i, line in enumerate(lines):
@@ -900,8 +933,15 @@ def test_page(cfg: dict, printer: Optional[str] = None) -> str:
         d.rectangle([tick_x, bar_y - px(4.0 if long_tick else 2.0),
                      tick_x + max(1, px(0.5)), bar_y], fill=ink)
         pos += tick_mm
+    # Bei Skalierung unter 100 % schrumpft die Linie mit dem Rest der Seite —
+    # der Sollwert muss das mitrechnen, sonst schickt der Testdruck einen
+    # richtig eingestellten Drucker in die falsche Richtung.
+    expect_mm = bar_mm * scale / 100.0
+    hint = ("" if scale == 100
+            else f" (= {bar_mm:g} mm bei {scale} % Skalierung)")
     d.text((x0, int(h * 0.885)),
-           f"Massstab: diese Linie muss genau {bar_mm:g} mm lang sein — nachmessen.",
+           f"Massstab: diese Linie muss genau {expect_mm:.4g} mm lang sein"
+           f"{hint} — nachmessen.",
            font=f_small, fill=soft)
 
     fd, tmp = tempfile.mkstemp(prefix="fotobox-testpage-", suffix=".jpg")

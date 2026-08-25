@@ -240,6 +240,51 @@ def test_lp_options_from_config(cfg, cups, tmp_path):
     assert "-n 3" in lp and "media=Postcard" in lp and "StpBorderless=True" in lp
 
 
+def test_scaling_defaults_to_full_page(cfg, cups, tmp_path):
+    """Ohne Konfiguration bleibt es beim bisherigen Verhalten: ganze Seite."""
+    calls = cups()
+    photo = tmp_path / "foto.jpg"
+    Image.new("RGB", (600, 400)).save(photo, "JPEG")
+    printing.print_photo(str(photo), cfg)
+    assert "scaling=100" in " ".join([c for c in calls if c[0] == "lp"][0])
+
+
+def test_scaling_pulls_the_print_back_onto_the_sheet(cfg, cups, tmp_path):
+    """Der Regler gegen den Bleed des randlosen Selphy-Treibers."""
+    calls = cups()
+    photo = tmp_path / "foto.jpg"
+    Image.new("RGB", (600, 400)).save(photo, "JPEG")
+    cfg.update(print_scale_pct=96)
+    printing.print_photo(str(photo), cfg)
+    assert "scaling=96" in " ".join([c for c in calls if c[0] == "lp"][0])
+
+
+@pytest.mark.parametrize("value", [0, -5, 140, "viel", None])
+def test_absurd_scaling_does_not_break_the_print(cfg, cups, tmp_path, value):
+    """Ein Vertipper darf hoechstens den Rand kosten, nie den Ausdruck."""
+    calls = cups()
+    photo = tmp_path / "foto.jpg"
+    Image.new("RGB", (600, 400)).save(photo, "JPEG")
+    cfg.update(print_scale_pct=value)
+    ok, _ = printing.print_photo(str(photo), cfg)
+    lp = " ".join([c for c in calls if c[0] == "lp"][0])
+    assert ok is True
+    assert any(f"scaling={n}" in lp for n in (50, 100))
+
+
+@pytest.mark.parametrize("manual", ["scaling=80", "fit-to-page"])
+def test_manual_scaling_option_wins(cfg, cups, tmp_path, manual):
+    """Zwei widersprechende -o scaling auf einer Zeile waeren Gluecksspiel."""
+    calls = cups()
+    photo = tmp_path / "foto.jpg"
+    Image.new("RGB", (600, 400)).save(photo, "JPEG")
+    cfg.update(print_scale_pct=96, print_options=[manual])
+    printing.print_photo(str(photo), cfg)
+    lp = [c for c in calls if c[0] == "lp"][0]
+    assert lp.count("-o") == 2               # media + die Handeinstellung
+    assert "scaling=96" not in " ".join(lp)
+
+
 def test_lp_error_is_reported(cfg, cups, tmp_path):
     cups(lp=FakeProc(1, "", "lp: Error - no default destination"))
     photo = tmp_path / "foto.jpg"

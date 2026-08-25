@@ -34,6 +34,7 @@ _BOX_FIELDS = frozenset({
     "printer_name",
     "print_copies",
     "print_mode",
+    "print_scale_pct",
 })
 
 # Alles was persistiert wird. Der Rest lebt ausschliesslich in _DEFAULTS und
@@ -250,6 +251,12 @@ _DEFAULTS: dict = {
     # prepare() vorher aufs Papierformat gerechnet hatte. Welche Optionen der
     # Treiber kennt, zeigt `lpoptions -p <drucker> -l` (siehe README).
     "print_options": ["StpBorderless=True"],
+    # Feinjustierung gegen den Bleed: randlos heisst beim Gutenprint-Treiber
+    # "auf eine Flaeche rechnen, die groesser als das Blatt ist" — das Bild
+    # laeuft dann oben und seitlich ueber die Kante hinaus. 100 = so lassen,
+    # kleinere Werte holen es prozentual zurueck aufs Papier. Mit dem Lineal
+    # am Testdruck einstellen: 97 nimmt rundum knapp 1,5 mm weg.
+    "print_scale_pct": 100,
     # Wie lange der Drucker fuer ein Bild braucht. Geht nur in die Schaetzung
     # ein, die der Box-Dialog anzeigt, wenn Auftraege in der Queue haengen.
     "print_seconds_per_photo": 60,
