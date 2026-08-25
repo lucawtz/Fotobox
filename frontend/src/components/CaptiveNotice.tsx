@@ -194,34 +194,32 @@ export function CaptiveLanding({ onSkip }: { onSkip: () => void }) {
             px: 3,
           }}
         >
-          <WifiRoundedIcon color="primary" sx={{ fontSize: 56 }} />
-          <Typography variant="h5" sx={{ fontWeight: 600 }}>
-            Fast geschafft
+          <Typography variant="h5" sx={{ fontWeight: 600, mb: 1 }}>
+            Fotobox
           </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 340 }}>
-            Noch ein Tipp, dann bist du richtig im WLAN — und die Fotos
-            lassen sich auf dein Handy speichern.
-          </Typography>
+          {/* Zwei Knoepfe, sonst nichts. Erklaerungen liest hier niemand —
+              wer im Anmeldefenster steht, will an die Fotos. Was "Verbinden"
+              bewirkt, steht auf dem naechsten Schirm, wo es gebraucht wird
+              (FinishingView). Eckig, weil das Fenster kein Hochglanz ist,
+              sondern ein Durchgang. */}
           <Button
             variant="contained"
             size="large"
+            fullWidth
             onClick={() => setLeaving(true)}
-            startIcon={<WifiRoundedIcon />}
-            sx={{ mt: 1, py: 1.5, px: 5, fontSize: "1.1rem", borderRadius: 99 }}
+            sx={{ py: 1.75, fontSize: "1.1rem", borderRadius: 0, maxWidth: 320 }}
           >
             Verbinden
           </Button>
-          <Box
-            component="button"
+          <Button
+            variant="outlined"
+            size="large"
+            fullWidth
             onClick={() => { markLandingSeen(); onSkip(); }}
-            sx={{
-              mt: 1, p: 1, border: 0, bgcolor: "transparent",
-              color: "text.secondary", font: "inherit",
-              textDecoration: "underline", cursor: "pointer",
-            }}
+            sx={{ py: 1.75, fontSize: "1.1rem", borderRadius: 0, maxWidth: 320 }}
           >
-            Nur gucken? Fotos ansehen
-          </Box>
+            Fotos ansehen
+          </Button>
         </DialogContent>
       )}
     </Dialog>
