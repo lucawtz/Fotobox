@@ -361,16 +361,24 @@ class Camera:
         logger.info("  → Live-View %s", "steht" if ok else "kam nicht hoch")
         return ok
 
-    def request_liveview(self) -> None:
+    def request_liveview(self, force: bool = False) -> None:
         """Sorgt im Hintergrund dafuer, dass der Live-View steht.
 
         Laeuft der Halter schon, kostet das nichts — der Normalfall. Nur wenn
         er fehlt, wird ein Wake angestossen, und auch dann hoechstens einer
         gleichzeitig.
+
+        `force` setzt den Halter auch dann neu auf, wenn er laeuft. Gebraucht,
+        weil ein laufender Halter NICHT beweist, dass HDMI ein Bild liefert:
+        direkt nach einer Aufnahme ist die Kamera oft noch beschaeftigt, das
+        viewfinder=1 des Halters faellt auf "PTP Device Busy" — und der
+        Prozess wartet danach trotzdem brav auf Events. _hold_alive() ist
+        True, und ohne force sieht niemand mehr nach. Wer das Bild kennt,
+        statt nur den Prozess, kommt hier mit force=True an.
         """
         if not self.available or self._capturing or not self._running:
             return
-        if self._hold_alive():
+        if self._hold_alive() and not force:
             return
         if not self._wake_gate.acquire(blocking=False):
             return

@@ -102,6 +102,14 @@ def _do_countdown(ui: UI, camera: Camera, cfg: dict,
 
 COLLAGE_SHOTS = 4
 
+# Wie lange zwischen zwei Collage-Shots auf das Live-Bild gewartet wird, bevor
+# der Halte-Prozess erzwungen neu aufgesetzt wird — und wie lange danach.
+# Die erste Zahl ist knapp: kam der Halter beim Neustart durch, steht das Bild
+# in Sekundenbruchteilen. Die zweite deckt den Neuaufbau ab, der gemessen rund
+# 1,5 s braucht.
+LIVEVIEW_GRACE_S = 1.2
+LIVEVIEW_FORCE_S = 3.0
+
 
 def _capture_sequence(ui: UI, camera, cfg: dict, mode: str) -> Optional[str]:
     """Nimmt ein Einzelfoto ("single") oder eine 2x2-Collage ("collage") auf.
@@ -144,7 +152,7 @@ def _collage(ui: UI, camera, cfg: dict) -> Optional[str]:
         # richtet sich aus. Nach dem letzten Shot nicht: das erledigt der
         # gemeinsame finally-Zweig in _capture_sequence.
         if len(shots) < COLLAGE_SHOTS:
-            camera.request_liveview()
+            _restore_liveview(ui, camera)
 
     if len(shots) == COLLAGE_SHOTS:
         return collage_mod.make_collage(shots, events.current_event_dir(cfg))
@@ -156,6 +164,35 @@ def _collage(ui: UI, camera, cfg: dict) -> Optional[str]:
     ui.show_notice("Collage abgebrochen",
                    f"Nur {len(shots)} von {COLLAGE_SHOTS} Fotos — bitte neu starten")
     return None
+
+
+def _restore_liveview(ui: UI, camera) -> None:
+    """Live-Bild zwischen zwei Collage-Shots zurueckholen — und nachsehen.
+
+    capture() beendet ueber _usb den Halte-Prozess und startet ihn danach
+    selbst wieder. Dass er laeuft, heisst aber nicht, dass HDMI wieder ein
+    Bild liefert: unmittelbar nach dem Auslesen ist die Kamera oft noch
+    beschaeftigt, das viewfinder=1 des Halters scheitert an "PTP Device Busy",
+    und der Prozess wartet anschliessend trotzdem auf Events. _hold_alive()
+    ist damit True — der Watchdog macht weiter, request_liveview steigt aus,
+    und die Selbstheilung der UI ist waehrend der Aufnahme abgeschaltet.
+
+    Beim Einzelfoto faellt das nicht auf, dort folgt der Result-Screen. In der
+    Collage folgen drei weitere Countdowns, und der Gast sah sie auf schwarzem
+    Grund: das gehaltene Standbild laeuft nach ui._LIVE_HOLD_S ab, und ein
+    Shot dauert gut sechs Sekunden.
+
+    Deshalb wird hier auf das Bild gewartet statt auf den Prozess. Kommt
+    binnen LIVEVIEW_GRACE_S keins, wird der Halter erzwungen neu aufgesetzt.
+    """
+    camera.request_liveview()
+    if ui.wait_for_liveview(LIVEVIEW_GRACE_S):
+        return
+    logger.info("Live-Bild nach dem Shot nicht zurueck — Halter wird erzwungen")
+    camera.request_liveview(force=True)
+    if not ui.wait_for_liveview(LIVEVIEW_FORCE_S):
+        logger.warning("Live-Bild bleibt aus — naechster Countdown laeuft "
+                       "auf dem Standbild")
 
 
 def _do_print(ui: UI, path: str, cfg: dict) -> None:

@@ -1648,6 +1648,33 @@ class UI:
             pygame.time.wait(30)
         return True
 
+    def wait_for_liveview(self, timeout: float) -> bool:
+        """Haelt die Schleife am Leben, bis wieder ein echtes Live-Bild kommt.
+
+        Gebraucht zwischen zwei Collage-Shots: dort schaut der Gast auf den
+        naechsten Countdown und richtet sich aus, und genau dort war das Bild
+        nach der Aufnahme weg. Gewartet wird auf das BILD, nicht auf den
+        Halte-Prozess — dessen Laufen beweist nichts, siehe
+        camera.request_liveview.
+
+        Geprueft wird mit _fresh_live_frame und nicht mit _live_frame_rgb:
+        letzteres reicht das gehaltene Standbild durch und waere sofort
+        zufrieden, obwohl von der Kamera nichts mehr kommt.
+
+        Rueckgabe: True, sobald ein frisches Bild da ist. False nach Ablauf
+        von `timeout` — dann steht im naechsten Countdown das gehaltene
+        Standbild, immer noch besser als Schwarz.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._fresh_live_frame() is not None:
+                return True
+            self._draw_live_fullscreen()
+            pygame.display.flip()
+            pygame.event.pump()
+            pygame.time.wait(30)
+        return False
+
     # Innenbreite der Notice-Box (1200 px minus je 40 px Rand).
     _NOTICE_W = 1120
 

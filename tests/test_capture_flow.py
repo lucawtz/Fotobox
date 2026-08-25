@@ -28,6 +28,8 @@ class FakeUI:
         self.shutter_set = []
         # Auto-Wake muss waehrend der Aufnahme aus und danach wieder an sein.
         self.autowake = []
+        self.liveview_waits = []
+        self.liveview_returns = True
 
     def run_countdown(self, on_capture, seconds=3, photo_num=1, total=1,
                       lead_s=0.0, shutter=None):
@@ -40,6 +42,12 @@ class FakeUI:
 
     def wait_for_capture(self, done, timeout=35.0):
         return done.is_set()
+
+    def wait_for_liveview(self, timeout):
+        # Voreinstellung: das Bild ist sofort zurueck. Der Test fuer den
+        # Fehlerfall setzt liveview_returns auf False.
+        self.liveview_waits.append(timeout)
+        return self.liveview_returns
 
     def show_notice(self, title, detail="", seconds=3.5, error=True):
         self.notices.append((title, detail))
@@ -63,9 +71,13 @@ class FakeCamera:
         # Zeitpunkt des Aufrufs. Damit laesst sich pruefen, dass geweckt wird
         # NACH der Aufnahme und nicht mittendrin.
         self.wakes = []
+        # Erzwungene Neustarts des Halters — nur wenn das Bild ausbleibt.
+        self.forced = []
 
-    def request_liveview(self):
+    def request_liveview(self, force=False):
         self.wakes.append(self.shots)
+        if force:
+            self.forced.append(self.shots)
 
     def capture(self, directory, on_shutter=None):
         self.shots += 1
@@ -149,6 +161,34 @@ def test_liveview_is_woken_between_collage_shots(cfg, flow):
 
     assert cam.wakes == [1, 2, 3, 4], \
         "nach jedem Shot einmal — nach dem letzten ueber _capture_sequence"
+
+
+def test_liveview_is_forced_back_when_the_picture_stays_away(cfg, flow):
+    """Ein laufender Halte-Prozess ist kein Beweis fuer ein Bild.
+
+    Faellt sein viewfinder=1 auf "PTP Device Busy", laeuft er trotzdem weiter
+    — request_liveview wuerde ohne force nie wieder nachsehen, und der Gast
+    saehe die restlichen Countdowns auf schwarzem Grund.
+    """
+    ui, _ = flow
+    ui.liveview_returns = False
+    cam = FakeCamera()
+
+    main._capture_sequence(ui, cam, cfg, "collage")
+
+    assert cam.forced == [1, 2, 3], \
+        "nach jedem Shot ausser dem letzten einmal erzwungen"
+
+
+def test_liveview_is_not_forced_when_the_picture_comes_back(cfg, flow):
+    """Der Normalfall darf nichts kosten: kommt das Bild von selbst, wird der
+    Halter nicht angefasst — ein Neustart nimmt es fuer gut 1,5 s weg."""
+    ui, _ = flow
+    cam = FakeCamera()
+
+    main._capture_sequence(ui, cam, cfg, "collage")
+
+    assert cam.forced == []
 
 
 def test_liveview_is_woken_even_when_the_shot_fails(cfg, flow):
