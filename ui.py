@@ -1901,11 +1901,14 @@ class UI:
         # 1224x816. Wer das Foto groesser will, muss den Code kleiner machen
         # (RESULT_QR_SIZE) oder ihn wieder darauf legen.
         area_w = W - 2 * self.RESULT_QR_COL
-        area_h = H - self.RESULT_BOTTOM
-        fit = min(area_w / iw, area_h / ih)
+        limit  = H - self.RESULT_BOTTOM
+        fit = min(area_w / iw, limit / ih)
         nw, nh = max(1, int(iw * fit)), max(1, int(ih * fit))
         sharp = pygame.transform.smoothscale(img, (nw, nh))
-        canvas.blit(sharp, sharp.get_rect(center=(W // 2, area_h // 2)))
+        # Schirmmitte, solange die Unterkante ueber der Grenze bleibt. Ein
+        # hohes Bild schoepft die Grenze aus und sitzt dann darauf.
+        canvas.blit(sharp, sharp.get_rect(
+            center=(W // 2, min(H // 2, limit - nh // 2))))
 
         self._result_cache[path] = canvas
         # Cap: älteste Einträge wegwerfen damit der Cache nicht endlos wächst
@@ -1983,7 +1986,9 @@ class UI:
         # die Schirmmitte nur der Wunsch.
         cx = W - self.RESULT_QR_COL + self.RESULT_QR_COL // 2
         x = cx - card_w // 2
-        y = max(PAD, min((H - self.RESULT_BOTTOM - group_h) // 2,
+        # Dieselbe Regel wie beim Foto: mittig, gedeckelt statt gestaucht.
+        y = max(PAD, min((H - group_h) // 2,
+                         H - self.RESULT_BOTTOM - group_h,
                          H - self._SCRIM_H - group_h - 12))
 
         # Creme statt Weiss: der Code bringt seine Quiet-Zone selbst in
@@ -3345,12 +3350,16 @@ class UI:
     # nicht auseinanderlaufen — 16 px Innenrand je Seite wie in
     # _draw_qr_result, dazu 24 px Luft nach aussen und zum Bild.
     RESULT_QR_COL   = RESULT_QR_SIZE + 2 * 16 + 2 * 24
-    # Unteres Band des Ergebnis-Schirms: Timer und Buttons. Das Foto sitzt
-    # mittig DARUEBER, nicht mittig im Schirm — sonst reicht seine Unterkante
-    # bis auf 14 px an den Timer heran, und der Verlauf hinter den Buttons
-    # legt sich auf das Bild. Bemessen aus btn_h (72) plus Rand (20), dem
-    # Timer darueber (28 + 10) und etwas Luft.
-    RESULT_BOTTOM   = 150
+    # Unterkante fuer alles ueber dem Timer. Darunter liegen der Timer
+    # (28 px + 10 Abstand) und die Buttons (72 px + 20 Rand) — zusammen 130.
+    # Die restlichen 30 sind die Luft dazwischen.
+    #
+    # Das Foto wird daran nur GEDECKELT, nicht daran ausgerichtet: es sitzt
+    # mittig im Schirm und rutscht nur so weit hoch, wie noetig. Es in der
+    # verbleibenden Flaeche zu zentrieren war der erste Versuch, und bei
+    # einem breitenbegrenzten 3:2-Bild blieb unten die halbe gesparte Hoehe
+    # als Loch stehen — 72 px zwischen Bild und Timer.
+    RESULT_BOTTOM   = 160
     QR_BOX          = 10     # Rendergrösse je Modul vor dem Herunterskalieren.
     QR_MIN_CONTRAST = 3.0    # WCAG-Verhältnis Modul zu Grund, sonst s/w.
     # Ab welcher Helligkeit logo_circle als Kartengrund taugt (Verhältnis
