@@ -180,47 +180,95 @@ export function CaptiveDialog({ open, onClose }: DialogProps) {
  */
 export function CaptiveLanding({ onSkip }: { onSkip: () => void }) {
   const [leaving, setLeaving] = useState(false);
+  const [count, setCount] = useState<number | null>(null);
+
+  // Der Knopf setzt nur das Flag; ausgeloest wird hier. Vorher stand der
+  // Aufruf ausschliesslich in LeavingDialog — die Anmeldeseite zeigte damit
+  // den Warteschirm, ohne je etwas zu tun, und der Spinner drehte sich
+  // endlos.
+  useEffect(() => {
+    if (leaving) void leaveCaptivePopup();
+  }, [leaving]);
+
+  // Bewusst ein nacktes fetch statt des api-Moduls: die Anmeldeseite steht
+  // vor allem anderen, und eine fehlgeschlagene Zahl darf sie nicht
+  // aufhalten. Ohne Antwort bleibt die Zeile einfach weg.
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/count", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => { if (alive) setCount(d?.count ?? null); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const btn = {
+    py: 1.75,
+    fontSize: "1.05rem",
+    fontWeight: 600,
+    borderRadius: 0,
+    textTransform: "none" as const,
+  };
+
   return (
     <Dialog open fullScreen>
       {leaving ? <FinishingView /> : (
-        <DialogContent
-          sx={{
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-            alignItems: "center",
-            textAlign: "center",
-            gap: 2,
-            px: 3,
-          }}
-        >
-          <Typography variant="h5" sx={{ fontWeight: 600, mb: 1 }}>
-            Fotobox
-          </Typography>
-          {/* Zwei Knoepfe, sonst nichts. Erklaerungen liest hier niemand —
-              wer im Anmeldefenster steht, will an die Fotos. Was "Verbinden"
-              bewirkt, steht auf dem naechsten Schirm, wo es gebraucht wird
-              (FinishingView). Eckig, weil das Fenster kein Hochglanz ist,
-              sondern ein Durchgang. */}
-          <Button
-            variant="contained"
-            size="large"
-            fullWidth
-            onClick={() => setLeaving(true)}
-            sx={{ py: 1.75, fontSize: "1.1rem", borderRadius: 0, maxWidth: 320 }}
+        <Box sx={{ display: "flex", flexDirection: "column", minHeight: "100%" }}>
+          <Box
+            sx={{
+              bgcolor: "primary.main",
+              color: "primary.contrastText",
+              px: 3,
+              pt: { xs: 6, sm: 8 },
+              pb: { xs: 5, sm: 6 },
+              textAlign: "center",
+            }}
           >
-            Verbinden
-          </Button>
-          <Button
-            variant="outlined"
-            size="large"
-            fullWidth
-            onClick={() => { markLandingSeen(); onSkip(); }}
-            sx={{ py: 1.75, fontSize: "1.1rem", borderRadius: 0, maxWidth: 320 }}
+            <WifiRoundedIcon sx={{ fontSize: 44, opacity: 0.9, mb: 1 }} />
+            <Typography variant="h4" sx={{ fontWeight: 700, letterSpacing: "-.02em" }}>
+              Fotobox
+            </Typography>
+            {count !== null && (
+              <Typography sx={{ opacity: 0.85, mt: 0.5 }}>
+                {count} {count === 1 ? "Foto" : "Fotos"}
+              </Typography>
+            )}
+          </Box>
+
+          <Box
+            sx={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              gap: 1.5,
+              px: 3,
+              py: 4,
+              maxWidth: 420,
+              width: "100%",
+              mx: "auto",
+            }}
           >
-            Fotos ansehen
-          </Button>
-        </DialogContent>
+            <Button
+              variant="contained"
+              size="large"
+              fullWidth
+              onClick={() => setLeaving(true)}
+              sx={btn}
+            >
+              Verbinden
+            </Button>
+            <Button
+              variant="outlined"
+              size="large"
+              fullWidth
+              onClick={() => { markLandingSeen(); onSkip(); }}
+              sx={btn}
+            >
+              Fotos ansehen
+            </Button>
+          </Box>
+        </Box>
       )}
     </Dialog>
   );

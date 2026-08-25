@@ -130,7 +130,18 @@ export async function leaveCaptivePopup(
 ): Promise<void> {
   const target = `${location.origin}/`;
   try {
-    await fetch("/api/captive/release", { method: "POST", cache: "no-store" });
+    // Mit Abbruch nach zwei Sekunden. Der Aufruf geht an die eigene Box und
+    // ist normalerweise sofort da — bliebe er aber haengen, haenge der Gast
+    // mit ihm: die Anmeldeseite wartet auf diese Zusage, bevor sie
+    // weitergeht, und er saehe nur einen Spinner ohne Ende.
+    const ctl = new AbortController();
+    const t = window.setTimeout(() => ctl.abort(), 2000);
+    try {
+      await fetch("/api/captive/release",
+                  { method: "POST", cache: "no-store", signal: ctl.signal });
+    } finally {
+      window.clearTimeout(t);
+    }
   } catch {
     // Freigabe nicht durchgekommen: dann bleibt das Popup eben offen. Der
     // Sprung in den echten Browser ist trotzdem einen Versuch wert.
