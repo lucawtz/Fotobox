@@ -367,6 +367,38 @@ und damit auf 3 px je Modul — dort warnt `ui.py` im Log und rät zu kürzerer
 SSID bzw. kürzerem Passwort. Die Stellschraube ist die Länge des Inhalts, nicht
 die Gestaltung des Codes.
 
+### Der Code neben dem Foto
+
+Der Ergebnis-Schirm zeigt oben rechts einen eigenen Code, und der trägt
+**nicht** das WLAN, sondern die Adresse genau dieses Fotos
+(`/photo/<event>/<datei>`, gebaut von `config.photo_url()`).
+
+Dahinter steckt eine Eigenheit der Handys, die den ganzen Umweg spart:
+**ein mit der Kamera gescannter Code öffnet sich immer im echten Browser**,
+nie im WLAN-Anmeldefenster. Und nur dort funktioniert „Bild sichern" — das
+Anmeldefenster kann keine Downloads.
+
+Vorher war der Weg zum eigenen Bild: Anmeldefenster → „In Safari öffnen" →
+Erfolgsmeldung → Häkchen → und dann die Adresse von Hand eintippen. Jetzt ist
+er: **Code scannen, Bild gedrückt halten, „Zu Fotos hinzufügen".**
+
+Zwei Dinge, die dabei zusammenhängen:
+
+* **Der Gast muss schon im WLAN sein.** Dorthin bringt ihn der Code in der
+  Sidebar. Die Reihenfolge bleibt also „einmal verbinden, dann pro Foto
+  scannen" — das Verbinden passiert einmal am Abend.
+* **Der Code ist deutlich grösser als der in der Sidebar** (`RESULT_QR_SIZE`
+  = 260 statt 130 px), und das muss er sein. Eine Foto-URL mit realistischem
+  Eventnamen braucht 41 Module: bei 130 px wären das 3 px je Modul, und im
+  Decodertest überlebt der Code damit nur die 1:1-Ansicht. Bei 260 px sind es
+  6 px je Modul, und er decodiert bis hinunter auf ein Drittel Grösse mit
+  Unschärfe. Platz ist auf dem Ergebnis-Schirm genug.
+
+Liegt ein Foto flach im `picture_dir` statt in einem Event-Ordner (Altbestand,
+den `events.migrate_flat_photos` noch nicht eingeräumt hat), lässt sich keine
+Adresse bilden — dann fällt der Schirm auf den WLAN-Code zurück. Ein geratener
+Link führte auf eine 404-Seite statt zum Bild.
+
 ### Instagram-QR
 
 `instagram_qr_path` nimmt den Code, den Instagram im eigenen Profil zum Export

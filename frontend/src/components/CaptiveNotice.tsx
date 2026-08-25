@@ -10,7 +10,8 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import OpenInBrowserRoundedIcon from "@mui/icons-material/OpenInBrowserRounded";
+import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
+import QrCodeScannerRoundedIcon from "@mui/icons-material/QrCodeScannerRounded";
 import { galleryAddress, isCaptivePopup, isIOS, leaveCaptivePopup } from "../captive";
 
 /** Wie der Gast seinen richtigen Browser nennt. */
@@ -22,9 +23,17 @@ interface DialogProps {
 }
 
 /**
- * Erklaert den Wechsel und stoesst ihn an. Bewusst mit Adresse zum Abtippen:
- * bei manchen Geraeten schliesst sich das Popup einfach, statt den Browser
- * mitzubringen — dann muss der Gast wissen, wohin.
+ * Erklaert, wie der Gast an sein Bild kommt.
+ *
+ * Der Hauptweg ist der Code neben dem Foto auf dem Boxschirm, nicht mehr der
+ * Wechsel von hier aus. Grund ist eine Eigenheit der Handys: ein mit der
+ * Kamera gescannter Code oeffnet sich IMMER im echten Browser, nie in diesem
+ * Fenster — und dort funktioniert Sichern ohne Umweg. Der Wechsel per
+ * leaveCaptivePopup() bleibt darunter stehen, weil er fuer die Galerie als
+ * Ganzes (ZIP, mehrere Bilder) weiterhin gebraucht wird. Er ist nur nicht
+ * mehr das Erste, was der Gast lesen soll: bei manchen Geraeten schliesst
+ * sich dabei nur das Fenster, und dann steht er vor einer Adresse, die er
+ * abtippen muss.
  */
 export function CaptiveDialog({ open, onClose }: DialogProps) {
   const [busy, setBusy] = useState(false);
@@ -39,20 +48,30 @@ export function CaptiveDialog({ open, onClose }: DialogProps) {
   return (
     <Dialog open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs">
       <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1.25, pb: 1 }}>
-        <OpenInBrowserRoundedIcon color="primary" />
-        In {browserName()} öffnen
+        <PhotoCameraRoundedIcon color="primary" />
+        Foto speichern
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2}>
           <Typography variant="body2" color="text.secondary">
             Du siehst die Galerie gerade im WLAN-Anmeldefenster deines Handys.
-            Das Fenster kann keine Fotos in deine Bilder speichern — deshalb
-            verschwindet ein angetipptes Foto dort, statt gesichert zu werden.
+            Das Fenster kann keine Fotos sichern — ein angetipptes Bild
+            verschwindet dort, statt in deinen Fotos zu landen.
           </Typography>
+          <Alert severity="success" icon={<QrCodeScannerRoundedIcon />}>
+            <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+              Am schnellsten: Code am Boxschirm scannen
+            </Typography>
+            <Typography variant="body2">
+              Neben deinem Foto auf der Box steht ein QR-Code. Scanne ihn mit
+              der Kamera — er öffnet genau dieses Bild in {browserName()}, und
+              dort funktioniert Sichern ganz normal.
+            </Typography>
+          </Alert>
           <Typography variant="body2" color="text.secondary">
-            „Öffnen“ holt die Galerie nach {browserName()}. Schließt sich
-            stattdessen nur dieses Fenster: {browserName()} selbst öffnen und
-            diese Adresse eingeben.
+            Oder die ganze Galerie hierher holen: „Öffnen“ wechselt nach{" "}
+            {browserName()}. Schließt sich stattdessen nur dieses Fenster,
+            {" "}{browserName()} selbst öffnen und diese Adresse eingeben.
           </Typography>
           <Box
             sx={{
@@ -89,10 +108,10 @@ export default function CaptiveBanner() {
     <>
       <Alert
         severity="info"
-        icon={<OpenInBrowserRoundedIcon fontSize="inherit" />}
+        icon={<QrCodeScannerRoundedIcon fontSize="inherit" />}
         action={
           <Button color="inherit" size="small" onClick={() => setAsk(true)}>
-            Öffnen
+            Wie?
           </Button>
         }
         sx={{
@@ -101,8 +120,8 @@ export default function CaptiveBanner() {
           "& .MuiAlert-message": { py: 0.5 },
         }}
       >
-        Zum Speichern der Fotos in {browserName()} öffnen — dieses
-        WLAN-Fenster kann keine Bilder sichern.
+        Bild speichern? Den Code neben deinem Foto am Boxschirm scannen —
+        dieses WLAN-Fenster kann keine Bilder sichern.
       </Alert>
       <CaptiveDialog open={ask} onClose={() => setAsk(false)} />
     </>

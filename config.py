@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import threading
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -402,6 +403,30 @@ def build_wifi_qr(ssid: str, password: str) -> str:
         return f"WIFI:T:nopass;S:{_wifi_qr_escape(ssid)};;"
     return (f"WIFI:T:WPA;S:{_wifi_qr_escape(ssid)};"
             f"P:{_wifi_qr_escape(password)};;")
+
+
+def photo_url(data: dict, path: str) -> str:
+    """Adresse eines einzelnen Fotos in der Galerie: /photo/<event>/<datei>.
+
+    Gebraucht fuer den Code auf dem Ergebnis-Schirm. Der zeigt bewusst auf
+    das eine Foto und nicht auf das WLAN: ein mit der Kamera gescannter Code
+    oeffnet sich immer im echten Browser, nie im WLAN-Anmeldefenster — und
+    nur dort kann der Gast das Bild sichern.
+
+    Leerer String, wenn das Foto nicht in einem Event-Ordner liegt (flache
+    Altbestaende, die events.migrate_flat_photos noch nicht eingeraeumt hat).
+    Ein geratener Link waere dort schlimmer als keiner: er fuehrte auf eine
+    404-Seite statt zum Bild.
+    """
+    base = (data.get("gallery_url") or "").rstrip("/")
+    if not base or not path:
+        return ""
+    folder, filename = os.path.split(os.path.abspath(path))
+    event = os.path.basename(folder)
+    picture_dir = os.path.abspath(data.get("picture_dir") or "")
+    if not filename or not event or folder == picture_dir:
+        return ""
+    return f"{base}/photo/{quote(event)}/{quote(filename)}"
 
 
 def box_qr_payload(data: dict) -> str:

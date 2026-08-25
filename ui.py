@@ -584,6 +584,9 @@ class UI:
 
         # Result-Screen Cache — gecappt, sonst Memory-Leak nach hunderten Fotos
         self._result_cache: dict = {}
+        # (Schluessel, Surface) des Codes auf dem Ergebnis-Schirm. Einer
+        # reicht: dort liegt immer genau ein Foto.
+        self._photo_qr_cache: Optional[tuple] = None
         self._RESULT_CACHE_MAX = 8
 
         # Live-Reader (Capture-Card)
@@ -1750,7 +1753,7 @@ class UI:
         self._check_config_reload()
         self._screen.fill((10, 6, 2))
         self._draw_result_photo(photo_path)
-        self._draw_qr_result()
+        self._draw_qr_result(photo_path)
         self._draw_result_buttons(time_left)
         pygame.display.flip()
 
@@ -1802,19 +1805,61 @@ class UI:
             self._result_cache.pop(oldest, None)
         return canvas
 
-    def _draw_qr_result(self):
-        if self._qr_surf is None:
+    def _photo_qr(self, path: str) -> Optional[pygame.Surface]:
+        """Code auf genau dieses Foto. Gecacht, weil der Ergebnis-Schirm
+        jeden Frame neu gezeichnet wird und ein QR-Rendering teuer ist."""
+        url = config.photo_url(self._cfg, path)
+        if not url:
+            return None
+        colors = self._qr_colors()
+        key = (url, colors["fg"], colors["bg"], colors["eye"])
+        cached = self._photo_qr_cache
+        if cached and cached[0] == key:
+            return cached[1]
+        surf = self._make_qr(url, size=self.RESULT_QR_SIZE, border=0, **colors)
+        self._photo_qr_cache = (key, surf)
+        return surf
+
+    def _draw_qr_result(self, photo_path: str = ""):
+        """Code oben rechts auf dem Ergebnis-Schirm — er zeigt auf DIESES
+        Foto, nicht auf das WLAN.
+
+        Dahinter steckt eine Eigenheit der Handys, die den ganzen Umweg
+        spart: ein mit der Kamera gescannter Code oeffnet sich immer im
+        echten Browser, nie im WLAN-Anmeldefenster. Und nur dort
+        funktioniert "Bild sichern" — das Anmeldefenster kann keine
+        Downloads (siehe frontend/src/captive.ts). Wer bisher sein Foto
+        speichern wollte, musste sich aus dem Anmeldefenster freischalten
+        und die Adresse von Hand eintippen. Jetzt ist es ein Scan.
+
+        Der Gast muss dafuer schon im WLAN sein — dorthin bringt ihn der
+        Code in der Sidebar. Laesst sich keine Foto-URL bilden, faellt der
+        Schirm auf genau diesen Sidebar-Code zurueck: der bringt ihn
+        wenigstens ins Netz.
+        """
+        qr = self._photo_qr(photo_path)
+        hint = "Dein Foto aufs Handy" if qr is not None else "Fotos aufs Handy"
+        if qr is None:
+            qr = self._qr_surf
+        if qr is None:
             return
-        QR = self._qr_surf.get_width()
+
+        QR = qr.get_width()
         PAD = 16
-        x, y = W - QR - PAD, PAD
-        bg = pygame.Surface((QR + PAD * 2, QR + PAD * 2))
-        # Creme statt Weiss: der Code bringt seine Quiet-Zone jetzt selbst
-        # in dieser Farbe mit, ein weisser Rahmen zöge eine sichtbare Kante
+        label = self._f_sub.render(hint, True, self._theme["panel_bg"])
+        card_w = QR + PAD * 2
+        card_h = QR + PAD * 2 + label.get_height() + 6
+        x, y = W - card_w, PAD
+
+        # Creme statt Weiss: der Code bringt seine Quiet-Zone selbst in
+        # dieser Farbe mit, ein weisser Rahmen zöge eine sichtbare Kante
         # genau um sie herum.
-        bg.fill(self._qr_card_color())
-        self._screen.blit(bg, (x - PAD, y - PAD))
-        self._screen.blit(self._qr_surf, (x, y))
+        card = pygame.Surface((card_w, card_h))
+        card.fill(self._qr_card_color())
+        self._screen.blit(card, (x, y))
+        self._screen.blit(qr, (x + PAD, y + PAD))
+        self._screen.blit(label, label.get_rect(centerx=x + card_w // 2,
+                                                top=y + PAD + QR + 4))
 
     _SCRIM_H = 300
 
@@ -2964,6 +3009,12 @@ class UI:
     # an den Farben — die Gestaltung kostet nachweislich nichts, die
     # Kantenlänge alles.
     QR_SIZE         = SOCIAL_QR_SIZE
+    # Der Code auf dem Ergebnis-Schirm ist deutlich groesser, und das muss
+    # er sein: er traegt eine ganze Foto-URL statt der kurzen WLAN-Daten.
+    # Mit einem realistischen Eventnamen sind das 37 bis 41 Module — bei
+    # 130 px waeren das 3 px je Modul, bei 260 px sind es 6 bis 7. Platz
+    # ist da: 260 px sind auf 1920 px Breite ein Siebtel.
+    RESULT_QR_SIZE  = 260
     QR_BOX          = 10     # Rendergrösse je Modul vor dem Herunterskalieren.
     QR_MIN_CONTRAST = 3.0    # WCAG-Verhältnis Modul zu Grund, sonst s/w.
     # Ab welcher Helligkeit logo_circle als Kartengrund taugt (Verhältnis
@@ -3126,14 +3177,16 @@ class UI:
             # Unter 4 px je Modul wird der Code auf Distanz und bei leichter
             # Unschaerfe wackelig — der Gast muss dann naeher ran. Die
             # Stellschraube ist nicht die Gestaltung (die kostet nachweislich
-            # nichts, siehe Kommentar an QR_SIZE), sondern die Laenge des
-            # Inhalts: beim WLAN-Payload wachsen die Module mit SSID und
-            # Passwort. "Fotobox" + 10 Zeichen Passwort landen bei 29 Modulen
-            # und 4 px, ein langer Eventname als SSID bei 33 und 3 px.
+            # nichts, siehe Kommentar an QR_SIZE), sondern das Verhaeltnis von
+            # Inhaltslaenge zu Kantenlaenge. Gemessen: der WLAN-Payload waechst
+            # mit SSID und Passwort (29 Module bei "Fotobox" plus 10 Zeichen,
+            # 33 bei einem langen Eventnamen als SSID), die Foto-URL mit dem
+            # Eventordner (41 Module) — die bekommt auf dem Ergebnis-Schirm
+            # deshalb RESULT_QR_SIZE statt QR_SIZE.
             if scale < 4:
                 logger.warning(
                     "QR-Code für %s: nur %d px je Modul (%d Module auf "
-                    "%d px) — kürzere SSID/kürzeres WLAN-Passwort machen "
+                    "%d px) — kürzerer Inhalt oder grössere Kachel machen "
                     "das Muster gröber und damit besser scannbar",
                     shown, scale, total, px)
 

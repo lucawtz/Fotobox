@@ -97,3 +97,62 @@ def test_payload_bleibt_scannbar_klein():
     qr.add_data(config.box_qr_payload(_cfg()))
     qr.make(fit=True)
     assert qr.modules_count <= 29
+
+
+# ── Der Code auf dem Ergebnis-Schirm ──────────────────────────────────────────
+# Er zeigt auf das einzelne Foto, nicht auf das WLAN. Der Grund ist eine
+# Eigenheit der Handys: ein mit der Kamera gescannter Code oeffnet sich immer
+# im echten Browser, nie im WLAN-Anmeldefenster — und nur dort kann der Gast
+# sein Bild sichern.
+
+def _photo_cfg(**over) -> dict:
+    data = {"gallery_url": "http://fotobox.internal",
+            "picture_dir": "/srv/Picture_Box"}
+    data.update(over)
+    return data
+
+
+def test_foto_url_zeigt_auf_das_einzelne_bild():
+    got = config.photo_url(_photo_cfg(),
+                           "/srv/Picture_Box/2026-08-25_fest/foto_1.jpg")
+    assert got == "http://fotobox.internal/photo/2026-08-25_fest/foto_1.jpg"
+
+
+def test_foto_url_kodiert_sonderzeichen():
+    """Eventnamen wie 'Sommerfest 2026' und Dateinamen mit & duerfen den
+    Link nicht zerreissen — der Gast scannt ihn, er kann ihn nicht
+    reparieren."""
+    got = config.photo_url(_photo_cfg(),
+                           "/srv/Picture_Box/Sommerfest 2026/foto & co.jpg")
+    assert got == ("http://fotobox.internal/photo/"
+                   "Sommerfest%202026/foto%20%26%20co.jpg")
+
+
+def test_flacher_altbestand_bekommt_keinen_link():
+    """Liegt das Foto direkt im picture_dir, fehlt die Event-Komponente.
+    Ein geratener Link fuehrte auf eine 404-Seite — dann lieber keiner,
+    der Ergebnis-Schirm faellt auf den WLAN-Code zurueck."""
+    assert config.photo_url(_photo_cfg(),
+                            "/srv/Picture_Box/foto_flach.jpg") == ""
+
+
+def test_ohne_galerie_adresse_kein_link():
+    assert config.photo_url(_photo_cfg(gallery_url=""),
+                            "/srv/Picture_Box/fest/f.jpg") == ""
+    assert config.photo_url(_photo_cfg(), "") == ""
+
+
+def test_foto_code_bleibt_auf_dem_ergebnis_schirm_scannbar():
+    """41 Module bei realistischem Eventnamen. Auf der Sidebar-Groesse
+    waeren das 3 px je Modul und der Decoder steigt aus; RESULT_QR_SIZE
+    haelt ihn bei 6.
+    """
+    qrcode = __import__("qrcode")
+    url = config.photo_url(
+        _photo_cfg(), "/srv/Picture_Box/2026-08-25_hochzeit-lisa-und-tom/"
+                      "foto_20260825_120000.jpg")
+    qr = qrcode.QRCode(border=0)
+    qr.add_data(url)
+    qr.make(fit=True)
+    assert qr.modules_count <= 41
+    assert 260 // qr.modules_count >= 6, "Kachel zu klein fuer diese URL"
