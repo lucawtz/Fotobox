@@ -87,7 +87,11 @@ LIVE_RADIUS     = 6
 # eigenen, fertig gestalteten Code tragen (instagram_qr_path,
 # booking_qr_path) — beide Ziele sind konstante externe URLs. Ist keiner
 # hinterlegt, zeichnet _draw_social_links das Glyph.
-SOCIAL_ICON     = 22      # Instagram-/Kalender-Glyph neben der Beschriftung.
+# Instagram-/Kalender-Glyph neben der Beschriftung. 30 statt der frueheren 22:
+# das Symbol steht neben 24-pt-Text und soll als Zeichen lesbar sein, nicht als
+# Verzierung. Hoehe kostet das nichts — die Reihe ist mit zwei Textzeilen 53 px
+# hoch, und _social_row_height nimmt davon ohnehin das Maximum.
+SOCIAL_ICON     = 30
 SOCIAL_ROW_GAP  = 18      # Luft zwischen den Reihen.
 # Kantenlaenge fuer instagram_qr_path und booking_qr_path. Instagrams
 # Code hat 41 Module (Version 6) — bei 96 px waeren das 2,3 px pro Modul,
@@ -117,15 +121,6 @@ SOCIAL_QR_PAD   = 12
 # Lesbarkeitsgrenze — wer beide gross UND scanbar will, braucht weniger
 # Codes oder kleinere Schrift.
 SOCIAL_QR_MIN   = 100
-
-# Wie weit der Rahmen um eine Reihe ohne eigenen Code ueber ihren Text
-# hinausragt. Bewusst aus SOCIAL_ROW_GAP geborgt statt zur Zeilenhoehe
-# addiert: jedes zusaetzliche Pixel fehlt der QR-Gruppe darueber. Mit 8 px
-# Innenabstand gemessen, drueckte der Rahmen die Instagram-Kachel von 116 auf
-# 100 px — bei 41 Modulen 2,4 px je Modul und damit unter die Grenze, ab der
-# eine Handykamera den Code noch liest. Der Rahmen darf auffallen, aber nicht
-# auf Kosten eines Codes.
-SOCIAL_BOX_PAD  = 6
 
 # ── Header-Grenzen ────────────────────────────────────────────────────────────
 # Untergrenzen, unter die _fit_text den Header NICHT senken darf. Darunter
@@ -2860,10 +2855,11 @@ class UI:
         if not rows:
             return
 
-        # Glyphs nur, solange keine Reihe einen echten Code trägt: 22 px
-        # neben einem 130-px-Code wirken nicht wie ein Symbol, sondern wie
-        # ein Versehen.
-        glyphs = not any(surf for _, _, _, surf in rows)
+        # Frueher gab es das Glyph nur, solange keine Reihe einen echten Code
+        # trug — die Sorge war, ein kleines Symbol neben einer 130-px-Kachel
+        # wirke wie ein Versehen. Es steht aber gar nicht neben der Kachel,
+        # sondern in der Reihe darunter neben ihrem Text, und dort fehlte der
+        # Reihe jedes Erkennungszeichen. Sie bekommt es jetzt immer.
 
         ry = y
         for row in rows:
@@ -2891,29 +2887,20 @@ class UI:
             else:
                 text_w = max(lbl.get_width(),
                              sub.get_width() if sub else 0)
-                block_w = (SOCIAL_ICON + 10 if glyphs else 0) + text_w
+                block_w = SOCIAL_ICON + 12 + text_w
                 x0 = cx - block_w // 2
                 row_h = self._social_row_height(row, qr_size) - SOCIAL_ROW_GAP
-                # Rahmen um die Reihe. Die Kacheln darueber tragen ihre
-                # cremefarbene Karte, diese Reihe hat nichts — ohne Rahmen
-                # steht sie als loser Text darunter und wird ueberlesen.
-                #
-                # Er ragt ueber row_h hinaus und borgt sich das aus dem
-                # Abstand zur naechsten Reihe. Die Zeilenhoehe bleibt damit
-                # unveraendert, und die QR-Gruppe verliert kein Pixel.
-                box = pygame.Rect(0, 0, block_w + 32,
-                                  row_h + 2 * SOCIAL_BOX_PAD)
-                box.center = (cx, ry + row_h // 2)
-                pygame.draw.rect(self._screen,
-                                 self._readable(self._theme["panel_border"]),
-                                 box, width=2, border_radius=10)
-                if glyphs:
-                    iy = ry + (row_h - SOCIAL_ICON) // 2
-                    if icon_type == "instagram":
-                        self._draw_instagram_icon(x0, iy, SOCIAL_ICON)
-                    else:
-                        self._draw_calendar_icon(x0, iy, SOCIAL_ICON)
-                tx = x0 + (SOCIAL_ICON + 10 if glyphs else 0)
+                # Das Symbol traegt dieselbe erzwungen lesbare Farbe wie die
+                # Domain darunter. Ohne _readable naehme es theme["accent"] —
+                # im dunklen Theme der Box 1,26:1 gegen den Grund, es waere
+                # also da und trotzdem nicht zu sehen.
+                icon_color = self._readable(self._theme["accent"])
+                iy = ry + (row_h - SOCIAL_ICON) // 2
+                if icon_type == "instagram":
+                    self._draw_instagram_icon(x0, iy, SOCIAL_ICON, icon_color)
+                else:
+                    self._draw_calendar_icon(x0, iy, SOCIAL_ICON, icon_color)
+                tx = x0 + SOCIAL_ICON + 12
                 text_h = lbl.get_height() + (sub.get_height() + 2 if sub else 0)
                 ty = ry + (row_h - text_h) // 2
                 self._screen.blit(lbl, (tx, ty))
@@ -2922,10 +2909,10 @@ class UI:
 
             ry += self._social_row_height(row, qr_size)
 
-    def _draw_instagram_icon(self, x: int, y: int, size: int):
+    def _draw_instagram_icon(self, x: int, y: int, size: int, color=None):
         """Vereinfachtes Instagram-Logo: gerundetes Quadrat + Kreis innen
         + kleiner Punkt rechts oben (Flash). Programmatisch gezeichnet."""
-        color = self._theme["accent"]
+        color = color or self._theme["accent"]
         pygame.draw.rect(self._screen, color, (x, y, size, size),
                          width=2, border_radius=size // 5)
         pygame.draw.circle(self._screen, color,
@@ -2933,17 +2920,38 @@ class UI:
         pygame.draw.circle(self._screen, color,
                            (x + size - 5, y + 5), 1)
 
-    def _draw_calendar_icon(self, x: int, y: int, size: int):
-        """Vereinfachter Kalender: Rechteck mit zwei Bindern oben."""
-        color = self._theme["accent"]
-        body_y = y + 4
-        body_h = size - 4
-        pygame.draw.rect(self._screen, color, (x, body_y, size, body_h),
-                         width=2, border_radius=2)
-        pygame.draw.rect(self._screen, color, (x + 5, y, 3, 6))
-        pygame.draw.rect(self._screen, color, (x + size - 8, y, 3, 6))
-        pygame.draw.line(self._screen, color,
-                         (x, body_y + 7), (x + size, body_y + 7), 1)
+    def _draw_calendar_icon(self, x: int, y: int, size: int, color=None):
+        """Kalenderblatt: Koerper, gefuellter Kopf, zwei Ringe, ein Datum.
+
+        Der gefuellte Kopfbalken ist der Unterschied zwischen "Rechteck mit
+        Strichen" und "Kalender" — er gibt dem Zeichen die Silhouette, an der
+        man es auf zwei Meter erkennt. Der Punkt darunter steht fuer den
+        angestrichenen Tag und fuellt die sonst leere Flaeche.
+
+        Alle Masse sind Anteile von `size`, damit das Zeichen bei einer
+        anderen Groesse nicht auseinanderfaellt.
+        """
+        color = color or self._theme["accent"]
+        ring_h = max(3, size // 6)
+        body = pygame.Rect(x, y + ring_h, size, size - ring_h)
+        head_h = max(5, size // 4)
+
+        # Ringe zuerst: der Koerper deckt ihre Unterkante ab.
+        ring_w = max(2, size // 10)
+        for rx in (x + size // 4, x + size - size // 4 - ring_w):
+            pygame.draw.rect(self._screen, color,
+                             (rx, y, ring_w, ring_h * 2), border_radius=1)
+
+        pygame.draw.rect(self._screen, color, body, width=2, border_radius=4)
+        pygame.draw.rect(self._screen, color,
+                         (body.x, body.y, body.width, head_h),
+                         border_top_left_radius=4, border_top_right_radius=4)
+
+        dot = max(3, size // 6)
+        pygame.draw.rect(self._screen, color,
+                         (body.centerx - dot // 2,
+                          body.y + head_h + (body.height - head_h - dot) // 2,
+                          dot, dot), border_radius=1)
 
     @staticmethod
     def _instagram_handle(url: str) -> str:
