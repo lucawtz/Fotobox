@@ -1618,6 +1618,41 @@ def _insecure_defaults() -> list:
     return out
 
 
+# Obergrenze fuer print_bleed_mm im Panel. printing._print_bleed_mm begrenzt
+# haerter (ein Viertel der jeweiligen Kante, also 25 mm auf der kurzen Seite
+# der Postkarte) — das haengt aber am eingestellten Papierformat, und hier soll
+# eine Zahl stehen, die auch fuer 13x18 noch stimmt. Alles ueber 25 mm ist auf
+# jedem Fotoformat ein Vertipper.
+_BLEED_MAX_MM = 25.0
+
+
+def _print_scale_pct() -> int:
+    """Skalierung so, wie printing sie tatsaechlich anwendet."""
+    try:
+        import printing
+        return printing._print_scale(config.cfg)
+    except Exception:
+        # printing fehlt (kein CUPS im Dev-Setup) — dann den Rohwert zeigen,
+        # aber nicht mit einer Exception die ganze Admin-Seite abschiessen.
+        try:
+            return max(50, min(100, int(config.cfg.get("print_scale_pct", 100))))
+        except (TypeError, ValueError):
+            return 100
+
+
+def _print_bleed_mm() -> tuple[float, float]:
+    """Ueberstand so, wie printing ihn tatsaechlich anwendet."""
+    try:
+        import printing
+        return printing._print_bleed_mm(config.cfg)
+    except Exception:
+        raw = config.cfg.get("print_bleed_mm") or [0.0, 0.0]
+        try:
+            return float(raw[0]), float(raw[1])
+        except (TypeError, ValueError, IndexError):
+            return 0.0, 0.0
+
+
 @app.route("/api/admin/config", methods=["GET", "POST"])
 @_api_login_required
 def api_admin_config():
@@ -1663,6 +1698,12 @@ def api_admin_config():
             "printer_name":       config.cfg.get("printer_name", ""),
             "print_copies":       int(config.cfg.get("print_copies", 1)),
             "print_mode":         config.cfg.get("print_mode", "auto"),
+            # Randlos-Korrektur. Bewusst durch printing gereicht statt roh aus
+            # der Config: dort werden Unsinnswerte begrenzt, und das Panel soll
+            # anzeigen, was wirklich gedruckt wird — nicht, was jemand von Hand
+            # in die config.json geschrieben hat.
+            "print_scale_pct":    _print_scale_pct(),
+            "print_bleed_mm":     list(_print_bleed_mm()),
             "role":               role,
             # Damit das Admin-Panel dieselben Grenzen anzeigt, die hier
             # abgeschnitten wird — statt sie ein zweites Mal zu verdrahten.
@@ -1776,6 +1817,23 @@ def api_admin_config():
     # Druckeinstellungen: admin-only. Der Drucker gehoert dem Box-Besitzer,
     # ein Mieter soll ihn nicht umstellen koennen.
     if is_admin:
+        # Zwei Zahlen, eine Einstellung: [lange Kante, kurze Kante] in mm. Eine
+        # halb uebernommene Liste waere schlimmer als gar keine — dann stimmte
+        # eine Achse und die andere nicht, und der naechste Testdruck zeigte auf
+        # die falsche Ursache. Deshalb alles oder nichts, und die Pruefung vor
+        # allen anderen Zuweisungen: ein 400 mittendrin liesse sonst die halbe
+        # Formularseite im Speicher stehen, ohne sie zu sichern.
+        new_bleed = None
+        if "print_bleed_mm" in data:
+            try:
+                new_bleed = [max(0.0, min(_BLEED_MAX_MM, round(float(v), 2)))
+                             for v in (data.get("print_bleed_mm") or [0, 0])]
+                if len(new_bleed) != 2:
+                    raise ValueError("print_bleed_mm braucht genau zwei Werte")
+            except (TypeError, ValueError) as exc:
+                return jsonify(ok=False,
+                               error=f"Ungültiger Überstand: {exc}"), 400
+
         if "print_enabled" in data:
             config.cfg["print_enabled"] = bool(data.get("print_enabled"))
         if "printer_name" in data:
@@ -1789,6 +1847,14 @@ def api_admin_config():
             mode = str(data.get("print_mode") or "auto").lower()
             if mode in ("auto", "cover", "fit"):
                 config.cfg["print_mode"] = mode
+        if "print_scale_pct" in data:
+            try:
+                config.cfg["print_scale_pct"] = max(
+                    50, min(100, int(round(float(data.get("print_scale_pct"))))))
+            except (TypeError, ValueError):
+                pass
+        if new_bleed is not None:
+            config.cfg["print_bleed_mm"] = new_bleed
         # Zustand sofort neu ermitteln, damit die Oberflaeche nicht den alten
         # Cache-Wert zeigt und der Result-Screen den Knopf richtig setzt.
         try:

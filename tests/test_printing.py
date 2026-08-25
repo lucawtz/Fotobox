@@ -170,6 +170,133 @@ def test_invalid_paper_size_falls_back(cfg, tmp_path):
                 os.remove(out)
 
 
+# ── Randlos-Ueberstand ─────────────────────────────────────────────────────────
+
+def _px(mm, dpi=300):
+    return int(round(mm / 25.4 * dpi))
+
+
+def _dark_photo(tmp_path):
+    src = tmp_path / "in.jpg"
+    Image.new("RGB", (6000, 4000), (30, 30, 30)).save(src, "JPEG", quality=95)
+    return src
+
+
+def test_bleed_grows_the_canvas_per_axis(cfg, tmp_path):
+    """Der Ueberstand kommt als weisser Rand dazu, die Nutzflaeche bleibt.
+
+    Genau darin unterscheidet sich die Korrektur von `scaling`: dort schrumpft
+    das Bild, hier waechst die Leinwand darum herum.
+    """
+    src = _dark_photo(tmp_path)
+    cfg.update(print_size_mm=[148, 100], print_dpi=300, print_bleed_mm=[2, 1.5])
+    out = printing.prepare(str(src), cfg)
+    try:
+        with Image.open(out) as im:
+            assert im.size == (_px(148 + 4), _px(100 + 3))
+    finally:
+        os.remove(out)
+
+
+def test_bleed_only_pads_the_axis_it_is_set_on(cfg, tmp_path):
+    """Der eigentliche Grund fuer die Millimeter statt eines Prozentwerts:
+    beim Selphy sollen nur die Laschenseiten Rand bekommen, die echte
+    Blattkante oben und unten nicht."""
+    src = _dark_photo(tmp_path)
+    cfg.update(print_size_mm=[148, 100], print_dpi=300, print_mode="cover",
+               print_bleed_mm=[3, 0])
+    out = printing.prepare(str(src), cfg)
+    try:
+        with Image.open(out) as im:
+            px = im.load()
+            mid_y, mid_x = im.height // 2, im.width // 2
+            assert all(c > 245 for c in px[1, mid_y]), "links muss Rand sein"
+            assert all(c > 245 for c in px[im.width - 2, mid_y]), "rechts auch"
+            assert not all(c > 245 for c in px[mid_x, 1]), "oben darf keiner sein"
+            assert not all(c > 245 for c in px[mid_x, im.height - 2]), "unten auch nicht"
+    finally:
+        os.remove(out)
+
+
+def test_bleed_keeps_the_photo_at_paper_size(cfg, tmp_path):
+    """Die dunkle Flaeche muss danach exakt das Papierformat einnehmen —
+    sonst haette die Korrektur das Bild verkleinert statt es zu platzieren."""
+    src = _dark_photo(tmp_path)
+    cfg.update(print_size_mm=[148, 100], print_dpi=300, print_mode="cover",
+               print_bleed_mm=[4, 2])
+    out = printing.prepare(str(src), cfg)
+    try:
+        with Image.open(out) as im:
+            px, mid_y = im.load(), im.height // 2
+            dark = [x for x in range(im.width) if not all(c > 245 for c in px[x, mid_y])]
+            # JPEG weicht die Kante ueber ein paar Pixel auf — 2 px Toleranz.
+            assert abs((dark[-1] - dark[0] + 1) - _px(148)) <= 2
+    finally:
+        os.remove(out)
+
+
+@pytest.mark.parametrize("value", [None, [], [2], ["a", "b"], [-5, -5], [999, 999]])
+def test_absurd_bleed_does_not_break_the_print(cfg, cups, tmp_path, value):
+    """Wie beim Skalierungsregler: ein Vertipper darf hoechstens den Rand
+    kosten, nie den Ausdruck."""
+    cups()
+    src = _dark_photo(tmp_path)
+    cfg.update(print_size_mm=[148, 100], print_dpi=300, print_bleed_mm=value)
+    ok, _ = printing.print_photo(str(src), cfg)
+    assert ok is True
+
+
+def test_bleed_is_capped_at_a_quarter_of_the_edge(cfg, tmp_path):
+    """Mehr als ein Viertel der Kante ist sicher ein Vertipper — und der darf
+    die Nutzflaeche nicht gegen null ziehen."""
+    src = _dark_photo(tmp_path)
+    cfg.update(print_size_mm=[148, 100], print_dpi=300, print_bleed_mm=[999, 999])
+    out = printing.prepare(str(src), cfg)
+    try:
+        with Image.open(out) as im:
+            assert im.size == (_px(148 + 2 * 37), _px(100 + 2 * 25))
+    finally:
+        os.remove(out)
+
+
+def test_no_bleed_is_the_old_behaviour(cfg, tmp_path):
+    """Der Standard darf sich nicht geaendert haben: bestehende Boxen drucken
+    nach einem Update genau wie vorher."""
+    src = _dark_photo(tmp_path)
+    cfg.update(print_size_mm=[148, 100], print_dpi=300)
+    for value in (None, [0, 0], [0.0, 0.0]):
+        cfg["print_bleed_mm"] = value
+        out = printing.prepare(str(src), cfg)
+        try:
+            with Image.open(out) as im:
+                assert im.size == (1748, 1181), value
+        finally:
+            os.remove(out)
+
+
+def test_bleed_moves_the_test_page_corner_marks_inward(cfg):
+    """Der Testdruck muss dieselbe Korrektur mitmachen wie ein Foto — sonst
+    misst man mit ihm etwas anderes, als spaeter gedruckt wird."""
+    cfg.update(print_size_mm=[148, 100], print_dpi=300, print_bleed_mm=[3, 3])
+    page = printing.test_page(cfg, "Selphy")
+    try:
+        out = printing.prepare(page, cfg)
+        try:
+            with Image.open(out) as im:
+                px = im.load()
+                assert im.size == (_px(148 + 6), _px(100 + 6))
+                # Aussen weiss (das ist der Ueberstand), der Eckwinkel sitzt
+                # jetzt um genau diesen Ueberstand eingerueckt.
+                assert all(c > 245 for c in px[2, 2])
+                inset = _px(3)
+                assert not all(c > 245 for c in px[inset + 2, inset + 2])
+        finally:
+            if out != page:
+                os.remove(out)
+    finally:
+        os.remove(page)
+
+
 # ── Druckerzustand ─────────────────────────────────────────────────────────────
 
 def test_ready_printer(cfg, cups):

@@ -20,6 +20,7 @@ import PrintRoundedIcon from "@mui/icons-material/PrintRounded";
 import TuneRoundedIcon from "@mui/icons-material/TuneRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import FactCheckRoundedIcon from "@mui/icons-material/FactCheckRounded";
+import StraightenRoundedIcon from "@mui/icons-material/StraightenRounded";
 import { api, AdminConfig, Printer, PrinterInfo } from "../../api";
 import SettingsCard from "./SettingsCard";
 
@@ -31,6 +32,21 @@ const MODES = [
   { value: "fit",   label: "Immer vollständig",
     hint: "Zeigt das ganze Bild, lässt dafür einen weißen Rand." },
 ];
+
+// Muss zu gallery_server._BLEED_MAX_MM passen. Groessere Werte schneidet der
+// Server ab, und ein Feld, dessen Eingabe stillschweigend anders gespeichert
+// wird als sie dasteht, ist schlimmer als eins mit Grenze.
+const BLEED_MAX_MM = 25;
+
+/** Millimeter aus einem Eingabefeld. Nimmt auch das Komma an — auf einer
+ *  deutschen Tastatur tippt niemand freiwillig einen Punkt in eine
+ *  Millimeterangabe, und "2,5" als 0 zu lesen waere die schlechteste aller
+ *  Antworten. Unlesbares wird 0, also "keine Korrektur". */
+const parseMm = (v: string): number => {
+  const n = Number(v.replace(",", ".").trim());
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(BLEED_MAX_MM, Math.round(n * 100) / 100));
+};
 
 // CUPS-Zustaende uebersetzen. printing._printer_states liefert das englische
 // Wort aus `lpstat -p` durch (idle | printing | disabled) — in einer deutschen
@@ -93,6 +109,11 @@ export default function AdminPrint() {
   const [printer, setPrinter] = useState("");
   const [copies, setCopies] = useState(1);
   const [mode, setMode] = useState("auto");
+  // Die Millimeter bewusst als Text: waehrend man "2,5" tippt, ist der Wert
+  // zwischendurch "2," — als Zahl gehalten haette das Feld den Rest verworfen.
+  const [bleedLong, setBleedLong] = useState("0");
+  const [bleedShort, setBleedShort] = useState("0");
+  const [scale, setScale] = useState(100);
   const [busy, setBusy] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
   const [testBusy, setTestBusy] = useState(false);
@@ -107,6 +128,9 @@ export default function AdminPrint() {
       setPrinter(c.printer_name ?? "");
       setCopies(c.print_copies ?? 1);
       setMode(c.print_mode ?? "auto");
+      setBleedLong(String(c.print_bleed_mm?.[0] ?? 0));
+      setBleedShort(String(c.print_bleed_mm?.[1] ?? 0));
+      setScale(c.print_scale_pct ?? 100);
     });
     loadPrinters();
   }, []);
@@ -115,20 +139,32 @@ export default function AdminPrint() {
     enabled !== (cfg.print_enabled ?? true) ||
     printer !== (cfg.printer_name ?? "") ||
     copies !== (cfg.print_copies ?? 1) ||
-    mode !== (cfg.print_mode ?? "auto")
+    mode !== (cfg.print_mode ?? "auto") ||
+    parseMm(bleedLong) !== (cfg.print_bleed_mm?.[0] ?? 0) ||
+    parseMm(bleedShort) !== (cfg.print_bleed_mm?.[1] ?? 0) ||
+    scale !== (cfg.print_scale_pct ?? 100)
   );
 
   const save = async () => {
     setBusy(true);
+    const bleed: [number, number] = [parseMm(bleedLong), parseMm(bleedShort)];
     try {
       await api.admin.config.save({
         print_enabled: enabled,
         printer_name: printer,
         print_copies: copies,
         print_mode: mode as AdminConfig["print_mode"],
+        print_bleed_mm: bleed,
+        print_scale_pct: scale,
       });
+      // Die Felder auf das zurueckschreiben, was gespeichert wurde: aus "2,5"
+      // wird "2.5", aus "abc" eine 0. Sonst stuende im Feld etwas anderes als
+      // im Drucker, und das Formular waere sofort wieder "geaendert".
+      setBleedLong(String(bleed[0]));
+      setBleedShort(String(bleed[1]));
       setCfg({ ...cfg!, print_enabled: enabled, printer_name: printer,
-               print_copies: copies, print_mode: mode as AdminConfig["print_mode"] });
+               print_copies: copies, print_mode: mode as AdminConfig["print_mode"],
+               print_bleed_mm: bleed, print_scale_pct: scale });
       setToast({ sev: "success", msg: "Druckeinstellungen gespeichert" });
       loadPrinters();
     } catch (e) {
@@ -325,6 +361,67 @@ export default function AdminPrint() {
       </SettingsCard>
 
       <SettingsCard
+        icon={<StraightenRoundedIcon />}
+        title="Randlos-Überstand"
+        description="Wenn das Bild über die Blattkante oder die Abreisslaschen läuft."
+      >
+        {cfg ? (
+          <Stack spacing={2}>
+            <Typography variant="body2" color="text.secondary">
+              Randlos heißt beim Treiber: er rechnet auf eine Fläche, die grösser
+              ist als das Papier, und schiebt das fertige Bild damit über die
+              Kante. <strong>Messen mit dem Testdruck:</strong> dessen Rahmen
+              liegt 5&nbsp;mm vom Blattrand. Kommt er auf einer Achse mit nur
+              3&nbsp;mm heraus, sind hier für diese Achse 2&nbsp;mm einzutragen.
+            </Typography>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <TextField
+                label="Lange Kante (mm)"
+                value={bleedLong}
+                onChange={(e) => setBleedLong(e.target.value)}
+                disabled={!enabled}
+                sx={{ maxWidth: { sm: 220 } }}
+                inputProps={{ inputMode: "decimal" }}
+                helperText="Links und rechts — beim Selphy die Laschenseiten"
+              />
+              <TextField
+                label="Kurze Kante (mm)"
+                value={bleedShort}
+                onChange={(e) => setBleedShort(e.target.value)}
+                disabled={!enabled}
+                sx={{ maxWidth: { sm: 220 } }}
+                inputProps={{ inputMode: "decimal" }}
+                helperText="Oben und unten — die echte Blattkante"
+              />
+            </Stack>
+            <TextField
+              type="number"
+              label="Skalierung (%)"
+              value={scale}
+              onChange={(e) =>
+                setScale(Math.max(50, Math.min(100, Number(e.target.value) || 100)))}
+              disabled={!enabled}
+              inputProps={{ min: 50, max: 100 }}
+              sx={{ maxWidth: 200 }}
+              helperText="Grobe Korrektur über beide Achsen zugleich. 100 = aus."
+            />
+            {/* Beide Schrauben wirken nacheinander — die Millimeter in der
+                Bildaufbereitung, die Prozent erst im Treiber. Wer an beiden
+                dreht, korrigiert doppelt und wundert sich über den weissen
+                Rand oben und unten. */}
+            {scale !== 100 && (parseMm(bleedLong) > 0 || parseMm(bleedShort) > 0) && (
+              <Alert severity="warning">
+                Millimeter und Skalierung sind beide aktiv und ziehen das Bild
+                nacheinander zusammen. Für eine saubere Einstellung die
+                Skalierung auf <strong>100</strong> setzen und nur mit den
+                Millimetern arbeiten — die wirken je Achse einzeln.
+              </Alert>
+            )}
+          </Stack>
+        ) : <Skeleton variant="rounded" height={56} />}
+      </SettingsCard>
+
+      <SettingsCard
         icon={<FactCheckRoundedIcon />}
         title="Testdruck"
         description="Ein Blatt zur Kontrolle, bevor der erste Gast davorsteht."
@@ -332,9 +429,9 @@ export default function AdminPrint() {
         <Stack spacing={2} alignItems="flex-start">
           <Typography variant="body2" color="text.secondary">
             Druckt eine Seite mit Rahmen, Eckwinkeln, Maßstab und Farbfeldern.
-            Ist der Rahmen ringsum gleich breit und die Maßstab-Linie exakt so
-            lang wie angeschrieben, stimmen Papierformat und Ränder — das sieht
-            man einem Gruppenfoto nicht an.
+            Der Rahmen liegt 5&nbsp;mm vom Blattrand: ist er ringsum gleich breit
+            und die Maßstab-Linie exakt so lang wie angeschrieben, stimmen
+            Papierformat und Ränder — das sieht man einem Gruppenfoto nicht an.
           </Typography>
           <Button
             variant="outlined"
@@ -370,6 +467,9 @@ export default function AdminPrint() {
             setPrinter(cfg.printer_name ?? "");
             setCopies(cfg.print_copies ?? 1);
             setMode(cfg.print_mode ?? "auto");
+            setBleedLong(String(cfg.print_bleed_mm?.[0] ?? 0));
+            setBleedShort(String(cfg.print_bleed_mm?.[1] ?? 0));
+            setScale(cfg.print_scale_pct ?? 100);
           }}
         >
           Verwerfen

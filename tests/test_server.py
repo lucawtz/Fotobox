@@ -291,6 +291,60 @@ def test_invalid_print_mode_ignored(app):
     assert config.cfg["print_mode"] == "fit"
 
 
+def test_bleed_and_scale_round_trip(app):
+    """Beide Regler gegen den Randlos-Ueberstand kommen so zurueck, wie sie
+    gespeichert wurden — das Panel zeigt sonst etwas anderes an, als gedruckt
+    wird, und der naechste Testdruck fuehrt in die Irre."""
+    c = _login(app, "admin")
+    c.post("/api/admin/config", json={"wifi_ssid": "F", "wifi_password": "gueltig123",
+                                      "print_bleed_mm": [2.5, 1], "print_scale_pct": 97})
+    assert config.cfg["print_bleed_mm"] == [2.5, 1.0]
+    body = c.get("/api/admin/config").get_json()
+    assert body["print_bleed_mm"] == [2.5, 1.0]
+    assert body["print_scale_pct"] == 97
+
+
+@pytest.mark.parametrize("value", ["viel", [1], [1, 2, 3], {"x": 1}, ["a", "b"]])
+def test_invalid_bleed_is_rejected_whole(app, value):
+    """Alles oder nichts: eine halb uebernommene Liste stellte eine Achse
+    richtig und die andere nicht — der Fehler saehe dann aus wie ein
+    Druckerproblem."""
+    c = _login(app, "admin")
+    c.post("/api/admin/config", json={"wifi_ssid": "F", "wifi_password": "gueltig123",
+                                      "print_bleed_mm": [2, 2]})
+    r = c.post("/api/admin/config", json={"wifi_ssid": "F", "wifi_password": "gueltig123",
+                                          "print_bleed_mm": value})
+    assert r.status_code == 400
+    assert config.cfg["print_bleed_mm"] == [2.0, 2.0]
+
+
+@pytest.mark.parametrize("value,expected", [(-3, 0.0), (999, 25.0)])
+def test_bleed_clamped_to_sane_range(app, value, expected):
+    _login(app, "admin").post("/api/admin/config", json={
+        "wifi_ssid": "F", "wifi_password": "gueltig123",
+        "print_bleed_mm": [value, value]})
+    assert config.cfg["print_bleed_mm"] == [expected, expected]
+
+
+@pytest.mark.parametrize("value,expected", [(10, 50), (140, 100), ("viel", 96)])
+def test_print_scale_clamped(app, value, expected):
+    c = _login(app, "admin")
+    c.post("/api/admin/config", json={"wifi_ssid": "F", "wifi_password": "gueltig123",
+                                      "print_scale_pct": 96})
+    c.post("/api/admin/config", json={"wifi_ssid": "F", "wifi_password": "gueltig123",
+                                      "print_scale_pct": value})
+    assert config.cfg["print_scale_pct"] == expected
+
+
+def test_host_cannot_change_bleed(app):
+    """Der Ueberstand haengt am Geraet, nicht am Mieter — wie der Drucker."""
+    _login(app, "admin").post("/api/admin/config", json={
+        "wifi_ssid": "F", "wifi_password": "gueltig123", "print_bleed_mm": [2, 2]})
+    _login(app, "host").post("/api/admin/config", json={
+        "wifi_ssid": "F", "wifi_password": "gueltig123", "print_bleed_mm": [9, 9]})
+    assert config.cfg["print_bleed_mm"] == [2.0, 2.0]
+
+
 # ── Warnung bei Auslieferungs-PINs (P2-21) ─────────────────────────────────────
 
 def test_insecure_defaults_reported(app, monkeypatch):

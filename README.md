@@ -121,7 +121,8 @@ Diese Tabelle wird aus `config.py` gepflegt — bei Änderungen dort bitte mitzi
 | `print_size_mm` | Papierformat in mm (Querformat, Breite × Höhe) | `[148, 100]` |
 | `print_dpi` | Auflösung für die Druckaufbereitung | `300` |
 | `print_options` | Zusätzliche rohe `lp -o`-Optionen | `[]` |
-| `print_scale_pct` | Anteil der Seite, den das Bild einnimmt (50–100). Gegen den Bleed des randlosen Treibers | `100` |
+| `print_scale_pct` | Anteil der Seite, den das Bild einnimmt (50–100). Grobe Korrektur gegen den Bleed des randlosen Treibers, wirkt auf beide Achsen gleich | `100` |
+| `print_bleed_mm` | Überstand je Blattrand als `[lange Kante, kurze Kante]` in mm. Feine Korrektur, wirkt je Achse einzeln. Im Admin-Panel einstellbar | `[0, 0]` |
 | `camera_keepalive_s` | Intervall des Kamera-Watchdogs | `25` |
 | `camera_output_mode` | Index aus `gphoto2 --get-config output` | `"3"` |
 | `camera_preview_pull` | Preview-Frame nach jedem Live-View-Wake (siehe unten) | `true` |
@@ -500,6 +501,7 @@ die man einem gedruckten Gruppenfoto nicht ansieht:
 | Rahmen ringsum gleich breit | Format und Zentrierung stimmen |
 | Rahmen auf einer Seite dünner | Bild sitzt nicht mittig |
 | Eckwinkel fehlen | Treiber druckt randlos mit Überstand — so viel verliert jedes Foto am Rand |
+| Rahmen näher als 5 mm am Rand | Die Differenz ist der Überstand dieser Achse → `print_bleed_mm` (siehe unten) |
 | Maßstab-Linie zu kurz/lang | `print_size_mm` passt nicht zum eingelegten Papier |
 
 Der Testdruck nimmt immer genau ein Blatt, unabhängig von `print_copies`, und
@@ -515,22 +517,46 @@ Passende Werte dann in `config.py` unter `print_media`, `print_size_mm` und
 `print_options` eintragen (z.&nbsp;B. `print_options: ["StpBorderless=True"]`
 für randlosen Druck).
 
-**Wenn der Druck über das Blatt hinausläuft:** randlos heisst beim
-Gutenprint-Treiber Bleed — er rechnet auf eine Fläche, die grösser als das
-Papier ist, und schiebt das fertig aufbereitete Bild damit über die Kante.
-`prepare()` kann dagegen nichts tun, die Vergrösserung passiert erst danach
-im Treiber. Zurückholen lässt sie sich mit `print_scale_pct` (Prozent der
-Seite, Standard `100`):
+### Wenn der Druck über das Blatt hinausläuft
+
+Randlos heisst beim Gutenprint-Treiber Bleed: er rechnet auf eine Fläche, die
+grösser als das Papier ist, und schiebt das fertig aufbereitete Bild damit über
+die Kante. Beim Canon Selphy sieht man das am deutlichsten an den seitlichen
+Abreisslaschen — das Foto läuft über die Knicklinien hinaus.
+
+Dagegen gibt es zwei Schrauben, beide im Admin-Panel unter **Drucken →
+Randlos-Überstand**:
+
+| | `print_bleed_mm` | `print_scale_pct` |
+|---|---|---|
+| Einheit | mm Überstand je Blattrand | % der Seite |
+| Achsen | einzeln (`[lange, kurze Kante]`) | beide gleich |
+| Wirkt in | `printing.prepare()` — als weisser Rand um die Nutzfläche | erst im Treiber (`lp -o scaling=`) |
+
+**Die Millimeter sind die richtige Schraube.** Der Überstand ist auf beiden
+Achsen gleich viele Millimeter, auf der kurzen Kante also prozentual mehr — ein
+einzelner Prozentwert kann darum nur eine der beiden Achsen richtig treffen.
+Beim Selphy zählt genau das: links und rechts sitzen die Laschen (dort darf
+Bild hinlaufen), oben und unten ist die echte Blattkante, wo ein weisser
+Streifen sofort auffällt.
+
+**Messen mit dem Testdruck aus dem Panel.** Sein Rahmen liegt 5 mm vom
+Blattrand. Erst beide Werte auf `0` setzen, drucken, dann nachmessen:
 
 ```jsonc
-"print_scale_pct": 97,   // nimmt rundum knapp 1,5 mm weg
+// Rahmen kommt seitlich mit 2 mm heraus statt 5, oben und unten mit 3,5:
+"print_bleed_mm": [3, 1.5]
 ```
 
-Einstellen am besten mit dem Testdruck aus dem Panel: die Massstab-Linie
-unten trägt ihren Sollwert im Klartext daneben, nachmessen und den Wert
-anpassen, bis Rahmen und Eckwinkel vollständig auf dem Papier liegen. Wer
-`scaling=` oder `fit-to-page` von Hand in `print_options` schreibt, behält
-Vorrang — dann bleibt `print_scale_pct` aussen vor.
+Zweiter Testdruck: Rahmen ringsum 5 mm, alle vier Eckwinkel vollständig →
+passt. Die Massstab-Linie unten trägt ihren Sollwert im Klartext daneben und
+belegt, dass auch die Skalierung stimmt.
+
+Beide Regler wirken *nacheinander* — wer an beiden dreht, korrigiert doppelt.
+`print_scale_pct` deshalb auf `100` lassen, ausser man will bewusst grob
+runterskalieren. Wer `scaling=` oder `fit-to-page` von Hand in `print_options`
+schreibt, behält Vorrang; dann bleibt `print_scale_pct` ganz aussen vor
+(`print_bleed_mm` wirkt trotzdem, es steckt schon in der Bilddatei).
 
 **Testdruck ohne die Box:**
 

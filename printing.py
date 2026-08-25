@@ -623,6 +623,42 @@ def _print_scale(cfg: dict) -> int:
     return max(50, min(100, pct))
 
 
+def _print_bleed_mm(cfg: dict) -> tuple[float, float]:
+    """Ueberstand des randlosen Treibers je Blattkante, (lange, kurze Achse) in mm.
+
+    Die achsengetrennte Fassung von _print_scale: `scaling` zieht das Bild auf
+    beiden Achsen gleich weit zusammen, der Ueberstand ist aber auf beiden
+    Achsen gleich viele *Millimeter* — auf der kurzen Kante also prozentual
+    mehr. Beim Selphy faellt genau das auf: seitlich liegen die Abreisslaschen,
+    dort darf ruhig Bild hinlaufen, oben und unten ist die echte Blattkante und
+    ein weisser Streifen waere sichtbar. Ein einzelner Prozentwert kann nur
+    eines von beidem richtig machen.
+
+    Gemessen wird am Testdruck: dessen Rahmen liegt 5 mm vom Blattrand. Kommt er
+    nur 3 mm vom Rand heraus, betraegt der Ueberstand auf dieser Achse 2 mm.
+
+    0 = keine Korrektur (Standard) und damit exakt das Verhalten von frueher.
+    """
+    raw = cfg.get("print_bleed_mm") or [0.0, 0.0]
+    long_mm, short_mm = _paper_mm(cfg)
+    try:
+        bleed_l, bleed_s = float(raw[0]), float(raw[1])
+    except (TypeError, ValueError, IndexError) as exc:
+        logger.warning("Ungueltiges print_bleed_mm %r (%s) — nutze 0", raw, exc)
+        return 0.0, 0.0
+    # Ein Viertel der Kante ist schon absurd viel (auf der Postkarte 37 bzw.
+    # 25 mm) und sicher ein Vertipper — aber immer noch ein gueltiges Bild,
+    # waehrend die Haelfte die Nutzflaeche auf null zoege.
+    def clamp(v: float, axis_mm: float, name: str) -> float:
+        limit = axis_mm / 4.0
+        if not 0.0 <= v <= limit:
+            logger.warning("print_bleed_mm %s = %g ausserhalb 0..%g — begrenzt",
+                           name, v, limit)
+        return max(0.0, min(limit, v))
+
+    return clamp(bleed_l, long_mm, "lang"), clamp(bleed_s, short_mm, "kurz")
+
+
 def _paper_aspect(cfg: dict) -> float:
     """Seitenverhältnis des Papiers (Breite/Höhe) im Querformat."""
     long_mm, short_mm = _paper_mm(cfg)
@@ -638,6 +674,10 @@ def prepare(path: str, cfg: dict) -> str:
       * `fit`   — Bild komplett sichtbar, weißer Rand. Für die 2×2-Collage
         Pflicht: ein quadratisches Bild mit `cover` auf Postkarte würde die
         obere und untere Fotoreihe abschneiden.
+
+    Dazu kommt `print_bleed_mm`: der Ueberstand, den ein randlos druckender
+    Treiber danach noch draufrechnet, wird hier vorab als weisser Rand
+    eingeplant (siehe _print_bleed_mm). Steht er auf 0, aendert das nichts.
 
     Bei Problemen wird der Originalpfad zurückgegeben — lieber ein unschön
     skalierter Druck als gar keiner.
@@ -670,24 +710,42 @@ def prepare(path: str, cfg: dict) -> str:
             else:
                 use_cover = mode == "cover"
 
-            out_w = int(round(long_mm / 25.4 * dpi))
-            out_h = int(round(short_mm / 25.4 * dpi))
+            # Nutzflaeche: was am Ende wirklich auf dem Blatt stehen soll.
+            in_w = int(round(long_mm / 25.4 * dpi))
+            in_h = int(round(short_mm / 25.4 * dpi))
+            # Leinwand: was der Treiber als "Seite" behandelt. Mit
+            # StpBorderless rechnet er auf eine Flaeche, die je Kante um den
+            # Ueberstand groesser ist als das Blatt, und zieht alles was wir
+            # ihm geben darauf auf. Legen wir den Ueberstand als weissen Rand
+            # gleich mit in die Datei, landet die Nutzflaeche danach exakt auf
+            # dem Papier — und zwar je Achse einzeln einstellbar, was `scaling`
+            # nicht kann. Ohne Ueberstand ist die Leinwand die Nutzflaeche und
+            # es bleibt beim alten Verhalten.
+            bleed_l, bleed_s = _print_bleed_mm(cfg)
+            out_w = int(round((long_mm + 2 * bleed_l) / 25.4 * dpi))
+            out_h = int(round((short_mm + 2 * bleed_s) / 25.4 * dpi))
 
             if use_cover:
-                canvas = ImageOps.fit(img, (out_w, out_h),
-                                      method=Image.LANCZOS, centering=(0.5, 0.5))
+                inner = ImageOps.fit(img, (in_w, in_h),
+                                     method=Image.LANCZOS, centering=(0.5, 0.5))
+            else:
+                inner = ImageOps.contain(img, (in_w, in_h), method=Image.LANCZOS)
+
+            if (inner.width, inner.height) == (out_w, out_h):
+                canvas = inner
             else:
                 canvas = Image.new("RGB", (out_w, out_h), (255, 255, 255))
-                inner = ImageOps.contain(img, (out_w, out_h), method=Image.LANCZOS)
                 canvas.paste(inner, ((out_w - inner.width) // 2,
                                      (out_h - inner.height) // 2))
 
             fd, tmp = tempfile.mkstemp(prefix="fotobox-print-", suffix=".jpg")
             os.close(fd)
             canvas.save(tmp, "JPEG", quality=95, dpi=(dpi, dpi))
-            logger.info("Druckbild: %s → %dx%d px (%s)",
+            logger.info("Druckbild: %s → %dx%d px (%s%s)",
                         os.path.basename(path), out_w, out_h,
-                        "randlos" if use_cover else "mit Rand")
+                        "randlos" if use_cover else "mit Rand",
+                        "" if not (bleed_l or bleed_s)
+                        else f", Ueberstand {bleed_l:g}/{bleed_s:g} mm")
             return tmp
     except Exception as exc:
         logger.warning("Druckbild-Aufbereitung fehlgeschlagen (%s) — nutze Original", exc)
@@ -773,7 +831,9 @@ def print_photo(path: str, cfg: dict) -> tuple[bool, str]:
 # Massstab: jedes Element beantwortet genau eine der Fragen.
 
 _MODE_LABEL = {
-    "auto":  "automatisch (Einzelfoto randlos, Collage vollständig)",
+    # Kurz gehalten: die Zeile steht auf der Testseite und wurde in der langen
+    # Fassung auf der Postkarte gekuerzt.
+    "auto":  "automatisch (Foto randlos, Collage mit Rand)",
     "cover": "immer randlos",
     "fit":   "immer vollständig",
 }
@@ -810,11 +870,16 @@ def _test_font(size_px: int):
 def test_page(cfg: dict, printer: Optional[str] = None) -> str:
     """Zeichnet eine Testseite im eingestellten Papierformat.
 
-    Bewusst exakt im Seitenverhaeltnis des Papiers erzeugt: dann laesst
-    prepare() sie unveraendert durch (cover wie fit sind hier identisch), und
-    was auf dem Blatt fehlt, hat wirklich der Drucker abgeschnitten und nicht
-    die Aufbereitung. Damit ist der Testdruck aussagekraeftig, egal welcher
-    print_mode eingestellt ist.
+    Bewusst exakt im Seitenverhaeltnis der Nutzflaeche erzeugt: dann skaliert
+    prepare() sie nicht um (cover wie fit sind hier identisch, und ein
+    eingestellter Ueberstand kommt als weisser Rand aussen herum dazu, genau
+    wie beim Foto). Was auf dem Blatt fehlt, hat also wirklich der Drucker
+    abgeschnitten und nicht die Aufbereitung — egal welcher print_mode
+    eingestellt ist.
+
+    Der Rahmen liegt 5 mm vom Blattrand und ist damit das Messmittel fuer
+    print_bleed_mm: kommt er auf einer Achse naeher am Rand heraus, ist die
+    Differenz der Ueberstand dieser Achse.
 
     Alle Positionen sind Anteile der Blatthoehe, nur Rahmen, Eckwinkel und
     Massstab sind in mm — die muessen physikalisch stimmen, der Rest soll auf
@@ -866,14 +931,6 @@ def test_page(cfg: dict, printer: Optional[str] = None) -> str:
     f_body  = _test_font(max(6, int(h * 0.040)))
     f_small = _test_font(max(6, int(h * 0.030)))
 
-    d.text((x0, int(h * 0.055)), "TESTDRUCK", font=f_title, fill=ink)
-    d.text((x0, int(h * 0.165)),
-           "Rahmen ringsum gleich breit? Eckwinkel vollständig? "
-           "Dann stimmen Format und Ränder.",
-           font=f_small, fill=soft)
-
-    media = (cfg.get("print_media") or "").strip() or "Treiber-Standard"
-    mode  = (cfg.get("print_mode") or "auto").lower()
     def clip(text: str, font, limit: int) -> str:
         """Kuerzt auf die Rahmenbreite. CUPS-Namen wie
         'Canon_SELPHY_CP1500_5640_series__Dachboden_' sind laenger als das
@@ -887,15 +944,32 @@ def test_page(cfg: dict, printer: Optional[str] = None) -> str:
         except (AttributeError, TypeError):   # Schrift ohne Laengenmessung
             return text
 
+    d.text((x0, int(h * 0.055)), "TESTDRUCK", font=f_title, fill=ink)
+    # Zwei kurze Zeilen statt einer langen: die Anleitung zum Nachmessen ist
+    # der Kern des Blattes und darf nicht als erstes weggekuerzt werden.
+    for i, hint in enumerate((
+        "Rahmen ringsum gleich breit, Eckwinkel vollständig? Dann passt es.",
+        "Der Rahmen liegt 5 mm vom Blattrand — Differenz = Überstand.",
+    )):
+        d.text((x0, int(h * (0.155 + 0.043 * i))),
+               clip(hint, f_small, x1 - x0), font=f_small, fill=soft)
+
+    media = (cfg.get("print_media") or "").strip() or "Treiber-Standard"
+    mode  = (cfg.get("print_mode") or "auto").lower()
     scale = _print_scale(cfg)
+    bleed_l, bleed_s = _print_bleed_mm(cfg)
+    # Korrektur auf eine eigene Zeile: an die Ausgabe-Zeile gehaengt fiel sie
+    # bei print_mode=auto der Kuerzung zum Opfer — ausgerechnet der Wert, den
+    # man mit diesem Blatt einstellt.
     lines = [
         f"Drucker:   {printer or 'Standarddrucker'}",
         f"Papier:    {long_mm:g} x {short_mm:g} mm · {dpi} dpi · Medium {media}",
-        f"Ausgabe:   {_MODE_LABEL.get(mode, mode)} · Skalierung {scale} %",
+        f"Ausgabe:   {_MODE_LABEL.get(mode, mode)}",
+        f"Korrektur: Skalierung {scale} % · Überstand {bleed_l:g}/{bleed_s:g} mm",
         f"Gedruckt:  {time.strftime('%d.%m.%Y %H:%M')}",
     ]
     for i, line in enumerate(lines):
-        d.text((x0, int(h * (0.27 + 0.055 * i))),
+        d.text((x0, int(h * (0.252 + 0.048 * i))),
                clip(line, f_body, x1 - x0), font=f_body, fill=ink)
 
     # Farbfelder und Graukeil: zeigen leere Farbbaender und einen zugesetzten

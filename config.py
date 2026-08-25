@@ -35,6 +35,7 @@ _BOX_FIELDS = frozenset({
     "print_copies",
     "print_mode",
     "print_scale_pct",
+    "print_bleed_mm",
 })
 
 # Alles was persistiert wird. Der Rest lebt ausschliesslich in _DEFAULTS und
@@ -257,6 +258,17 @@ _DEFAULTS: dict = {
     # kleinere Werte holen es prozentual zurueck aufs Papier. Mit dem Lineal
     # am Testdruck einstellen: 97 nimmt rundum knapp 1,5 mm weg.
     "print_scale_pct": 100,
+    # Dasselbe Problem, aber je Achse und in Millimetern: [lange Kante, kurze
+    # Kante], jeweils der Ueberstand pro Blattrand. `print_scale_pct` zieht
+    # beide Achsen prozentual gleich weit zusammen — der Ueberstand ist aber
+    # auf beiden Achsen gleich viele Millimeter, auf der kurzen also
+    # prozentual mehr. Beim Selphy zaehlt der Unterschied: links und rechts
+    # sitzen die Abreisslaschen (dort darf Bild hinlaufen), oben und unten ist
+    # die echte Blattkante. Gemessen am Testdruck, dessen Rahmen 5 mm vom
+    # Blattrand liegt: kommt er mit 3 mm heraus, sind es 2 mm Ueberstand.
+    # Anders als print_scale_pct wirkt das schon in prepare() und schrumpft
+    # nur die Achse, die es soll. 0 = aus.
+    "print_bleed_mm": [0.0, 0.0],
     # Wie lange der Drucker fuer ein Bild braucht. Geht nur in die Schaetzung
     # ein, die der Box-Dialog anzeigt, wenn Auftraege in der Queue haengen.
     "print_seconds_per_photo": 60,

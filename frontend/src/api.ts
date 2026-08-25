@@ -122,6 +122,12 @@ export interface AdminConfig {
   printer_name: string;
   print_copies: number;
   print_mode: "auto" | "cover" | "fit";
+  /** Randlos-Korrektur, beide vom Server schon auf gueltige Werte begrenzt.
+   *  `print_scale_pct` zieht das Bild auf beiden Achsen gleich weit zusammen,
+   *  `print_bleed_mm` ist der Ueberstand je Blattrand als
+   *  [lange Kante, kurze Kante] in mm — die feinere der beiden Schrauben. */
+  print_scale_pct: number;
+  print_bleed_mm: [number, number];
   /** Zeichengrenzen fuer event_name / subtitle, ausgemessen gegen die
    *  Sidebar-Breite der Box (config.py: EVENT_NAME_MAX_CHARS / SUBTITLE_MAX_CHARS).
    *  Kommen vom Server, damit das Panel sie nicht ein zweites Mal verdrahtet. */
