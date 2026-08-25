@@ -217,7 +217,12 @@ export default function AdminEvent() {
         <SettingsCard
           icon={<TimerRoundedIcon />}
           title="Countdown"
-          description="Dauer des Foto-Countdowns (1–10 Sekunden)."
+          // Die letzten rund zwei Sekunden gehoeren der Kamera: sie verlaesst
+          // den Live-View, klappt den Spiegel und belichtet. In dieser Zeit
+          // steht das Bild still. Wer den Countdown kurz stellt, nimmt den
+          // Gaesten also nicht Wartezeit weg, sondern die Zeit zum Ausrichten
+          // — und das sieht man dem Regler nicht an. Deshalb steht es hier.
+          description="Dauer des Foto-Countdowns (1–10 Sekunden). Die letzten rund 2 Sekunden braucht die Kamera zum Auslösen — so lange steht das Live-Bild still. Bei 5 s bleiben den Gästen gut 3 Sekunden, um sich auszurichten, bei 3 s nur gut eine."
         >
           {cfg ? (
             <Box sx={{ px: { xs: 0.5, sm: 1.5 } }}>
