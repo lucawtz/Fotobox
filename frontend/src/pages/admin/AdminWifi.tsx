@@ -128,11 +128,9 @@ export default function AdminWifi() {
               />
               {open_ ? (
                 <Alert severity="warning" variant="outlined">
-                  Jeder in Funkreichweite kommt ins Netz und damit in die
-                  Galerie — auch aus der Nachbarwohnung. Auf einer Feier in
-                  geschlossenen Räumen ist das meist folgenlos und spart den
-                  Gästen das Abtippen, was am Abend die eigentliche Hürde ist.
-                  iPhones zeigen „Ungesichertes Netzwerk“ an.
+                  Jeder in Funkreichweite kommt in die Galerie — auch aus der
+                  Nachbarwohnung. Dafür entfällt das Abtippen. iPhones zeigen
+                  „Ungesichertes Netzwerk“.
                 </Alert>
               ) : (
                 <TextField
@@ -160,9 +158,8 @@ export default function AdminWifi() {
 
         {dirty && (
           <Alert severity="warning" variant="outlined">
-            Beim Speichern startet das Fotobox-WLAN neu. Alle verbundenen Geräte
-            fliegen kurz raus — auch dieses hier. Danach mit den neuen Daten neu
-            verbinden. Am besten <strong>vor</strong> dem Event ändern.
+            Beim Speichern startet das WLAN neu — alle Geräte fliegen kurz raus,
+            auch dieses. Am besten <strong>vor</strong> dem Event ändern.
           </Alert>
         )}
 
