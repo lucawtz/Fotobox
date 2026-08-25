@@ -593,6 +593,9 @@ class UI:
 
         # Result-Screen Cache — gecappt, sonst Memory-Leak nach hunderten Fotos
         self._result_cache: dict = {}
+        # Unterkante des zuletzt gezeichneten Ergebnis-Fotos — Timer und
+        # Buttons haengen daran (_draw_result_buttons).
+        self._photo_bottom: int = H - self.RESULT_BOTTOM
         # (Schluessel, Surface) des Codes auf dem Ergebnis-Schirm. Einer
         # reicht: dort liegt immer genau ein Foto.
         self._photo_qr_cache: Optional[tuple] = None
@@ -1910,7 +1913,8 @@ class UI:
         anfaellt — auf dem Pi merklich billiger als jedes Mal neu skalieren.
         """
         if path in self._result_cache:
-            return self._result_cache[path]
+            canvas, self._photo_bottom = self._result_cache[path]
+            return canvas
 
         try:
             img = pygame.image.load(path).convert()
@@ -1966,9 +1970,13 @@ class UI:
         fit = min(area_w / iw, area_h / ih)
         nw, nh = max(1, int(iw * fit)), max(1, int(ih * fit))
         sharp = pygame.transform.smoothscale(img, (nw, nh))
-        canvas.blit(sharp, sharp.get_rect(center=(W // 2, area_h // 2)))
+        rect = sharp.get_rect(center=(W // 2, area_h // 2))
+        canvas.blit(sharp, rect)
+        # Unterkante merken: daran haengen Timer und Buttons, siehe
+        # _draw_result_buttons.
+        self._photo_bottom = rect.bottom
 
-        self._result_cache[path] = canvas
+        self._result_cache[path] = (canvas, self._photo_bottom)
         # Cap: älteste Einträge wegwerfen damit der Cache nicht endlos wächst
         while len(self._result_cache) > self._RESULT_CACHE_MAX:
             oldest = next(iter(self._result_cache))
@@ -2126,7 +2134,7 @@ class UI:
         self._screen.blit(self._result_scrim(), (0, H - self._SCRIM_H))
         keys = pygame.key.get_pressed()
         btn_w, btn_h = 340, 72
-        gap = 60
+        btn_gap = 60
         # Welche Knoepfe es gibt, entscheidet sich VOR der Geometrie —
         # sonst zentriert sie auf eine Anzahl, die gar nicht gezeichnet
         # wird. Der Druck-Knopf erscheint nur, wenn CUPS einen bereiten
@@ -2144,9 +2152,25 @@ class UI:
             defs.append(("Drucken", "right", "right", "E", keys[pygame.K_e]))
 
         n_btn = len(defs)
-        total_w = n_btn * btn_w + (n_btn - 1) * gap
+        total_w = n_btn * btn_w + (n_btn - 1) * btn_gap
         sx = (W - total_w) // 2
-        by = H - btn_h - 20
+        timer_h = self._f_small.get_height()
+        # Timer und Buttons sitzen unter dem FOTO, nicht am Schirmrand.
+        #
+        # Am Rand verankert hing ihr Abstand zum Bild davon ab, wie hoch das
+        # Bild ausfaellt: ein breitenbegrenztes 3:2-Foto liess 72 px Loch,
+        # ein hohes sass fast auf dem Timer. Beide Versuche, das ueber die
+        # Bildposition zu loesen (4cbe213 deckeln, 5781cbc zentrieren),
+        # haben nur die Seite des Problems gewechselt — der Abstand gehoert
+        # an die Kante, an der man ihn sieht.
+        #
+        # Nach unten begrenzt: laesst ein hohes Bild nicht genug Platz,
+        # rutscht der Block wieder an den Rand und das Bild schaut knapp
+        # darunter hervor. Das ist der seltenere Fall und immer noch besser
+        # als ein Block, der aus dem Schirm laeuft.
+        gap = 30
+        wanted = self._photo_bottom + gap + timer_h + 10
+        by = min(H - btn_h - 20, max(wanted, H - btn_h - 20 - 90))
 
         # Timer
         timer = self._f_small.render(f"Zurück in {max(0, int(time_left)) + 1}s",
@@ -2160,7 +2184,7 @@ class UI:
         # welche Schrift dort gefunden wird.
         ARROW_SIZE, ARROW_GAP = 22, 14
         for i, (label, arrow, key_name, key_hint, hl) in enumerate(defs):
-            rect = pygame.Rect(sx + i * (btn_w + gap), by, btn_w, btn_h)
+            rect = pygame.Rect(sx + i * (btn_w + btn_gap), by, btn_w, btn_h)
             color = C_BTN_HL if hl else C_BTN_BG
             pygame.draw.rect(self._screen, color, rect, border_radius=12)
             pygame.draw.rect(self._screen, C_GOLD, rect, width=2, border_radius=12)
