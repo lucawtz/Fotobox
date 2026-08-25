@@ -245,6 +245,62 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
   (4) **Welcher Ton.** Kamera-Klack oder dezenter Ton ist Geschmack — aber
   einmal falsch gewählt, hört man ihn den ganzen Abend.
 
+- **Diashow des laufenden Events im Vollbild, wenn die Box ruht** — *notiert 25.08.2026*
+  *Heute: das gibt es schon — nur abgeschaltet.* Bleibt der Homescreen
+  `idle_timeout` Sekunden ohne Knopfdruck, lädt `main.py:393-396` die Fotos des
+  laufenden Events (`events.current_event_dir`) und schaltet in den Zustand
+  `SLIDESHOW`. `UI.render_slideshow` (`ui.py:2046`) legt sie über die vollen
+  1920×1080, blendet 800 ms lang über (`_SLIDE_FADE_MS`, `ui.py:580`), setzt den
+  Galerie-QR unten rechts und lässt „Drück einen Knopf" pulsieren; jeder Taster
+  bricht ab (`main.py:519-523`). Der Default ist aber `idle_timeout: 0` — aus
+  (`config.py:87`).
+  *Was wirklich fehlt, ist also nicht die Diashow, sondern der Weg, sie
+  einzuschalten.* `idle_timeout` und `slide_duration_ms` stehen in `_DEFAULTS`
+  und **nicht** in `config._MIETER_FIELDS` (`config.py:17-27`). Das Admin-Panel
+  kommt nicht an sie heran, und `save_config` würde beide aus einer lokalen
+  `config.json` beim ersten Speichern kommentarlos verwerfen. Einschalten heißt
+  heute: Code ändern, deployen. Damit liegt ein fertiges Feature brach — das
+  README verspricht sogar Default `60` (`README.md:99`), was schlicht nicht
+  stimmt (Roadmap-Punkt 19).
+  *Kleinster sinnvoller Schnitt:* nur `idle_timeout` ins Admin-Panel, als
+  Auswahl „aus · 1 min · 3 min · 5 min", `slide_duration_ms` fest lassen. Eine
+  Zahl, die der Gastgeber versteht, statt zweier, die er gegeneinander abwägen
+  muss.
+  *Offen bleibt:*
+  (1) **Wem der Wert gehört.** Ob die Box in der Pause Bilder zeigt, ist eine
+  Eigenschaft des Abends — dann `_MIETER_FIELDS` **und** `HANDOVER_FIELDS`
+  (`config.py:75`), damit „Box vorbereiten" sie für den nächsten Gastgeber
+  zurücksetzt. Gegenargument, das mitgeschrieben gehört: Eine Diashow zeigt die
+  Fotos der letzten Gäste großflächig und ungefragt. Auf der Firmenfeier ist
+  das gewollt, auf anderen Feiern genau nicht — der sichere Default bleibt
+  „aus", eingeschaltet wird bewusst.
+  (2) **Was gezeigt wird, stimmt noch nicht.** `refresh_slideshow`
+  (`ui.py:2031`) nimmt jede `.jpg/.jpeg/.png` aus dem Eventordner. Dort liegen
+  neben jeder fertigen Collage aber auch ihre vier Quellaufnahmen
+  (`collage_<gid>_1..4.jpg`, `collage.py:6-8`) — dasselbe Gesicht viermal
+  hintereinander und danach nochmal als Collage. Das Werkzeug dagegen existiert
+  schon: `collage.classify` (`collage.py:40`) trennt `KIND_MEMBER` von
+  `KIND_SINGLE`/`KIND_COLLAGE`, die Galerie filtert damit bereits.
+  (3) **Die Reihenfolge ist keine.** `sorted()` über die Dateinamen ist
+  alphabetisch, und die Namen sind `collage_<ms>.jpg` bzw. `foto_<ms>.jpg`
+  (`collage.py:115`, `camera.py:512`) — es laufen also erst *alle* Collagen des
+  Abends, dann *alle* Einzelfotos. Chronologisch wäre nach dem Zeitstempel im
+  Namen zu sortieren; „neueste zuerst" ist vermutlich noch besser, weil der
+  Gast das Bild sucht, das er gerade gemacht hat.
+  (4) **Seitenverhältnis.** `smoothscale(img, (W, H))` (`ui.py:2061`) zieht
+  jedes Bild auf 16:9, die Kamera liefert 3:2 — Gesichter werden breit gezogen.
+  Für die Polaroids macht `UI._scale_to_fill` es richtig; die Diashow müsste
+  denselben Weg gehen (beschneiden statt verzerren) oder mit Balken leben.
+  (5) **Was die Kamera derweil tut** — ungeprüft. Der Live-View läuft während
+  der Diashow weiter, obwohl ihn niemand sieht: über eine lange Pause hinweg
+  Akku und eine gehaltene USB-Sitzung für nichts. Die Diashow wäre der
+  natürliche Moment, die Kamera schlafen zu legen — aber nur, wenn sie beim
+  ersten Knopfdruck schnell genug zurückkommt. Sonst tauscht man unsichtbaren
+  Verbrauch gegen sichtbare Wartezeit, und das ist ein schlechter Tausch.
+  *Nicht kaputtmachen:* Hat an diesem Abend noch niemand fotografiert, fällt
+  `render_slideshow` auf den Homescreen zurück (`ui.py:2048-2050`) — eine leere
+  Box startet keine leere Diashow.
+
 ## Gäste
 
 - **Mehrsprachigkeit**
@@ -521,6 +577,108 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
   (3) **Wann darf die Box löschen?** Erst nach bestätigtem, vollständigem
   Transfer — sonst ersetzt ein halb hochgeladener Ordner den vollständigen auf
   der SD-Karte, und das fällt erst auf, wenn niemand mehr etwas retten kann.
+
+- **WLAN-Uplink im Panel: die Box ins vorhandene WLAN bringen** — *Hardware geprüft 25.08.2026*
+  *Der Anlass:* Zwei Dinge, die heute an einem Kabel hängen. **Setup ohne
+  Kabel** — an die Box kommt man aktuell nur per LAN oder über das
+  `--no-hotspot`-Gefummel (`main.py:272`), obwohl `git pull` und ein Blick in
+  die Logs die häufigste Wartung überhaupt sind. Und **Backup während der
+  Feier** — der Uplink ist die unausgesprochene Vorbedingung der beiden
+  Einträge darunter (Cloud-Sicherung, Fernwartung); ohne ihn sind beide
+  unbaubar.
+  *Ausdrücklich NICHT das Ziel:* Gäste bekommen kein Internet, und die Galerie
+  wird davon nicht schneller. Beides begründet unter *Warum Gäste außen vor
+  bleiben*.
+  *Die Hardware ist da und ist vermessen* (`lsusb` / `iw list` am Gerät,
+  25.08.2026). Der Stick ist ein **TP-Link TL-WN823N v2/v3 (RTL8192EU)**:
+
+  | | Stick (RTL8192EU) | intern (Broadcom) |
+  |---|---|---|
+  | Bänder | nur 2,4 GHz | 2,4 **und 5 GHz** (VHT, bis 80 MHz) |
+  | Streams | MCS 0-15 → 2 | MCS 0-7 → 1 |
+  | AP-Mode | ja | ja |
+  | AP+STA zugleich | „interface combinations are not supported" | ja, aber `#channels <= 1` |
+
+  *Was daraus folgt:* AP und Uplink auf **einem** Chip scheiden aus. Der Stick
+  kann die Kombination laut Treiber gar nicht; der interne Chip könnte, aber
+  nur auf **einem** Kanal — der Hotspot müsste dem Location-WLAN auf dessen
+  Kanal folgen, statt auf dem festen Channel 6 (`hotspot.py:230-231`) zu
+  bleiben. Das ist kein Betrieb, auf den man eine Hochzeit stellt.
+  *Die Aufteilung:* **Uplink auf den Stick** — `managed` reicht, 2,4 GHz reicht,
+  und während des Events ist der Traffic ohnehin fast null. Damit ist auch
+  egal, dass `rtl8xxxu` im AP-Mode einen zweifelhaften Ruf hat: wir nutzen den
+  Mode nicht. **AP bleibt auf dem internen Chip** — bewährter `brcmfmac`-Pfad,
+  läuft heute schon, und er teilt sich den USB-Bus nicht mit gphoto2 und der
+  Canon. Der Auslöser ist der eine Pfad, der niemals warten darf.
+  *Warum Gäste außen vor bleiben — der Punkt, der die Idee zuschneidet:*
+  `ipv4.method=shared` würde eine Default-Route durchaus weiterreichen. Aber
+  `captive.conf` schreibt `address=/#/<ip>` (`hotspot.py:36`): der dnsmasq am
+  Hotspot beantwortet **jeden** Namen mit der Box-IP. Ein Gast kann also nichts
+  außer der Fotobox auflösen. Gäste-Internet und Captive-Portal schließen sich
+  aus, solange der Hijack pauschal ist — und das Portal ist der Grund, warum
+  der Galerie-Link ohne Abtippen aufgeht. Nicht dafür opfern.
+  *Der Nebenfund, der schon heute weh tut — die Uhr:* Der Pi hat keine
+  batteriegepufferte RTC. Ohne Netz kommt die Zeit aus `fake-hwclock`, also vom
+  letzten Herunterfahren. Stand die Box zwei Wochen im Schrank, glaubt sie in
+  der Scheune, es sei vor zwei Wochen — und daran hängt der Event-Ordnername
+  (`events.py:184`, `%Y-%m-%d_slug`), die 18h-Session-Logik
+  (`event_session_hours`) und jeder EXIF-Zeitstempel. Zwei Minuten Uplink beim
+  Aufbau heilen das. Kein Zukunftsthema, sondern ein bestehender Fehler.
+  *Zwei Stufen, die erste lohnt allein:*
+  (1) **Setup-WLAN.** Verbinden, Hotspot pausiert dabei bewusst, Status +
+  Trennen. Braucht keinen Stick und keine neue Hardware — nur `nmcli device
+  wifi list/connect` und den vorhandenen `_restart_hotspot_async`-Mechanismus
+  (`gallery_server.py:1796`) rückwärts. Deckt „Setup ohne Kabel" komplett ab.
+  (2) **Parallelbetrieb** mit dem Stick als Uplink. Erst das macht Backup
+  während der Feier und Fernwartung überhaupt baubar.
+  *Was ins Panel gehört:*
+  (a) **Netz-Scan**, hart ans Uplink-Interface gebunden
+  (`nmcli -f SSID,SIGNAL,SECURITY device wifi list ifname <uplink> --rescan yes`).
+  Ein Rescan auf dem AP-Interface reißt den Hotspot kurz weg.
+  (b) **SSID manuell eintragbar** (versteckte Netze) plus Passwort.
+  (c) **Ehrlicher Status:** verbunden / Signal / IP / Gateway — und davon
+  getrennt ein echter Reachability-Check nach außen. Bei Hotel- und
+  Gäste-WLANs mit eigenem Portal heißt „verbunden" gerade *nicht* „Internet".
+  (d) **Fehler im Klartext.** nmcli meldet bei falschem Passwort „Secrets were
+  required" — das gehört angezeigt, sonst rät man.
+  (e) **Gespeicherte Netze** (Heim-WLAN + Location) mit Trennen/Vergessen.
+  (f) **Umbenennen.** Zwei Dinge namens „WLAN" auf einer Seite verwirren:
+  „Fotobox-WLAN" (was Gäste sehen, heute `AdminWifi.tsx`) vs.
+  „Internet-Verbindung" (was die Box nutzt).
+  *Fallstricke, alle aus dem bestehenden Code:*
+  (1) **Beide Connections per MAC binden** (`802-11-wireless.mac-address`),
+  nicht per `ifname`. USB-Interface-Namen sind nicht stabil — heißt der Stick
+  nach einem Reboot `wlan0`, landet der AP auf dem Uplink-Adapter. Ein Fehler,
+  der genau einmal auftritt, und zwar auf einer Hochzeit.
+  (2) **`_free_interface` (`hotspot.py:132`)** trennt heute jede
+  Client-Verbindung auf dem AP-Interface. Muss das Uplink-Interface in Ruhe
+  lassen — tut es, solange es strikt nach `ifname` filtert.
+  (3) **`_purge_self_ssid_clients` (`hotspot.py:178`)** löscht Profile auf der
+  eigenen SSID. Darf das Uplink-Profil nicht erwischen; greift nur bei
+  identischer SSID, also nur prüfen, nicht umbauen.
+  (4) **Subnetz-Kollision.** Liefert das Location-WLAN 192.168.4.x, kollidiert
+  es mit `hotspot_ip` (`config.py:94`) und das Routing bricht. Beim Verbinden
+  prüfen und warnen statt still scheitern.
+  (5) **Fremdes Passwort auf vermieteter Box.** Nicht in `_MIETER_FIELDS` und
+  am besten gar nicht in `config.json` — NetworkManager legt es selbst nach
+  `/etc/NetworkManager/system-connections` (0600, root). Nur SSID/Profilnamen
+  merken, und das Location-Profil bei „Box vorbereiten" (`HANDOVER_FIELDS`,
+  `config.py:74`) mit löschen.
+  (6) **Exposure.** Der Galerie-Server bindet auf 0.0.0.0 (`main.py:287`). Mit
+  Uplink hängt das Admin-Panel auch im fremden Location-Netz, nur durch die PIN
+  geschützt. Bewusste Entscheidung, keine Nebenwirkung.
+  *Offen bleibt:*
+  (1) **Welches Interface ist heute `wlan0`?** Der Kommentar in
+  `hotspot.py:184-185` nimmt an, der Stick sei `wlan1` — die phy-Nummerierung
+  (`phy0` = RTL8192EU) deutet aufs Gegenteil, dann liefe der AP heute schon auf
+  dem Stick. `iw dev` am Gerät klärt das und dreht ggf. die halbe Planung um.
+  (2) **Wohin sichert das Backup?** Dieselbe offene Frage wie im Cloud-Eintrag
+  darunter — eigener Server vs. Fremddienst, und wessen Konto bei Vermietung.
+  Der Uplink ist nur der Transportweg, nicht die Antwort darauf.
+  *Abgrenzung:* Dass der interne Chip laut `iw list` auch **5 GHz AP** kann
+  (VHT80 statt heute `band=bg`/Channel 6), ist ein Fund aus derselben Messung,
+  aber ein anderes Thema — Galerie-Durchsatz. Gehört nicht in diesen Eintrag
+  und braucht weder Stick noch Uplink.
 
 - **Bilder direkt in die Cloud sichern, statt erst am Ende**
   *Heute:* Jedes Bild existiert genau einmal — auf der SD-Karte des Pi.
