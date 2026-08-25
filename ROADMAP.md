@@ -8,9 +8,10 @@ Absturz beendet nicht den Abend.
 `scripts/smoke_test.py` meldet **0 Fehler**. Damit sind sechs der sieben
 `[~]`-Punkte belegt (P0-4, P1-5, P1-6, P1-7, P1-8, P1-12) und **P1-15 ist
 erledigt**: `requirements.pi.txt` liegt im Repo. P0, P1 und P2 sind damit
-vollständig umgesetzt. Offen bleibt genau ein Nachweis — **P1-9**, das Drucken
-am Papier. CUPS sieht den Selphy, aber 10 Drucke am Stück hat noch niemand
-gefahren.
+vollständig umgesetzt. Offen bleibt genau ein Nachweis — **P1-9**, und davon
+nur noch ein einzelnes Blatt: der Testdruck zur Geometrie. Warteschlange und
+Druckerzustand sind papierfrei belegt, der Dauerlauf hängt jetzt an der
+Generalprobe.
 
 **Rahmen:** Nur eigene Events bis Oktober (keine Vermietung an Dritte) · Drucker
 Canon Selphy, 10×15 · Hardware ab Ende August wieder verfügbar · harter Termin.
@@ -45,8 +46,9 @@ Stand 24.08.2026: alles umgesetzt, der Hardware-Durchlauf ist gemacht.
 `frontend/` ebenfalls grün.
 
 **Was noch fehlt:**
-* **P1-9 am Papier** — 10 Drucke am Stück auf dem echten Selphy. Der einzige
-  verbliebene `[~]`-Punkt.
+* **P1-9, ein Blatt** — Testdruck zur Geometrie: Maßstabslinie exakt 100 mm,
+  Rahmen bis an die Kante. Der einzige verbliebene `[~]`-Punkt. Der Dauerlauf
+  über viele Drucke steht in der Abnahme-Checkliste, nicht mehr hier.
 * Die **Generalprobe** (5.–11. Okt) — sie ist durch nichts zu ersetzen, was
   sich am Schreibtisch prüfen lässt.
 * Drei Warnungen aus dem Smoke-Test, keine davon ein Blocker: die
@@ -62,7 +64,7 @@ Stand 24.08.2026: alles umgesetzt, der Hardware-Durchlauf ist gemacht.
 |---|---|---|
 | ~~**22.–30. Aug**~~ ✅ | P0 komplett + P1-13, P1-14, P1-15 (alles ohne Hardware) | erledigt 22.08. — Blocker gefixt, `tsc -b` grün, Routen getestet |
 | ~~**31. Aug – 6. Sep**~~ ✅ | Hardware-Smoke-Test des Ist-Zustands, P1-5 · P1-6 · P1-7 | erledigt 24.08. — Smoke-Test 0 Fehler, Dienst nach Reboot von allein `active` |
-| **7.–20. Sep** | P1-9 ist gebaut (Backend, Admin-Panel, README) — hier nur noch am echten Selphy gegenprüfen · P1-10 und P1-11 erledigt, an der Hardware gegenprüfen | 10 Drucke am Stück, Kamera-Fehler sichtbar |
+| **7.–20. Sep** | P1-9 ist gebaut und papierfrei gegengeprüft — hier nur noch **ein** Testdruck zur Geometrie · P1-10 und P1-11 erledigt, an der Hardware gegenprüfen | Maßstabslinie misst 100 mm, Rahmen randlos, Kamera-Fehler sichtbar |
 | **21.–27. Sep** | Betriebs-Härtung: P2-17, P2-18, P2-19 · P1-8 und P1-12 sind erledigt | Ein Abend Dauerlauf ohne Eingriff |
 | **28. Sep – 4. Okt** | Rest P2, Doku, Tests ausbauen | README stimmt mit Code überein |
 | **5.–11. Okt** | **Generalprobe** — voller Aufbau, mind. 2 h, echte Gäste-Handys | Abnahme-Checkliste unten vollständig |
@@ -176,9 +178,22 @@ Ohne diese vier läuft das Event nicht. Alle hardware-unabhängig, also sofort m
       10×15 randlos via Gutenprint · „Druckt…"/Fehler-Overlay auf dem Boxschirm ·
       Button ausblenden wenn CUPS kein Ziel kennt · `Popen` einsammeln (aktuell
       ein Zombie-Prozess pro Druck) · Selphy-Einrichtung im README dokumentieren.
-      *Teilweise belegt (24.08.): CUPS sieht den `Canon_SELPHY_CP1500`, Status `idle`,
-      Warteschlange leer. **Offen bleibt der Nachweis am Papier** — 10 Drucke am
-      Stück hat noch niemand gefahren. Deshalb weiter `[~]`.*
+      *Stand 25.08. — papierfrei belegt, eine Seite fehlt noch.*
+      CUPS sieht den `Canon_SELPHY_CP1500`, Status `idle`. Die Warteschlange ist
+      gegengeprüft, ohne ein Blatt zu verbrauchen: Drucker mit `cupsdisable`
+      angehalten (nimmt Aufträge an, druckt nicht), drei eingereiht,
+      `pending_jobs` meldet 3, der Boxschirm sagt „3 Fotos vor dir — etwa
+      3 Minuten", danach `cancel -a` und `cupsenable`.
+      Dabei gefunden und behoben: der Gutenprint-Treiber stand auf
+      `StpBorderless=False` und schrumpfte jede Seite in den bedruckbaren
+      Bereich — deshalb kam der Testdruck mit weißem Rand, obwohl `prepare()`
+      exakt auf 148×100 mm rechnet. `print_options` in `config.py` setzt die
+      Option jetzt.
+      **Offen bleibt genau ein Blatt:** ein Testdruck zur Geometrie —
+      Maßstabslinie exakt 100 mm, Rahmen bis an die Kante. Der Dauerlauf
+      steht bewusst nicht mehr hier, sondern in der Abnahme-Checkliste:
+      zehn Blatt allein zum Beweis zu verbrennen ist teuer, und in der
+      Generalprobe wird ohnehin gedruckt.*
 
       **Stand 22.08. — Backend fertig, zwei Punkte offen.**
       Erledigt: `printing.py` kapselt alles (`list_printers`, `resolve_printer`,
@@ -455,7 +470,9 @@ Voller Aufbau wie am Event-Tag. Erst wenn hier alles hakt, gilt die Box als fert
       `/photo/<folder>/<datei>` liefern alle 200 mit der SPA-Shell statt eines
       Flask-404.
 - [ ] Einzelfoto und Collage auslösen
-- [ ] 20 Drucke am Stück
+- [ ] 20 Drucke am Stück — der Dauerlauf für P1-9: klemmt nichts, läuft der
+      Selphy nicht heiß, hält die USB-Verbindung. Hier kosten die Blätter
+      nichts extra, weil ohnehin gedruckt wird.
 - [ ] Foto in der Lightbox löschen — es verschwindet **das sichtbare** (Test für P0-3)
       *Teilweise vorab geprüft 22.08.:* Backend löscht exakt die angefragte Datei
       (Nachbarfoto unberührt), und `PhotoView.tsx:80` löscht über `photoKey(current)`
