@@ -1872,11 +1872,30 @@ class UI:
         canvas = pygame.Surface((W, H))
 
         # Hintergrund: dasselbe Foto stark weichgezeichnet und abgedunkelt,
-        # damit an den Seiten keine harten schwarzen Balken stehen. Der Blur
-        # ist ein Down-/Upscale — pygame.transform.gaussian_blur gibt es nicht
-        # in jedem Build und waere hier deutlich teurer.
-        small = pygame.transform.smoothscale(img, (max(1, W // 24), max(1, H // 24)))
-        canvas.blit(pygame.transform.smoothscale(small, (W, H)), (0, 0))
+        # damit an den Seiten keine harten schwarzen Balken stehen.
+        #
+        # Hier stand ein reines Down-/Upscale: 80x45, dann auf 1920x1080
+        # hochgezogen. Das ist kein Weichzeichner, sondern eine Vergroesserung
+        # um Faktor 24 — bilinear interpoliert blieben davon sichtbare Kacheln
+        # stehen, das Bild wirkte verpixelt statt weich.
+        #
+        # Jetzt: auf ein Achtel verkleinern, echter Gauss darauf, wieder hoch.
+        # Nach dem Gauss steckt keine hohe Frequenz mehr im Bild, deshalb
+        # faellt die Vergroesserung nicht auf. Gerechnet wird auf dem Achtel,
+        # nicht auf dem vollen Bild — derselbe Gauss auf 1920x1080 kostet auf
+        # dem Pi ein Vielfaches und saehe genauso aus.
+        #
+        # Verkleinert wird mit pygame, geblurrt mit cv2. Der naheliegende Weg
+        # waere cv2.imread gewesen, aber der decodiert die 5184x3456 ein
+        # zweites Mal: gemessen 963 ms, gegenueber 21 ms Aufschlag so.
+        # pygame.transform.gaussian_blur gibt es in diesem Build nicht.
+        small = pygame.transform.smoothscale(img, (W // 8, H // 8))
+        arr = pygame.surfarray.array3d(small).swapaxes(0, 1)   # -> (h, w, 3)
+        arr = cv2.GaussianBlur(arr, (0, 0), sigmaX=7)
+        arr = np.ascontiguousarray(
+            cv2.resize(arr, (W, H), interpolation=cv2.INTER_LINEAR))
+        canvas.blit(pygame.image.frombuffer(arr.tobytes(), (W, H), "RGB"),
+                    (0, 0))
         shade = pygame.Surface((W, H))
         shade.fill((0, 0, 0))
         shade.set_alpha(130)
