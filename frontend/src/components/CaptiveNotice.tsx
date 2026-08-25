@@ -12,10 +12,59 @@ import {
 } from "@mui/material";
 import PhotoCameraRoundedIcon from "@mui/icons-material/PhotoCameraRounded";
 import QrCodeScannerRoundedIcon from "@mui/icons-material/QrCodeScannerRounded";
+import WifiRoundedIcon from "@mui/icons-material/WifiRounded";
 import { galleryAddress, isCaptivePopup, isIOS, leaveCaptivePopup } from "../captive";
 
 /** Wie der Gast seinen richtigen Browser nennt. */
 const browserName = () => (isIOS() ? "Safari" : "deinem Browser");
+
+/**
+ * Was unmittelbar nach dem Tippen passiert — und zwar so, wie es wirklich
+ * aussieht.
+ *
+ * leaveCaptivePopup() versucht erst den Sprung in den echten Browser; scheitert
+ * der (auf iOS die Regel), landet der Gast auf der Erfolgsseite, die sein
+ * Betriebssystem sehen will. Auf dem Bildschirm steht dann nur "Success", und
+ * genau an dieser Stelle sind Gaeste bisher stehengeblieben: die Seite sieht
+ * aus wie ein Fehler, dabei ist sie das Ziel. Deshalb wird sie hier
+ * angekuendigt, statt sie zu ueberraschen.
+ */
+const finishHint = () =>
+  isIOS()
+    ? 'Es erscheint kurz eine Seite mit „Success“ — tipp dann oben auf ✓.'
+    : "Das Fenster schließt sich, und du bist normal im WLAN.";
+
+/** Nummerierter Schritt im Dialog. */
+function Step({ n, title, children }: {
+  n: number; title: string; children: React.ReactNode;
+}) {
+  return (
+    <Box sx={{ display: "flex", gap: 1.5 }}>
+      <Box
+        sx={{
+          flex: "0 0 auto",
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          bgcolor: "primary.main",
+          color: "primary.contrastText",
+          display: "grid",
+          placeItems: "center",
+          fontWeight: 700,
+          fontSize: "0.95rem",
+        }}
+      >
+        {n}
+      </Box>
+      <Box sx={{ minWidth: 0 }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+          {title}
+        </Typography>
+        {children}
+      </Box>
+    </Box>
+  );
+}
 
 interface DialogProps {
   open: boolean;
@@ -49,29 +98,41 @@ export function CaptiveDialog({ open, onClose }: DialogProps) {
     <Dialog open={open} onClose={busy ? undefined : onClose} fullWidth maxWidth="xs">
       <DialogTitle sx={{ display: "flex", alignItems: "center", gap: 1.25, pb: 1 }}>
         <PhotoCameraRoundedIcon color="primary" />
-        Foto speichern
+        So kommst du an dein Foto
       </DialogTitle>
       <DialogContent>
         <Stack spacing={2}>
           <Typography variant="body2" color="text.secondary">
-            Du siehst die Galerie gerade im WLAN-Anmeldefenster deines Handys.
-            Das Fenster kann keine Fotos sichern — ein angetipptes Bild
-            verschwindet dort, statt in deinen Fotos zu landen.
+            Du bist gerade im WLAN-Anmeldefenster deines Handys. Hier kann
+            dein Handy keine Bilder speichern — ein angetipptes Foto
+            verschwindet, statt in deinen Fotos zu landen.
           </Typography>
-          <Alert severity="success" icon={<QrCodeScannerRoundedIcon />}>
-            <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
-              Am schnellsten: Code am Boxschirm scannen
+
+          <Step n={1} title="WLAN fertig verbinden">
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              Tipp unten auf <strong>Verbinden</strong>. {finishHint()}
             </Typography>
+            <Button
+              variant="contained"
+              fullWidth
+              onClick={go}
+              disabled={busy}
+              startIcon={<WifiRoundedIcon />}
+            >
+              Verbinden
+            </Button>
+          </Step>
+
+          <Step n={2} title="Foto holen">
             <Typography variant="body2">
-              Neben deinem Foto auf der Box steht ein QR-Code. Scanne ihn mit
-              der Kamera — er öffnet genau dieses Bild in {browserName()}, und
-              dort funktioniert Sichern ganz normal.
+              Halt die Kamera auf den <strong>QR-Code an der Box</strong> —
+              neben deinem Foto. Er öffnet das Bild in {browserName()}, und
+              dort funktioniert Speichern ganz normal.
             </Typography>
-          </Alert>
+          </Step>
+
           <Typography variant="body2" color="text.secondary">
-            Oder die ganze Galerie hierher holen: „Öffnen“ wechselt nach{" "}
-            {browserName()}. Schließt sich stattdessen nur dieses Fenster,
-            {" "}{browserName()} selbst öffnen und diese Adresse eingeben.
+            Kein Code zur Hand? In {browserName()} diese Adresse eingeben:
           </Typography>
           <Box
             sx={{
@@ -90,8 +151,7 @@ export function CaptiveDialog({ open, onClose }: DialogProps) {
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} disabled={busy}>Abbrechen</Button>
-        <Button variant="contained" onClick={go} disabled={busy}>Öffnen</Button>
+        <Button onClick={onClose} disabled={busy}>Schließen</Button>
       </DialogActions>
     </Dialog>
   );
@@ -111,7 +171,7 @@ export default function CaptiveBanner() {
         icon={<QrCodeScannerRoundedIcon fontSize="inherit" />}
         action={
           <Button color="inherit" size="small" onClick={() => setAsk(true)}>
-            Wie?
+            Zeigen
           </Button>
         }
         sx={{
@@ -120,8 +180,8 @@ export default function CaptiveBanner() {
           "& .MuiAlert-message": { py: 0.5 },
         }}
       >
-        Bild speichern? Den Code neben deinem Foto am Boxschirm scannen —
-        dieses WLAN-Fenster kann keine Bilder sichern.
+        Dieses WLAN-Fenster kann keine Fotos speichern. In zwei Schritten
+        kommst du an deine Bilder.
       </Alert>
       <CaptiveDialog open={ask} onClose={() => setAsk(false)} />
     </>
