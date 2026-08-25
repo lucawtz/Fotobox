@@ -2577,16 +2577,27 @@ class UI:
         self._draw_social_links(cx, hint_y + hint.get_height() + 16)
 
     def _qr_caption(self) -> str:
-        """Beschriftung unter dem Code — sie muss sagen, was der Scan tut.
+        """Beschriftung unter dem Code — sie muss sagen, was der Scan tut,
+        und nichts versprechen, was das Handy nicht einloest.
 
-        Mit WLAN-Payload passiert beides auf einen Scan: das Handy tritt
-        dem Hotspot bei, und das Captive-Portal schiebt die Galerie
-        hinterher. Traegt der Code dagegen nur den Link (kein eigener
-        Hotspot), fuehrt er allein zu den Fotos — dann waere "WLAN" ein
-        Versprechen, das er nicht halten kann.
+        Hier stand einmal "Scannen: WLAN + Fotos". Am Geraet gemessen ist
+        das falsch: iOS tritt dem Netz zwar bei (der DHCP-Handshake steht
+        im Log der Box), blendet bei einem Netz ohne Internet aber weder
+        das WLAN-Symbol ein noch zieht es das Anmeldefenster hoch, solange
+        keine App das Netz anfasst. Fuer den Gast passiert nach dem Scan
+        also sichtbar gar nichts — und wer "+ Fotos" gelesen hat, wartet
+        auf eine Galerie, die nicht von selbst kommt.
+
+        Zu den Fotos fuehrt der Code neben dem Bild auf dem Ergebnis-Schirm
+        (_draw_qr_result). Der oeffnet Safari, weil ein gescannter Link das
+        immer tut. Dieser hier macht nur den ersten Schritt, und genau das
+        sagt er jetzt.
+
+        Traegt der Code den Galerie-Link statt der WLAN-Daten (kein eigener
+        Hotspot), fuehrt er tatsaechlich allein zu den Fotos.
         """
         if self._qr_payload().startswith("WIFI:"):
-            return "Scannen: WLAN + Fotos"
+            return "Scannen: WLAN verbinden"
         return "Fotos auf's Handy"
 
     def _social_rows(self) -> list:

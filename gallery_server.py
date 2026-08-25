@@ -377,6 +377,40 @@ def api_captive_release():
     return jsonify(ok=True, ttl=_CAPTIVE_RELEASE_TTL_S)
 
 
+# ── Zugriffsprotokoll ─────────────────────────────────────────────────────────
+# Unter waitress schreibt Flask keine Request-Zeilen mehr — die letzten im
+# gallery.log stammten aus der Zeit des Dev-Servers. Damit war nicht
+# feststellbar, ob das Handy eines Gastes die Box ueberhaupt erreicht: der
+# DHCP-Handshake steht im Log von NetworkManager, alles danach nirgends.
+# Genau diese Luecke hat die Fehlersuche am Captive-Portal teuer gemacht.
+#
+# Thumbnails, Previews und die Bundle-Dateien der SPA bleiben draussen: sie
+# kommen zu Dutzenden pro Seitenaufruf und wuerden das Interessante
+# zuschuetten. /img/ bleibt drin — dass ein Foto wirklich geladen wurde, ist
+# die Bestaetigung, dass beim Gast etwas angekommen ist.
+_ACCESS_LOG_SKIP = ("/thumb/", "/preview/", "/assets/", "/favicon")
+
+# Auf diesen Pfaden wird zusaetzlich der User-Agent mitgeschrieben. Er
+# unterscheidet das WLAN-Anmeldefenster (eine nackte WKWebView) vom echten
+# Safari — und genau diese Unterscheidung entscheidet, ob ein Gast seine
+# Bilder speichern kann.
+_ACCESS_LOG_UA_PREFIX = "/api/captive/"
+
+
+@app.after_request
+def _access_log(resp: Response) -> Response:
+    path = request.path
+    if path.startswith(_ACCESS_LOG_SKIP):
+        return resp
+    line = f"{_client_ip()} {request.method} {path} -> {resp.status_code}"
+    if path == "/" or path.startswith(_ACCESS_LOG_UA_PREFIX):
+        # Gekuerzt: die vollen Strings sind an die 150 Zeichen lang, und die
+        # entscheidenden Tokens (Version/, Safari/, wv) stehen vorn.
+        line += f" | {request.headers.get('User-Agent', '?')[:90]}"
+    logger.info("%s", line)
+    return resp
+
+
 @app.route("/api/captive/portal")
 def api_captive_portal():
     """Captive-Portal-API nach RFC 8908 — das Ziel der DHCP-Option 114.

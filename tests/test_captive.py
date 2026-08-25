@@ -202,3 +202,41 @@ def test_captive_conf_kennt_den_ausweichport(monkeypatch):
     import hotspot
     assert '"http://192.168.4.1:5000/api/captive/portal"' in \
         hotspot.captive_conf_content("192.168.4.1")
+
+
+# ── Zugriffsprotokoll ─────────────────────────────────────────────────────────
+# Ohne das war am Geraet nicht feststellbar, ob das Handy die Box ueberhaupt
+# erreicht — der DHCP-Handshake steht im Log von NetworkManager, alles danach
+# stand nirgends.
+
+def _log_lines(caplog) -> list:
+    return [r.getMessage() for r in caplog.records
+            if r.name == "gallery_server"]
+
+
+def test_zugriffe_landen_im_log(app, caplog):
+    import logging
+    caplog.set_level(logging.INFO, logger="gallery_server")
+    app.get("/api/count", base_url=GALLERY, environ_base={"REMOTE_ADDR": PHONE})
+    assert any(f"{PHONE} GET /api/count -> 200" in l for l in _log_lines(caplog))
+
+
+def test_portal_abruf_bringt_den_user_agent_mit(app, caplog):
+    """Der User-Agent unterscheidet das Anmeldefenster vom echten Safari —
+    und davon haengt ab, ob der Gast sein Bild speichern kann."""
+    import logging
+    caplog.set_level(logging.INFO, logger="gallery_server")
+    app.get("/api/captive/portal", base_url=GALLERY,
+            environ_base={"REMOTE_ADDR": PHONE, "HTTP_USER_AGENT": "TestPhone/1.0"})
+    line = next(l for l in _log_lines(caplog) if "/api/captive/portal" in l)
+    assert "TestPhone/1.0" in line
+
+
+def test_thumbnails_bleiben_draussen(app, caplog):
+    """Sie kommen zu Dutzenden pro Seitenaufruf und wuerden das
+    Interessante zuschuetten."""
+    import logging
+    caplog.set_level(logging.INFO, logger="gallery_server")
+    app.get("/thumb/egal/foto.jpg", base_url=GALLERY,
+            environ_base={"REMOTE_ADDR": PHONE})
+    assert not any("/thumb/" in l for l in _log_lines(caplog))
