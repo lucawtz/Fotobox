@@ -2888,32 +2888,25 @@ class UI:
         self._draw_social_links(cx, hint_y + hint.get_height() + 16)
 
     def _qr_caption(self) -> str:
-        """Beschriftung unter dem Code — Ziel zuerst, dann die Bedingung.
+        """Beschriftung unter dem Code.
 
-        Hier stand nur "Erst WLAN, dann scannen". Das erklaert die
-        Reihenfolge, sagt aber nicht, wohin der Code fuehrt — der Gast
-        weiss nach dem Lesen, was er tun soll, und nicht, wofuer. Deshalb
-        steht die Galerie jetzt vorn.
+        Kurz und in der Form der Reihe darunter: neben dem Instagram-Code
+        steht "@lucawtz", hier steht "@galerie". Beide lesen sich damit als
+        Ziel und nicht als Anleitung.
 
-        Der Hinweis bleibt trotzdem dahinter: der Code traegt den
-        Galerie-Link, und wer ihn ohne WLAN scannt, bekommt eine
-        Fehlerseite von Safari und keinen Hinweis, was fehlt. Die Zeile
-        zeigt dabei nach unten auf die WLAN-Box, wo SSID und Passwort
-        stehen.
+        Hier stand zwischenzeitlich die Bedingung mit drin ("erst ins
+        WLAN"). Sie hatte einen Grund — der Code traegt den Galerie-Link,
+        und ohne WLAN gescannt gibt es nur eine Safari-Fehlerseite ohne
+        Erklaerung. Ausgesprochen wird sie jetzt woanders: die WLAN-Box
+        steht direkt darunter, und der Ergebnis-Schirm sagt es ausfuehrlich
+        (_wifi_hint).
 
-        Eine Zeile, keine zwei: in der Sidebar sind 503 px verfuegbar und
-        503 px gebraucht (_qr_group_bounds). Was hier dazukommt, nimmt der
-        Instagram-Code seine 130 px — das ist schon zweimal passiert.
-        Gemessen sind es 263 px bei 280 verfuegbaren, es bleibt also bei
-        einer Zeile. Die ausfuehrliche Fassung steht auf dem
-        Ergebnis-Schirm, der Platz hat (_wifi_hint).
-
-        Ohne eigenen Hotspot haengt die Box in einem fremden Netz, in dem
-        der Gast ohnehin schon steckt. Dann faellt die Bedingung weg und
-        es bleibt beim blossen Ziel.
+        Eine Zeile, keine zwei: was hier dazukommt, nimmt der
+        Instagram-Kachel ihren Platz — das ist an dieser Stelle schon
+        zweimal passiert (_qr_group_bounds).
         """
         if self._cfg.get("hotspot_enabled", True):
-            return "Galerie — erst ins WLAN"
+            return "@galerie"
         return "Fotos aufs Handy"
 
     def _social_rows(self) -> list:
