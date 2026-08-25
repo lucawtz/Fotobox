@@ -79,7 +79,7 @@ export default function AdminBranding() {
   // demselben /api/admin/config-Call, den wir ohnehin machen.
   const [preview, setPreview] = useState({
     eventName: "", subtitle: "",
-    wifiSsid: "", wifiPassword: "", galleryAddress: "",
+    wifiSsid: "", wifiPassword: "",
     instagramUrl: "", bookingUrl: "", bookingLabel: "",
     hasInstagramQr: false, hasBookingQr: false,
   });
@@ -106,7 +106,6 @@ export default function AdminBranding() {
         subtitle:     c.subtitle ?? "",
         wifiSsid:     c.wifi_ssid ?? "",
         wifiPassword: c.wifi_password ?? "",
-        galleryAddress: c.gallery_address ?? "",
         instagramUrl: c.instagram_url ?? "",
         bookingUrl:   c.booking_url ?? "",
         bookingLabel: c.booking_label ?? "",
@@ -490,7 +489,6 @@ export default function AdminBranding() {
                     logoUrl={hasLogo ? previewUrl : null}
                     wifiSsid={preview.wifiSsid}
                     wifiPassword={preview.wifiPassword}
-                    galleryAddress={preview.galleryAddress}
                     instagramUrl={preview.instagramUrl}
                     bookingUrl={preview.bookingUrl}
                     bookingLabel={preview.bookingLabel}

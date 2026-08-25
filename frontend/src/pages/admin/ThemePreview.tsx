@@ -102,8 +102,6 @@ export interface PreviewProps {
   logoUrl: string | null;
   wifiSsid: string;
   wifiPassword: string;
-  /** Galerie-Adresse ohne Schema, dritte Zeile der WLAN-Box. */
-  galleryAddress: string;
   instagramUrl: string;
   bookingUrl: string;
   /** Beschriftung der Buchungs-Reihe (Owner-Setting booking_label). */
@@ -329,7 +327,7 @@ function SocialIcon({ kind, color }: { kind: "instagram" | "calendar"; color: st
 
 export default function ThemePreview(props: PreviewProps) {
   const { theme, eventName, subtitle, logoUrl,
-          wifiSsid, wifiPassword, galleryAddress, instagramUrl, bookingUrl,
+          wifiSsid, wifiPassword, instagramUrl, bookingUrl,
           bookingLabel, hasInstagramQr, hasBookingQr } = props;
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -363,14 +361,13 @@ export default function ThemePreview(props: PreviewProps) {
     );
 
   // ── WLAN-Box (ui.py:_wifi_rows / _wifi_box_metrics) ─────────────────────
-  // Die Adresszeile traegt die kleine Schrift: sie ist der Weg fuer Gaeste,
-  // die schon im WLAN haengen, soll SSID und Passwort aber nicht die Buehne
-  // nehmen. Jede Zeile hier kostet die QR-Gruppe darueber Platz.
+  // Zwei Zeilen, nicht drei: die Galerie-Adresse stand hier einmal und kostete
+  // die QR-Gruppe darueber die 69 px, die der Instagram-Code braucht. Jede
+  // Zeile, die hier dazukommt, nimmt sie ihm wieder weg.
   const wifiRowDefs = (
     [
       ["WLAN", wifiSsid, F_NORMAL_PT, F_NORMAL_H, 700],
       ["Passwort", wifiPassword, F_NORMAL_PT, F_NORMAL_H, 700],
-      ["Galerie", galleryAddress, F_SUB_PT, F_SUB_H, 400],
     ] as const
   ).filter(([, value]) => !!String(value).trim());
   const wifiRows = wifiRowDefs.length;

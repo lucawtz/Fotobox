@@ -2226,15 +2226,6 @@ class UI:
         """
         return SIDEBAR_PAD + LOGO_CIRCLE_R * 2 + 24 + self._header_height()
 
-    def _gallery_address(self) -> str:
-        """Die Galerie-Adresse zum Abtippen — ohne 'http://', weil das
-        niemand mittippt und jeder Browser es selbst ergaenzt.
-
-        Mit gesetztem gallery_hostname ist das ein Name (config.py:
-        gallery_host), sonst die nackte IP.
-        """
-        return (self._cfg.get("gallery_url") or "").strip().split("://")[-1].rstrip("/")
-
     def _wifi_rows(self) -> list:
         """Zeilen der WLAN-Box: (Label, Wert, Font).
 
@@ -2242,11 +2233,15 @@ class UI:
         auseinander, sass die QR-Gruppe darueber an einer Oberkante, die
         es nicht gab.
 
-        Die Adresse traegt bewusst die kleinere Schrift. Sie ist der Weg
-        fuer den Gast, der schon im WLAN haengt und vom QR-Code nichts
-        mehr hat; SSID und Passwort bleiben trotzdem die grossen Zeilen,
-        und jede Zeile hier nimmt der QR-Gruppe darueber Platz weg
-        (_qr_group_bounds).
+        Hier stand einmal eine dritte Zeile mit der Galerie-Adresse zum
+        Abtippen. Sie kostete 69 px, und die nahm sie der QR-Gruppe
+        darueber weg: der Instagram-Code braucht 130 px, um bei 41 Modulen
+        ueber der Lesbarkeitsgrenze zu bleiben, und fiel damit ersatzlos
+        auf Text zurueck. Ein Code, der nicht mehr da ist, wiegt schwerer
+        als eine Adresse, die kaum jemand tippt: der WLAN-Code bringt das
+        Handy ins Netz, und das Captive-Portal schiebt die Galerie
+        unmittelbar danach auf. Wer hier wieder eine Zeile ergaenzt, nimmt
+        sie dem Instagram-Code — die Rechnung steht in _qr_group_bounds.
         """
         rows = []
         ssid = (self._cfg.get("wifi_ssid")     or "").strip()
@@ -2255,9 +2250,6 @@ class UI:
             rows.append(("WLAN", ssid, self._f_normal))
         if pwd:
             rows.append(("Passwort", pwd, self._f_normal))
-        addr = self._gallery_address()
-        if addr:
-            rows.append(("Galerie", addr, self._f_sub))
         return rows
 
     def _wifi_box_metrics(self) -> tuple:
@@ -2741,8 +2733,8 @@ class UI:
         return "Instagram"
 
     def _draw_wifi_box(self):
-        """WLAN, Passwort und Galerie-Adresse als eigene Box mit
-        Border-Akzent unten in der Sidebar."""
+        """WLAN und Passwort als eigene Box mit Border-Akzent unten in der
+        Sidebar."""
         rows = self._wifi_rows()
         if not rows:
             return
