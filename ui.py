@@ -577,6 +577,8 @@ class UI:
         self._slide_idx: int = 0
         self._slide_start_ms: int = 0
         self._slide_surf: Optional[pygame.Surface] = None
+        # Rechteck des Fotos in _slide_surf — der QR-Code weicht ihm aus.
+        self._slide_rect: Optional[pygame.Rect] = None
         self._SLIDE_FADE_MS = 800
 
         # Result-Screen Cache — gecappt, sonst Memory-Leak nach hunderten Fotos
@@ -1838,14 +1840,20 @@ class UI:
         canvas.blit(shade, (0, 0))
 
         # Vordergrund: contain statt cover — das komplette Foto bleibt sichtbar,
-        # es wird also niemandem der Kopf abgeschnitten. Gerechnet wird in die
-        # Breite links der Code-Spalte, nicht in den ganzen Schirm: der Code
-        # soll neben dem Bild stehen und nicht darauf.
-        area_w = W - self.RESULT_QR_COL
+        # es wird also niemandem der Kopf abgeschnitten.
+        #
+        # Das Foto sitzt mittig im SCHIRM, nicht mittig im Platz neben dem
+        # Code: sonst haengt es sichtbar links. Damit der Code trotzdem daneben
+        # passt und nicht darauf, wird die Code-Spalte auf beiden Seiten
+        # freigehalten — rechts steht der Code darin, links bleibt sie leer.
+        # Der Preis ist Bildgroesse: aus 1620x1080 werden bei 3:2 rund
+        # 1224x816. Wer das Foto groesser will, muss den Code kleiner machen
+        # (RESULT_QR_SIZE) oder ihn wieder darauf legen.
+        area_w = W - 2 * self.RESULT_QR_COL
         fit = min(area_w / iw, H / ih)
         nw, nh = max(1, int(iw * fit)), max(1, int(ih * fit))
         sharp = pygame.transform.smoothscale(img, (nw, nh))
-        canvas.blit(sharp, sharp.get_rect(center=(area_w // 2, H // 2)))
+        canvas.blit(sharp, sharp.get_rect(center=(W // 2, H // 2)))
 
         self._result_cache[path] = canvas
         # Cap: älteste Einträge wegwerfen damit der Cache nicht endlos wächst
@@ -1914,14 +1922,17 @@ class UI:
         GAP = 22
         group_h = card_h + (GAP + hint_h if hint_h else 0)
 
-        # Mittig in der reservierten Spalte, und vertikal mittig ueber dem
-        # Button-Verlauf — nicht oben in der Ecke: dort sass der Code, als er
-        # noch auf dem Bild lag, und neben dem Bild wirkt das aus der Achse.
+        # Mittig in der reservierten Spalte, und auf derselben Hoehe wie das
+        # Foto — nicht oben in der Ecke: dort sass der Code, als er noch auf
+        # dem Bild lag, und neben dem Bild wirkt das aus der Achse.
         # Zentriert wird die ganze Gruppe, sonst haengt die Anleitung den
-        # Code aus der Mitte.
+        # Code aus der Mitte. Nach unten begrenzt, damit sie nicht in den
+        # Button-Verlauf laeuft: dessen Oberkante ist die harte Grenze,
+        # die Schirmmitte nur der Wunsch.
         cx = W - self.RESULT_QR_COL + self.RESULT_QR_COL // 2
         x = cx - card_w // 2
-        y = max(PAD, (H - self._SCRIM_H - group_h) // 2)
+        y = max(PAD, min((H - group_h) // 2,
+                         H - self._SCRIM_H - group_h - 12))
 
         # Creme statt Weiss: der Code bringt seine Quiet-Zone selbst in
         # dieser Farbe mit, ein weisser Rahmen zöge eine sichtbare Kante
@@ -2177,16 +2188,17 @@ class UI:
         if self._slide_surf is None:
             try:
                 img = pygame.image.load(self._slide_paths[self._slide_idx]).convert()
-                self._slide_surf = pygame.transform.smoothscale(img, (W, H))
+                self._slide_surf, self._slide_rect = self._slide_frame(img)
             except Exception:
                 self._slide_surf = pygame.Surface((W, H))
                 self._slide_surf.fill(C_BLACK)
+                self._slide_rect = None
         elapsed = now - self._slide_start_ms
         alpha = min(255, int(elapsed / self._SLIDE_FADE_MS * 255))
         self._slide_surf.set_alpha(alpha)
         self._screen.fill(C_BLACK)
         self._screen.blit(self._slide_surf, (0, 0))
-        self._draw_qr()
+        self._draw_qr(self._slide_rect)
         # Hint
         pulse = (math.sin(now / 600) + 1) / 2
         lbl = self._f_normal.render("Drück einen Knopf", True, C_WHITE)
@@ -2333,13 +2345,49 @@ class UI:
 
     # ── QR-Code ────────────────────────────────────────────────────────────────
 
-    def _draw_qr(self):
-        """QR rechts unten – für Slideshow/Result (kollidiert nicht mit Overlay-Buttons)."""
+    @staticmethod
+    def _slide_frame(img) -> tuple:
+        """(Vollbild-Surface, Rechteck des Fotos darin).
+
+        Das Foto wird seitenverhaeltnistreu eingepasst statt auf W x H
+        gezogen. Vorher tat die Slideshow genau das: eine 3:2-Aufnahme auf
+        einem 16:9-Schirm kam rund 18 % zu breit heraus, jeder darauf war
+        breiter als in Wirklichkeit.
+
+        Die Balken links und rechts sind der Preis dafuer — und zugleich der
+        Platz, in den der QR-Code rueckt, statt auf dem Foto zu liegen.
+
+        Gearbeitet wird auf einer Vollbild-Surface, weil die Slideshow ihre
+        Blende ueber set_alpha genau einer Surface faehrt.
+        """
+        iw, ih = img.get_width(), img.get_height()
+        fit = min(W / iw, H / ih)
+        nw, nh = max(1, int(iw * fit)), max(1, int(ih * fit))
+        surf = pygame.Surface((W, H))
+        surf.fill(C_BLACK)
+        rect = pygame.Rect(0, 0, nw, nh)
+        rect.center = (W // 2, H // 2)
+        surf.blit(pygame.transform.smoothscale(img, (nw, nh)), rect)
+        return surf, rect
+
+    def _draw_qr(self, avoid: Optional[pygame.Rect] = None):
+        """QR rechts unten — fuer die Slideshow.
+
+        `avoid` ist das Rechteck des Fotos. Passt die Karte in den Balken
+        rechts daneben, rueckt sie dorthin und liegt damit auf keinem Bild
+        mehr. Passt sie nicht, bleibt sie wie bisher auf dem Foto: bei einem
+        16:9-Foto gibt es keinen Balken, und ein Code, der halb ueber den
+        Schirmrand haengt, waere schlechter als einer auf dem Bild.
+        """
         if self._qr_surf is None:
             return
         QR, PAD = self._qr_surf.get_width(), 12
+        card = QR + PAD * 2
         x, y = W - QR - PAD, H - QR - PAD
-        bg = pygame.Surface((QR + PAD * 2, QR + PAD * 2))
+        if avoid is not None and W - avoid.right >= card:
+            # Mittig in den Balken, unten mit demselben Abstand wie sonst.
+            x = avoid.right + (W - avoid.right - card) // 2 + PAD
+        bg = pygame.Surface((card, card))
         bg.fill(self._qr_card_color())        # siehe _draw_qr_result
         bg.set_alpha(220)
         self._screen.blit(bg, (x - PAD, y - PAD))
