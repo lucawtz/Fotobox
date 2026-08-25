@@ -221,9 +221,13 @@ export function CaptiveLanding({ onSkip }: { onSkip: () => void }) {
               verschwindet es darin. */}
           <Box
             sx={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              alignItems: "center",
               px: 3,
-              pt: { xs: 6, sm: 8 },
-              pb: { xs: 4, sm: 5 },
+              py: 4,
               textAlign: "center",
             }}
           >
@@ -245,13 +249,11 @@ export function CaptiveLanding({ onSkip }: { onSkip: () => void }) {
 
           <Box
             sx={{
-              flex: 1,
               display: "flex",
               flexDirection: "column",
-              justifyContent: "center",
               gap: 1.5,
               px: 3,
-              py: 4,
+              pb: { xs: 6, sm: 8 },
               maxWidth: 420,
               width: "100%",
               mx: "auto",
