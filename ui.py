@@ -1650,33 +1650,83 @@ class UI:
         # bevorstand, und kostete zusaetzlich 300 ms Vorlauf.
         self._flash()
 
+    # Wie stark das Standbild waehrend der Aufnahme abgedunkelt wird — 0.45
+    # heisst, es behaelt 45 % seiner Helligkeit. Frueher lag dafuer eine
+    # schwarze Flaeche mit Alpha 150 darueber, das entspricht in etwa
+    # demselben Wert; hier steckt es in der Pixelrechnung statt in einem
+    # zweiten Blit.
+    _CAPTURE_SHADE = 0.45
+
     def wait_for_capture(self, done, timeout: float = 35.0) -> bool:
         """Haelt die Render-Schleife am Leben, waehrend gphoto2 laeuft.
 
         Ohne sie wartete main.py blockierend, und der Bildschirm stand bis zum
         Timeout auf dem letzten Frame — kein Lebenszeichen, sah abgestuerzt
-        aus. Die Schleife bleibt deshalb, auch wenn sie nichts Eigenes mehr
-        zeichnet: sie haelt das Bild aktuell und die Event-Queue leer.
+        aus.
 
-        Zu sehen ist waehrenddessen das stehende Live-Bild, also der Gast
-        selbst. Hier lag frueher ein abgedunkelter Schleier mit "Foto wird
-        uebertragen…" und laufenden Punkten darueber. Der ist bewusst raus:
-        seit der Verschluss auf "Lächeln!" faellt (capture_lead_s) dauert die
-        Uebertragung nur noch kurz, und ein Schleier, der fuer eine Sekunde
-        aufzieht und gleich wieder verschwindet, ist mehr Unruhe als Auskunft.
+        Gezeigt wird das stehende Live-Bild, weichgezeichnet und abgedunkelt.
+        Scharf sah es aus wie ein eingefrorener Live-View, also wie ein
+        Fehler; unscharf ist es sichtbar ein Zwischenzustand. Text steht
+        bewusst keiner darauf — "Foto wird uebertragen…" ist raus und soll
+        raus bleiben.
+
+        Weichgezeichnet wird EINMAL beim Eintritt, nicht je Frame: waehrend
+        der Aufnahme gehoert das USB-Geraet gphoto2, es kommt ohnehin kein
+        neues Live-Bild mehr. Ein Gauss auf jedem der 30 Frames pro Sekunde
+        waere reine Verschwendung.
 
         Rueckgabe: True wenn `done` rechtzeitig gesetzt wurde, sonst False.
         """
         deadline = time.monotonic() + timeout
+        frozen = self._frozen_backdrop()
 
         while not done.is_set():
             if time.monotonic() >= deadline:
                 return False
-            self._draw_live_fullscreen()
+            if frozen is not None:
+                self._screen.blit(frozen, (0, 0))
+            else:
+                # Kein Bild zum Einfrieren — dann wenigstens der schwarze
+                # Grund, den _draw_live_fullscreen ohnehin legt.
+                self._draw_live_fullscreen()
             pygame.display.flip()
             pygame.event.pump()
             pygame.time.wait(30)
         return True
+
+    def _frozen_backdrop(self) -> Optional[pygame.Surface]:
+        """Das stehende Live-Bild als Vollbild, weich und dunkel — oder None.
+
+        None heisst, dass gerade gar kein Bild da ist; dann gibt es nichts
+        einzufrieren und der Aufrufer faellt auf schwarz zurueck.
+
+        Geblurrt wird auf einem Achtel und danach hochgezogen, wie beim
+        Hintergrund des Ergebnis-Schirms: nach dem Gauss steckt keine hohe
+        Frequenz mehr im Bild, deshalb faellt die Vergroesserung nicht auf,
+        und der Gauss selbst kostet auf dem Achtel fast nichts.
+        """
+        frame, _ = self._live_frame_rgb()
+        if frame is None:
+            return None
+        fh, fw = frame.shape[:2]
+        scale = min(W / fw, H / fh)
+        nw, nh = max(1, int(fw * scale)), max(1, int(fh * scale))
+
+        small = cv2.resize(frame, (max(1, nw // 8), max(1, nh // 8)),
+                           interpolation=cv2.INTER_AREA)
+        small = cv2.GaussianBlur(small, (0, 0), sigmaX=6)
+        big = cv2.resize(small, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        # Abdunkeln in derselben Rechnung — spart den zweiten Blit.
+        big = np.ascontiguousarray(
+            (big * self._CAPTURE_SHADE).astype(np.uint8))
+
+        surf = pygame.Surface((W, H))
+        surf.fill(C_BLACK)
+        rect = pygame.Rect(0, 0, nw, nh)
+        rect.center = (W // 2, H // 2)
+        surf.blit(pygame.image.frombuffer(big.tobytes(), (nw, nh), "RGB"),
+                  rect)
+        return surf
 
     def wait_for_liveview(self, timeout: float) -> bool:
         """Haelt die Schleife am Leben, bis wieder ein echtes Live-Bild kommt.
