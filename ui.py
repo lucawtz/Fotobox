@@ -1705,22 +1705,28 @@ class UI:
             pygame.time.wait(30)
         return False
 
-    # Innenbreite der Notice-Box (1200 px minus je 40 px Rand).
-    _NOTICE_W = 1120
+    # Breite, in die der Hinweistext umbrochen wird. War die Innenbreite des
+    # frueheren 1200-px-Kastens; ohne ihn traegt der ganze Schirm, und eine
+    # Drucker-Fehlermeldung aus CUPS braucht dadurch seltener eine dritte
+    # Zeile. Nicht die volle Schirmbreite: Zeilen ueber 1400 px liest man
+    # nicht mehr in einem Zug.
+    _NOTICE_W = 1400
 
     def _notice_title(self, text: str) -> tuple:
         """(Schrift, Zeilen) fuer die Ueberschrift eines Hinweises."""
         if not text:
             return _font(self._f_medium_pt, True), []
-        return self._fit_text(text, self._f_medium_pt, True, self._NOTICE_W,
-                              max_lines=2, min_pt=26)
+        # 72 statt 46 pt: der Hinweis hat seit dem Wegfall des Kastens den
+        # ganzen Schirm, und 46 pt wirkten darin verloren.
+        return self._fit_text(text, 72, True, self._NOTICE_W,
+                              max_lines=2, min_pt=32)
 
     def _notice_detail(self, text: str) -> tuple:
         """(Schrift, Zeilen) fuer die Detailzeile eines Hinweises."""
         if not text:
             return _font(self._f_normal_pt, True), []
-        return self._fit_text(text, self._f_normal_pt, True, self._NOTICE_W,
-                              max_lines=3, min_pt=20)
+        return self._fit_text(text, 44, True, self._NOTICE_W,
+                              max_lines=3, min_pt=24)
 
     def show_notice(self, title: str, detail: str = "",
                     seconds: float = 3.5, error: bool = True) -> None:
@@ -1758,19 +1764,25 @@ class UI:
 
     def _draw_notice_frame(self, title: str, detail: str, accent,
                            bar: Optional[float]) -> None:
-        """Ein Frame des Hinweis-Kastens. `bar` ist der verbleibende Anteil
-        des Balkens unten, None laesst ihn weg."""
-        self._screen.fill((12, 8, 4))
-        box = pygame.Rect(0, 0, 1200, 380)
-        box.center = (W // 2, H // 2)
-        pygame.draw.rect(self._screen, (28, 20, 12), box, border_radius=28)
-        pygame.draw.rect(self._screen, accent, box, width=5, border_radius=28)
+        """Ein Frame des Hinweis-Schirms. `bar` ist der verbleibende Anteil
+        des Balkens unten, None laesst ihn weg.
+
+        Ohne Kasten: hier lag frueher eine 1200x380-Karte mit 5 px Rand
+        mitten auf dunklem Grund. Das sah aus wie ein Systemdialog aus einer
+        anderen Anwendung — der Rest der Box kennt keine solchen Rahmen. Es
+        traegt jetzt der ganze Schirm: ein kurzer Akzentstrich, darunter der
+        Text, und der Balken laeuft ueber die volle Breite am unteren Rand
+        statt am Kastenboden.
+        """
+        self._screen.fill(self._theme["panel_bg"])
+        # Kurzer Strich als Anker ueber dem Text. Er ersetzt die Kante, die
+        # der Kasten dem Auge gab, ohne den Inhalt einzusperren.
+        pygame.draw.rect(self._screen, accent,
+                         (W // 2 - 45, H // 2 - 170, 90, 6), border_radius=3)
         # Titel und Detail umbrechen statt roh rendern. `detail` kommt
         # von aussen — printing.py reicht Drucker-Fehlermeldungen durch
-        # (auf 80 Zeichen gekuerzt). Mit der echten Schrift passen in die
-        # 1200 px breite Box nur noch rund 57 Zeichen, eine typische
-        # CUPS-Meldung stand also ausserhalb des Kastens, genau dann wenn
-        # der Gast sie lesen soll.
+        # (auf 80 Zeichen gekuerzt). Die Breite begrenzt jetzt _NOTICE_W
+        # allein, nicht mehr ein Kasten.
         # Beide Bloecke als EINE mittig sitzende Gruppe stapeln. Feste
         # Mittelpunkte (frueher H/2-55 und H/2+35) tragen nur solange,
         # wie beides einzeilig bleibt — bei drei Detailzeilen lief der
@@ -1790,9 +1802,7 @@ class UI:
             ly += GAP
         if bar is not None:
             pygame.draw.rect(self._screen, accent,
-                             (box.left, box.bottom - 8,
-                              int(box.width * bar), 8),
-                             border_bottom_left_radius=28)
+                             (0, H - 6, int(W * bar), 6))
 
     def _draw_countdown_frame(self, number: int, photo_num: int, total: int):
         self._draw_live_fullscreen()
@@ -1883,10 +1893,11 @@ class UI:
         # 1224x816. Wer das Foto groesser will, muss den Code kleiner machen
         # (RESULT_QR_SIZE) oder ihn wieder darauf legen.
         area_w = W - 2 * self.RESULT_QR_COL
-        fit = min(area_w / iw, H / ih)
+        area_h = H - self.RESULT_BOTTOM
+        fit = min(area_w / iw, area_h / ih)
         nw, nh = max(1, int(iw * fit)), max(1, int(ih * fit))
         sharp = pygame.transform.smoothscale(img, (nw, nh))
-        canvas.blit(sharp, sharp.get_rect(center=(W // 2, H // 2)))
+        canvas.blit(sharp, sharp.get_rect(center=(W // 2, area_h // 2)))
 
         self._result_cache[path] = canvas
         # Cap: älteste Einträge wegwerfen damit der Cache nicht endlos wächst
@@ -1964,7 +1975,7 @@ class UI:
         # die Schirmmitte nur der Wunsch.
         cx = W - self.RESULT_QR_COL + self.RESULT_QR_COL // 2
         x = cx - card_w // 2
-        y = max(PAD, min((H - group_h) // 2,
+        y = max(PAD, min((H - self.RESULT_BOTTOM - group_h) // 2,
                          H - self._SCRIM_H - group_h - 12))
 
         # Creme statt Weiss: der Code bringt seine Quiet-Zone selbst in
@@ -2001,8 +2012,11 @@ class UI:
             return (None, [])
         head = self._f_label.render("Noch nicht im WLAN?", True,
                                     self._theme["sidebar_dim"])
+        # Zeilen ohne Label gibt es seit dem offenen WLAN ("Kein Passwort
+        # noetig"). Ohne die Fallunterscheidung stand hier woertlich
+        # "None: Kein Passwort noetig" auf dem Schirm.
         lines = [self._fit_width(
-                     self._f_sub.render(f"{lbl}: {val}", True,
+                     self._f_sub.render(f"{lbl}: {val}" if lbl else val, True,
                                         self._theme["sidebar_text"]), max_w)
                  for lbl, val, _ in rows]
         return (self._fit_width(head, max_w), lines)
@@ -3262,6 +3276,12 @@ class UI:
     # nicht auseinanderlaufen — 16 px Innenrand je Seite wie in
     # _draw_qr_result, dazu 24 px Luft nach aussen und zum Bild.
     RESULT_QR_COL   = RESULT_QR_SIZE + 2 * 16 + 2 * 24
+    # Unteres Band des Ergebnis-Schirms: Timer und Buttons. Das Foto sitzt
+    # mittig DARUEBER, nicht mittig im Schirm — sonst reicht seine Unterkante
+    # bis auf 14 px an den Timer heran, und der Verlauf hinter den Buttons
+    # legt sich auf das Bild. Bemessen aus btn_h (72) plus Rand (20), dem
+    # Timer darueber (28 + 10) und etwas Luft.
+    RESULT_BOTTOM   = 150
     QR_BOX          = 10     # Rendergrösse je Modul vor dem Herunterskalieren.
     QR_MIN_CONTRAST = 3.0    # WCAG-Verhältnis Modul zu Grund, sonst s/w.
     # Ab welcher Helligkeit logo_circle als Kartengrund taugt (Verhältnis
