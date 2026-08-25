@@ -26,6 +26,11 @@ import DeleteDialog from "../components/DeleteDialog";
 import { CaptiveDialog } from "../components/CaptiveNotice";
 import { isCaptivePopup } from "../captive";
 
+/** Wie viele Bilder links und rechts des sichtbaren vorgeladen werden.
+ *  2 heisst: funf Previews (~1,5 MB) statt des ganzen Events. Reicht, damit
+ *  zuegiges Wischen nie auf einen leeren Slide laeuft. */
+const PRELOAD_SLIDES = 2;
+
 export default function PhotoView() {
   const { event, filename } = useParams<{ event: string; filename: string }>();
   const navigate = useNavigate();
@@ -269,24 +274,38 @@ export default function PhotoView() {
         onSlideChange={onSlideChange}
         style={{ width: "100%", height: "100%" }}
       >
-        {photos.map((p) => (
+        {photos.map((p, i) => (
           <SwiperSlide
             key={photoKey(p)}
             style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
           >
             <div className="swiper-zoom-container" style={{ width: "100%", height: "100%" }}>
-              <img
-                src={api.previewUrl(p)}
-                alt={p.filename}
-                style={{
-                  maxWidth: "100%",
-                  maxHeight: "100%",
-                  objectFit: "contain",
-                  userSelect: "none",
-                  WebkitUserSelect: "none",
-                }}
-                draggable={false}
-              />
+              {/* Nur das Fenster um das sichtbare Bild bekommt ueberhaupt eine
+                  Adresse. Vorher stand in JEDEM Slide ein fertiges src, und
+                  Swiper haelt alle Slides im DOM: ein einziger Tipp auf ein
+                  Foto startete damit den Download des kompletten Events — bei
+                  max_photos=500 rund 150 MB, ueber den 2,4-GHz-Hotspot knapp
+                  eine Minute, in der fuer alle anderen Gaeste nichts mehr
+                  durchkam. Jetzt sind es funf Bilder, gut 1,5 MB.
+                  loading="lazy" waere hier falsch: die Nachbarn liegen per
+                  Definition ausserhalb des Sichtfelds, der Browser wuerde
+                  genau das Vorladen unterbinden, das das Wischen fluessig
+                  macht. */}
+              {Math.abs(i - index) <= PRELOAD_SLIDES && (
+                <img
+                  src={api.previewUrl(p)}
+                  alt={p.filename}
+                  decoding="async"
+                  style={{
+                    maxWidth: "100%",
+                    maxHeight: "100%",
+                    objectFit: "contain",
+                    userSelect: "none",
+                    WebkitUserSelect: "none",
+                  }}
+                  draggable={false}
+                />
+              )}
             </div>
           </SwiperSlide>
         ))}

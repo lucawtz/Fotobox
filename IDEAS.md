@@ -312,9 +312,29 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
 - **Nachdruck aus der Galerie** — heute druckt nur die Box selbst. Ein
   Druckknopf am Foto in der Galerie bräuchte eine Freigabe (sonst leert der
   erste Spaßvogel die Farbbandkassette) und eine sichtbare Warteschlange.
-- **Download des eigenen Fotos in Originalgröße** — die Galerie liefert heute
-  `/img`, `/thumb`, `/preview`; ob ein Handy im Hotspot daraus einen sauberen
-  Download macht, ist ungeprüft.
+- **Web-Größe für Gäste statt Originalgröße** — *durchgerechnet 25.08.2026*
+  *Heute:* Die Galerie liefert `/thumb` (400 px, ~30 KB), `/preview` (1280 px,
+  ~300 KB) und `/img` bzw. `/download` — letztere das unveränderte
+  Kameraoriginal, bei der 700D **4–5 MB**. Der Einzeldownload ist bewusst der
+  einzige Weg, den ein Gast hat: das Gesamt-ZIP ist seit 25.08.2026 dem
+  Gastgeber und dem Besitzer vorbehalten (`gallery_server.py:1170`).
+  *Das Problem:* Der Hotspot schafft real rund 3 MB/s für **alle zusammen**
+  (2,4 GHz, `band=bg`/Kanal 6 fest verdrahtet, `hotspot.py:244`). Speichern
+  30 Gäste je fünf Bilder, sind das 675 MB — gut vier Minuten, in denen sonst
+  nichts mehr durchkommt. Nicht mehr fatal wie das ZIP, aber auch nicht nichts.
+  *Die Idee:* Gästen eine dritte Größe anbieten — 2048 px, Quality 85, ~600 KB.
+  Auf jedem Handydisplay und für Instagram vom Original nicht zu unterscheiden,
+  aber **Faktor 7 weniger Last**. Das echte Original bleibt dem Gastgeber und
+  dem USB-Weg vorbehalten. Technisch billig: `_render_cached`
+  (`gallery_server.py:107`) kann das schon, es braucht nur eine weitere Route
+  neben `/preview` und die Entscheidung, welche Rolle welche Größe bekommt.
+  *Offen bleibt:*
+  (1) **Sagt man es dem Gast?** Ein stilles Herunterrechnen ist bequem, aber
+  unehrlich gegenüber jemandem, der „Original" liest. Entweder ehrlich
+  beschriften oder die Wahl lassen.
+  (2) **Was ist mit Drucken?** Wer das Bild später selbst ausbelichten lässt,
+  will die 5 MB. Das ist genau der Fall, für den der Gastgeber das ZIP hat —
+  aber ein Gast, der es direkt will, steht dann ohne da.
 - **Bewegtbild (GIF / Boomerang)** — reizvoll, aber gphoto2 liefert Einzelbilder;
   die Serienaufnahme müsste über die Capture-Card laufen, deren Bild deutlich
   schlechter ist als das der Kamera. Vermutlich mehr Aufwand als Ertrag.
@@ -412,6 +432,66 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
   (3) **Papierstau.** Ein hängender Job blockiert die Schlange dauerhaft.
   Dann braucht es „Warteschlange leeren" im Panel — sonst hilft nur SSH, und
   damit hängt der Punkt am Fernwartungs-Eintrag weiter unten.
+
+- **Welcher Verteilweg für wen — die Entscheidung über den drei Einträgen unten**
+  *Warum das hier oben steht:* Die drei Punkte darunter (Übergabe an den
+  Gastgeber, Cloud-Upload, Fernwartung) beantworten alle dieselbe Frage
+  verschieden, ohne dass irgendwo steht, **wer eigentlich welchen Weg
+  bekommt**. Ohne diese Entscheidung baut man am Ende drei Uploader für drei
+  Zielgruppen. Aufgeschrieben nach dem Durchrechnen der Galerie-Last am
+  25.08.2026.
+  *Die vier Kandidaten sortiert:* **USB-Stick** und **Datenvolumen** sind gar
+  keine Gast-Auslieferungswege. USB (`scripts/usb_export.py`, per udev) ist der
+  Weg für *dich und den Gastgeber* — 2,25 GB Originale in einer Minute, kein
+  Netz beteiligt, nichts kann überlasten. Ein LTE-Stick ist kein Verteilweg,
+  sondern nur ein Uplink für die Cloud-Variante; Gäste dahinter zu routen wäre
+  ein zweiter Flaschenhals hinter dem ersten, und zwar einer, der pro GB kostet.
+  Bleibt die echte Wahl: **lokaler Hotspot** oder **Cloud/eigene Webseite**.
+  *Der Punkt, der alles entscheidet — der Zeitpunkt des Uploads:* Cloud klingt
+  nach der stabilsten Lösung und ist am Eventabend die **fragilste**. 500
+  Originale sind 2,25 GB; bei optimistischen 5 Mbit/s LTE-Upload sind das gut
+  **60 Minuten** über eine Leitung, die in einer Scheune jederzeit abreißt.
+  Lädt man dagegen am **nächsten Tag von zuhause** hoch, ist die Netzqualität
+  der Location schlagartig irrelevant — dieselbe Technik wird von der
+  unzuverlässigsten zur zuverlässigsten Variante, allein durch Verschieben des
+  Zeitpunkts. Das ist genau der „Ausgangskorb, der beim nächsten Start im
+  Heim-WLAN abgearbeitet wird" aus dem Cloud-Eintrag unten — dort noch als
+  *Notlösung, falls kein Uplink kommt* beschrieben. Für die **Gästeverteilung**
+  ist er nicht die Notlösung, sondern die bessere Antwort. (Für den Schutz
+  gegen Datenverlust *während* der Feier bleibt er wertlos — das ist der Teil,
+  für den der Uplink wirklich gebraucht wird.)
+  *Was der lokale Hotspot kann, was keine Cloud kann:* Er funktioniert im
+  Gewölbekeller, in der Scheune und im Festzelt — also genau dort, wo
+  Hochzeiten stattfinden und wo kein Netz ist. Nach dem Galerie-Umbau vom
+  25.08.2026 trägt er die Last auch: Previews à ~300 KB, 30 stöbernde Gäste
+  erzeugen grob 1 MB/s auf einem Hotspot, der rund 3 schafft. Lokal ist für den
+  Moment der Feier **kein Kompromiss, sondern die zuverlässigste Variante, die
+  es gibt.**
+  *Die Aufteilung, die sich daraus ergibt:*
+  (a) **Während der Feier → lokal.** Kein Internet, keine Abhängigkeit, keine
+  laufenden Kosten, kein Datenschutzthema.
+  (b) **Bei der Übergabe → USB.** Originale an den Gastgeber. Gibt es schon.
+  (c) **Danach → Event-Seite mit eigenem Link,** hochgeladen von zuhause. Löst
+  „Gast war da, hat vergessen zu speichern, fragt drei Tage später" und ist
+  gleichzeitig ein sauberes Upsell.
+  *Falls (c) doch am Eventabend laufen soll:* nur die **Previews** hochladen,
+  nicht die Originale — 150 statt 2250 MB, also ~4 Minuten statt einer Stunde.
+  Das geht auch über eine wacklige Leitung. Originale bleiben lokal und gehen
+  per USB raus. Das beantwortet nebenbei Frage (5) im Cloud-Eintrag unten.
+  *Offen bleibt:*
+  (1) **Ist (c) Produkt oder Gefallen?** Als Upsell braucht es Preis,
+  Löschfrist und eine Zusage, wie lange der Link lebt. Als Gefallen wird es
+  die Sorte Aufgabe, die man in drei Jahren noch für Kunden von damals macht.
+  (2) **Datenschutz spricht klar für lokal.** Solange nichts die Box verlässt,
+  existiert das Thema nicht. Sobald Fotos identifizierbarer Personen auf
+  fremden Servern liegen, kommt man als Vermieter in Auftragsverarbeitung,
+  Löschfristen und Einwilligungen. Machbar, aber es ist Arbeit und Haftung, die
+  (a) und (b) komplett sparen. Vor der ersten Hochzeit in der Cloud gehört da
+  echter Rat eingeholt, nicht die Einschätzung eines Entwicklerwerkzeugs.
+  (3) **Verträgt sich (c) mit `photo_max_age_days: 7`?** Die Box räumt nach
+  einer Woche selbst auf (`photo_max_age_days`, `config.py:232`). Wenn der Upload
+  von zuhause erst danach passiert, ist nichts mehr da. Entweder die Frist an
+  den Upload koppeln oder den Upload an die Übergabe.
 
 - **Der Gastgeber bekommt am Ende alles — ohne dass jemand daran denkt**
   *Heute:* Es gibt zwei Wege aus der Box heraus, und beide braucht jemanden,

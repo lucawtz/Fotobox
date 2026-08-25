@@ -87,9 +87,153 @@ def test_guest_zip_of_foreign_event_is_refused(app, two_events):
     assert app.get(f"/api/download-zip?event={old}").status_code == 404
 
 
-def test_guest_zip_of_active_event_works(app, two_events):
-    active, old = two_events
+def test_guest_gets_no_zip_at_all(app, two_events):
+    """Bulk-Download ist kein Gast-Feature mehr.
+
+    Ein Event sind bis zu `max_photos` Originale à 4-5 MB — ueber den
+    2,4-GHz-Hotspot legt ein einziges solches ZIP die Galerie fuer alle
+    anderen Gaeste minutenlang still. Gaeste speichern einzeln ueber
+    /download.
+    """
+    active, _old = two_events
+    assert app.get(f"/api/download-zip?event={active}").status_code == 403
+
+
+@pytest.mark.parametrize("role", ["admin", "host"])
+def test_zip_of_running_event_is_refused_even_for_the_host(app, two_events, role):
+    """Auch mit Login nicht waehrend der Feier — der Hotspot ist derselbe."""
+    active, _old = two_events
+    _login(app, role)
+    assert app.get(f"/api/download-zip?event={active}").status_code == 409
+
+
+def test_zip_of_a_finished_event_works_for_admin(app, two_events):
+    _active, old = two_events
+    _login(app, "admin")
+    assert app.get(f"/api/download-zip?event={old}").status_code == 200
+
+
+def test_zip_is_freed_up_by_starting_a_new_event(app, two_events):
+    """Der Weg an die Bilder: Event beenden, dann ZIP.
+
+    Ohne diesen Ausweg waere das laufende Event fuer immer gesperrt — der
+    Ordner bleibt ja das aktive, solange die Session laeuft.
+    """
+    active, _old = two_events
+    _login(app, "admin")
+    assert app.get(f"/api/download-zip?event={active}").status_code == 409
+    events.start_new_event(config.cfg)
     assert app.get(f"/api/download-zip?event={active}").status_code == 200
+
+
+# ── Gastgeber nach der Feier ───────────────────────────────────────────────────
+# Der Gastgeber soll seine Bilder selbst holen koennen, ohne dass der Besitzer
+# etwas verschickt. Anker ist die Gastgeber-PIN, nicht die Browser-Session:
+# die stirbt beim Gastgeber bewusst mit dem Browser und waere am naechsten
+# Morgen weg (gallery_server.api_admin_login).
+
+def test_host_can_zip_his_own_event_once_it_has_ended(app, two_events):
+    active, _old = two_events
+    _login(app, "host")
+    # Waehrend der Feier gesperrt — der Hotspot haengt voller Gaeste.
+    assert app.get(f"/api/download-zip?event={active}").status_code == 409
+    events.start_new_event(config.cfg)
+    assert app.get(f"/api/download-zip?event={active}").status_code == 200
+
+
+def test_host_still_sees_his_own_event_after_it_ended(app, two_events):
+    """Ohne Sichtbarkeit waere das ZIP eine Sackgasse: der Ordner stuende
+    nicht mehr in der Galerie, der Gastgeber haette keinen Weg dorthin."""
+    active, _old = two_events
+    _login(app, "host")
+    events.start_new_event(config.cfg)
+    folders = [e["folder"] for e in app.get("/api/events").get_json()["events"]]
+    assert active in folders
+    seen = {p["event"] for p in app.get("/api/photos").get_json()["photos"]}
+    assert active in seen
+    assert app.get(f"/img/{active}/jetzt.jpg").status_code == 200
+
+
+def test_host_never_reaches_a_foreign_event(app, two_events):
+    """Die alte Trennung bleibt: fremde Feiern gehen ihn weiterhin nichts an."""
+    _active, old = two_events
+    _login(app, "host")
+    assert app.get(f"/img/{old}/damals.jpg").status_code == 404
+    assert app.get(f"/api/download-zip?event={old}").status_code == 404
+
+
+def test_next_renter_does_not_inherit_the_previous_hosts_event(app, two_events):
+    """Der eigentliche Datenschutz-Test dieser Mechanik.
+
+    Der Besitzer vergibt fuer die naechste Vermietung eine neue
+    Gastgeber-PIN. Ab da darf der neue Gastgeber die Feier des vorigen weder
+    sehen noch als ZIP ziehen — sonst haetten wir genau das Leck gebaut, das
+    `_may_see_all_events` seit jeher verhindert.
+    """
+    active, _old = two_events
+    events.start_new_event(config.cfg)
+    config.cfg["host_pin"] = "765432"      # naechste Vermietung, neue PIN
+    _login(app, "host")
+    assert app.get(f"/api/download-zip?event={active}").status_code == 404
+    assert app.get(f"/img/{active}/jetzt.jpg").status_code == 404
+    folders = [e["folder"] for e in app.get("/api/events").get_json()["events"]]
+    assert active not in folders
+
+
+def test_guest_does_not_inherit_host_events(app, two_events):
+    """Die Zuordnung haengt an der Rolle, nicht nur an der PIN-Kennung."""
+    active, _old = two_events
+    # Kein Login: reiner Gast im Fotobox-WLAN. Solange die Feier laeuft, sieht
+    # er sie zwar — ein Gesamt-ZIP bekommt er trotzdem nicht.
+    assert app.get(f"/img/{active}/jetzt.jpg").status_code == 200
+    assert app.get(f"/api/download-zip?event={active}").status_code == 403
+    # Nach der Feier ist der Ordner fuer ihn schlicht weg. 404 statt 403:
+    # dass es das Event ueberhaupt gibt, geht ihn nichts an.
+    events.start_new_event(config.cfg)
+    assert app.get(f"/img/{active}/jetzt.jpg").status_code == 404
+    assert app.get(f"/api/download-zip?event={active}").status_code == 404
+
+
+def test_pin_rotation_hands_the_running_event_to_the_new_renter(
+        app, two_events, photo_factory):
+    """Die Reihenfolge bei der Uebergabe darf nicht zaehlen.
+
+    Der Besitzer startet erst "Neues Event" und vergibt danach die neue
+    Gastgeber-PIN. Ohne das Umschreiben traegt der frische Ordner noch die
+    Kennung des vorigen Mieters — der saehe dann die Feier seines
+    Nachfolgers. Bewusst ueber /api/admin/config statt direkt ueber
+    events.reclaim_active_for_host: die Verdrahtung ist der Teil, der
+    kaputtgehen kann.
+    """
+    _active, _old = two_events
+    _login(app, "admin")
+    neu = events.start_new_event(config.cfg)          # Ordner traegt noch alte PIN
+    r = app.post("/api/admin/config", json={"host_pin": "765432"})
+    assert r.status_code == 200, r.get_json()
+    # Erstes Foto der neuen Feier — vorher gibt es den Ordner gar nicht, und
+    # host_events blendet Ordner ohne Inhalt bewusst aus.
+    photo_factory(os.path.join(config.cfg["picture_dir"], neu, "neu.jpg"))
+
+    # Voriger Mieter (alte PIN) kommt nicht an das neue Event.
+    config.cfg["host_pin"] = "000000"
+    assert neu not in events.host_events(config.cfg)
+    # Neuer Mieter schon.
+    config.cfg["host_pin"] = "765432"
+    assert neu in events.host_events(config.cfg)
+
+
+def test_host_events_survive_a_fresh_browser_session(app, cfg, two_events):
+    """Der Kern der PIN-Loesung: kein Cookie noetig.
+
+    Der Gastgeber macht den Browser zu, kommt am naechsten Tag wieder und
+    tippt seine PIN erneut ein. Die Zuordnung liegt auf der Platte, nicht in
+    der Session — sonst waere sie genau jetzt weg.
+    """
+    active, _old = two_events
+    events.start_new_event(config.cfg)
+    frisch = gallery_server.app.test_client()      # neuer Client, kein Cookie
+    _login(frisch, "host")
+    assert frisch.get(f"/api/download-zip?event={active}").status_code == 200
 
 
 def test_guest_count_is_scoped(app, two_events):

@@ -123,8 +123,18 @@ export default function EventGallery() {
   // gefalteten Standardansicht, egal was im State steht.
   const shown = photos.filter((p) => matchesFilter(p, hasCollages ? kind : "alle"));
 
+  // Das Gesamt-ZIP ist kein Gast-Feature: ein Event sind bis zu 500 Originale
+  // à 4-5 MB, ueber den Hotspot rund zwoelf Minuten, in denen sonst niemand
+  // mehr ein Bild geladen bekommt. Und auch fuer den Gastgeber erst nach der
+  // Feier — waehrend des Events haengen dreissig Gaeste am selben WLAN.
+  // Gaeste sichern einzeln ueber die Detailansicht. Der Server setzt dieselbe
+  // Regel noch einmal durch (gallery_server.api_download_zip), das hier
+  // erspart nur den Klick ins Leere.
+  const canZip = photos.length > 0 && !active
+                 && (role === "admin" || role === "host");
+
   const handleDownload = () => {
-    if (!folder || shown.length === 0) return;
+    if (!folder || shown.length === 0 || !canZip) return;
     // Im WLAN-Anmeldefenster gibt es keine Downloads: das ZIP wuerde dort
     // kommentarlos verpuffen. Also erst den Weg in den richtigen Browser
     // anbieten (siehe captive.ts).
@@ -224,7 +234,7 @@ export default function EventGallery() {
             </Box>
           )}
 
-          {photos.length > 0 && (
+          {canZip && (
             <Tooltip title="Als ZIP herunterladen">
               <Button
                 onClick={handleDownload}

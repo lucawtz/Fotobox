@@ -7,6 +7,7 @@ Das passiert komplett ohne Admin-Eingriff — Datums-Wechsel = neuer Ordner,
 Event-Name (aus config) bleibt typischerweise konstant pro Vermietung.
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -29,6 +30,21 @@ _EXTS = {".jpg", ".jpeg", ".png"}
 # Absturz mitten im Event soll den Ordner nicht wechseln.
 _PIN_FILE = ".active_event.json"
 _pin_lock = threading.RLock()
+
+# Wem gehoert welches Event? Festgehalten wird die Gastgeber-PIN, unter der
+# der Ordner entstanden ist — nicht die Browser-Session. Die stirbt beim
+# Gastgeber bewusst mit dem Browser (gallery_server.api_admin_login), am
+# naechsten Morgen waere sie also weg. Die PIN dagegen vergibt der Box-
+# Besitzer pro Vermietung, und genau das ist die Grenze, die wir brauchen:
+# solange die PIN des Gastgebers gilt, kommt er an seine Bilder; sobald der
+# Besitzer sie fuer den naechsten Mieter aendert, ist der Zugang zu.
+#
+# Gespeichert wird ein gekuerzter SHA-256 statt der PIN im Klartext. Das ist
+# kein ernsthafter Schutz — sechs Ziffern sind in Millisekunden durchprobiert
+# — aber die Datei steht neben config.json, und dort liegt die PIN ohnehin
+# im Klartext. Es geht darum, sie nicht ein zweites Mal auszubreiten.
+_HOST_FILE = ".host_events.json"
+_HOST_PREFIX = "fotobox-host:"
 
 
 def _pin_path(cfg: dict) -> str:
@@ -56,6 +72,104 @@ def _write_pin(cfg: dict, folder: str, slug: str, started: float) -> None:
         # Nicht fatal: ohne Pin faellt current_event_folder auf das alte
         # Datums-Verhalten zurueck. Aber es gehoert ins Log.
         logger.warning("Aktives Event nicht gespeichert (%s): %s", path, exc)
+    _claim_for_host(cfg, folder)
+
+
+def _host_path(cfg: dict) -> str:
+    return os.path.join(cfg["picture_dir"], _HOST_FILE)
+
+
+def host_fingerprint(cfg: dict) -> str:
+    """Kennung der aktuell gueltigen Gastgeber-PIN. Leer = keine vergeben."""
+    pin = (cfg.get("host_pin") or "").strip()
+    if not pin:
+        return ""
+    return hashlib.sha256((_HOST_PREFIX + pin).encode("utf-8")).hexdigest()[:16]
+
+
+def _read_host_map(cfg: dict) -> dict:
+    try:
+        with open(_host_path(cfg), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _claim_for_host(cfg: dict, folder: str) -> None:
+    """Vermerkt, unter welcher Gastgeber-PIN `folder` entstanden ist.
+
+    Aufgerufen aus `_write_pin`, also genau dann, wenn ein Event-Ordner neu
+    festgenagelt wird — die einzige Stelle, an der ein Event beginnt.
+    """
+    fp = host_fingerprint(cfg)
+    if not fp:
+        # Ohne Gastgeber-PIN gibt es keine Gastgeber-Rolle (der Login
+        # verlangt eine nicht-leere PIN). Dann ist auch nichts zuzuordnen.
+        return
+    with _pin_lock:
+        data = _read_host_map(cfg)
+        if data.get(folder) == fp:
+            return
+        # Beim Schreiben aufraeumen: Eintraege fuer geloeschte Events fliegen
+        # raus. Spart eine eigene Pflege in _purge_event und haelt die Datei
+        # ueber eine Saison klein.
+        #
+        # Der frisch beanspruchte Ordner ist davon ausgenommen und wird erst
+        # DANACH gesetzt: `_write_pin` laeuft, wenn das Event *beginnt* — den
+        # Ordner legt erst das erste Foto an (current_event_dir). Ein Filter
+        # ueber isdir wuerde den neuen Eintrag also im selben Atemzug wieder
+        # verwerfen, und der Gastgeber stuende am Ende ohne sein Event da.
+        base = cfg["picture_dir"]
+        data = {k: v for k, v in data.items()
+                if os.path.isdir(os.path.join(base, k))}
+        data[folder] = fp
+        path = _host_path(cfg)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            os.replace(tmp, path)
+        except OSError as exc:
+            # Nicht fatal: der Gastgeber kommt dann nach der Feier nicht mehr
+            # an sein Event, der Besitzer schon. Gehoert aber ins Log.
+            logger.warning("Event-Zuordnung nicht gespeichert (%s): %s",
+                           path, exc)
+
+
+def reclaim_active_for_host(cfg: dict) -> None:
+    """Schreibt das laufende Event auf die *aktuelle* Gastgeber-PIN um.
+
+    Aufgerufen, wenn der Besitzer die Gastgeber-PIN aendert. Ohne das haengt
+    die Zuordnung an der Reihenfolge bei der Uebergabe: startet er erst
+    "Neues Event" und vergibt danach die neue PIN, traegt der frische Ordner
+    noch die Kennung des vorigen Mieters — der saehe dann die Feier seines
+    Nachfolgers. Mit dem Umschreiben ist die Reihenfolge egal.
+
+    Vergangene Events behalten ihre alte Kennung. Die passt danach zu keiner
+    gueltigen PIN mehr, womit sie fuer jeden Gastgeber verschwinden — genau
+    das gewuenschte Verhalten beim Mieterwechsel.
+    """
+    with _pin_lock:
+        _claim_for_host(cfg, current_event_folder(cfg))
+
+
+def host_events(cfg: dict) -> list[str]:
+    """Ordner, die unter der aktuell gueltigen Gastgeber-PIN entstanden sind.
+
+    Leere Liste, wenn keine PIN vergeben ist. Ordner, die es nicht mehr gibt,
+    werden hier gefiltert — damit muss kein Loeschpfad die Datei pflegen.
+    """
+    fp = host_fingerprint(cfg)
+    if not fp:
+        return []
+    base = cfg["picture_dir"]
+    with _pin_lock:
+        data = _read_host_map(cfg)
+    return [folder for folder, stamp in data.items()
+            if stamp == fp and is_safe_event(folder)
+            and os.path.isdir(os.path.join(base, folder))]
 
 
 def start_new_event(cfg: dict) -> str:

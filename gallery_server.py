@@ -68,7 +68,89 @@ app.config.update(
 )
 
 _EXTS = {".jpg", ".jpeg", ".png"}
-_thumb_lock = threading.Lock()
+
+# ── Bildberechnung: Nebenlaeufigkeit ───────────────────────────────────────────
+# Frueher lag ein einziger globaler Lock um Thumbnail *und* Preview — und zwar
+# inklusive der Cache-Abfrage. Ein laengst fertiges Thumbnail wartete damit
+# hinter dem 24-MP-Decode eines fremden Fotos; auf dem Pi rund eine Sekunde
+# fuer einen reinen Cache-Treffer. Gemessen kostete das ueber Faktor 8 an
+# Durchsatz. Jetzt dreistufig:
+#
+#   1. Cache-Treffer komplett ohne Lock,
+#   2. ein Lock pro Zieldatei — zwei Gaeste am selben Bild rechnen nicht
+#      doppelt, zwei Gaeste an verschiedenen Bildern behindern sich nicht,
+#   3. eine Semaphore als CPU-Bremse. Der Galerie-Server laeuft im selben
+#      Prozess wie die Box-UI (main.py startet ihn als Thread); acht
+#      gleichzeitig rechnende waitress-Threads wuerden dem Bedien-Bildschirm
+#      die Kerne wegnehmen, waehrend davor jemand auf den Ausloeser wartet.
+_render_locks: dict[str, threading.Lock] = {}
+_render_locks_guard = threading.Lock()
+_RENDER_LOCKS_MAX = 4096
+_render_cpu = threading.Semaphore(max(1, (os.cpu_count() or 2) // 2))
+
+
+def _render_lock(key: str) -> threading.Lock:
+    with _render_locks_guard:
+        # Der Deckel haelt das Dict ueber eine Vermietungssaison hinweg klein.
+        # Leeren waehrend ein Lock gehalten wird ist ungefaehrlich: der Halter
+        # behaelt seine Referenz, ein Nachzuegler legt sich einen neuen an und
+        # rechnet schlimmstenfalls doppelt. Kaputtgehen kann dabei nichts —
+        # geschrieben wird ueber tmp + os.replace.
+        if len(_render_locks) > _RENDER_LOCKS_MAX:
+            _render_locks.clear()
+        lock = _render_locks.get(key)
+        if lock is None:
+            lock = _render_locks[key] = threading.Lock()
+        return lock
+
+
+def _render_cached(dest: str, src: str, box: tuple[int, int],
+                   quality: int) -> Optional[str]:
+    """Erzeugt `dest` als verkleinertes JPEG aus `src`, falls noch nicht da."""
+    if os.path.exists(dest):
+        return dest
+    with _render_lock(dest):
+        # Zweite Abfrage im Lock: waehrend wir gewartet haben, kann genau
+        # dieses Bild fertig geworden sein.
+        if os.path.exists(dest):
+            return dest
+        # Eindeutiger Temp-Name: zwei Threads duerfen sich nicht dieselbe
+        # Zwischendatei ueberschreiben, falls das Lock-Dict zwischendurch
+        # geleert wurde.
+        tmp = f"{dest}.{os.getpid()}.{threading.get_ident()}.tmp"
+        try:
+            from PIL import Image
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with _render_cpu:
+                with Image.open(src) as img:
+                    # draft() laesst libjpeg schon beim Dekodieren skalieren.
+                    # Ohne das entpackt PIL erst 24 MP in einen ~72-MB-Puffer,
+                    # nur um daraus ein 400-px-Bild zu machen. Mit draft()
+                    # kommt es klein aus dem Decoder: schneller und ~10x
+                    # weniger RAM pro Worker — bei acht waitress-Threads der
+                    # Unterschied zwischen ~800 MB und ~80 MB Spitze auf dem
+                    # Pi. Bei PNG ist der Aufruf ein No-Op.
+                    img.draft("RGB", box)
+                    out = img.convert("RGB") if img.mode != "RGB" else img
+                    out.thumbnail(box)
+                    # progressive: das Bild baut sich auf dem Handy stufenweise
+                    # auf statt zeilenweise — auf einem vollen Hotspot der
+                    # Unterschied zwischen "laedt" und "haengt".
+                    out.save(tmp, "JPEG", quality=quality,
+                             progressive=True, optimize=True)
+            # Erst umbenennen, wenn die Datei vollstaendig ist. Vorher
+            # verhinderte der globale Lock nebenbei, dass ein paralleler
+            # Request ein halb geschriebenes JPEG ausgeliefert bekommt; ohne
+            # ihn muss das os.replace diese Rolle uebernehmen.
+            os.replace(tmp, dest)
+            return dest
+        except Exception as exc:
+            logger.warning("Bildberechnung '%s': %s", dest, exc)
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            return None
 
 # Throttle fuer das zeitbasierte Foto-Cleanup. main.py macht das vor jeder
 # Aufnahme — falls aber niemand mehr knipst, wuerden abgelaufene Bilder ewig
@@ -166,26 +248,18 @@ def _photo_list(event_filter: Optional[str] = None) -> list[tuple[str, str]]:
 
 
 def _make_thumb(event: str, filename: str) -> Optional[str]:
-    td = os.path.join(_thumb_dir(), event)
-    thumb = os.path.join(td, filename)
-    with _thumb_lock:
-        if os.path.exists(thumb):
-            return thumb
-        src = _safe_path(event, filename)
-        if src is None:
-            return None
-        try:
-            from PIL import Image
-            os.makedirs(td, exist_ok=True)
-            with Image.open(src) as img:
-                img.thumbnail((400, 400))
-                # quality=75 + progressive: ~50% kleiner, schnelles Anzeigen
-                img.save(thumb, "JPEG", quality=75,
-                         progressive=True, optimize=True)
-            return thumb
-        except Exception as exc:
-            logger.warning("Thumbnail '%s/%s': %s", event, filename, exc)
-            return None
+    thumb = os.path.join(_thumb_dir(), event, filename)
+    # Cache-Abfrage bewusst vor _safe_path: ein geloeschtes Foto raeumt
+    # api_delete samt Thumbnail und Preview weg, danach greift diese Abfrage
+    # ins Leere und _safe_path liefert korrekt None.
+    if os.path.exists(thumb):
+        return thumb
+    src = _safe_path(event, filename)
+    if src is None:
+        return None
+    # quality=75: ~50% kleiner als der PIL-Standard, im 400-px-Raster nicht
+    # zu unterscheiden.
+    return _render_cached(thumb, src, (400, 400), 75)
 
 
 def _preview_dir() -> str:
@@ -196,25 +270,13 @@ def _make_preview(event: str, filename: str) -> Optional[str]:
     """Mid-Size-Vorschau (~1280px lange Seite, ~150-300 KB) für die Detail-
     Ansicht. Spart Faktor 10-20 ggü. Originalfoto auf langsamen Hotspots.
     """
-    pd = os.path.join(_preview_dir(), event)
-    preview = os.path.join(pd, filename)
-    with _thumb_lock:
-        if os.path.exists(preview):
-            return preview
-        src = _safe_path(event, filename)
-        if src is None:
-            return None
-        try:
-            from PIL import Image
-            os.makedirs(pd, exist_ok=True)
-            with Image.open(src) as img:
-                img.thumbnail((1280, 1280))
-                img.save(preview, "JPEG", quality=80,
-                         progressive=True, optimize=True)
-            return preview
-        except Exception as exc:
-            logger.warning("Preview '%s/%s': %s", event, filename, exc)
-            return None
+    preview = os.path.join(_preview_dir(), event, filename)
+    if os.path.exists(preview):
+        return preview
+    src = _safe_path(event, filename)
+    if src is None:
+        return None
+    return _render_cached(preview, src, (1280, 1280), 80)
 
 
 # ── Captive-Portal-Detection ───────────────────────────────────────────────────
@@ -945,21 +1007,43 @@ def _public_links() -> dict:
 # ── Sichtbarkeit: Gaeste nur im laufenden Event ────────────────────────────────
 
 def _may_see_all_events() -> bool:
-    """Nur der Admin sieht jedes Event — Gastgeber und Gaeste das laufende.
+    """Nur der Admin sieht jedes Event — Gaeste das laufende.
 
     Ohne diese Trennung sieht jeder im Fotobox-WLAN die Fotos der letzten Feier:
-    `is_safe_event` prueft nur Pfad-Traversal, nicht Zugehoerigkeit. Der
-    Gastgeber ist bewusst *nicht* ausgenommen: er mietet die Box fuer seine
-    eigene Feier, das Archiv der vorigen Mieter geht ihn nichts an. Der Owner
-    kann die Galerie per `gallery_guests_see_all` bewusst als Archiv oeffnen.
+    `is_safe_event` prueft nur Pfad-Traversal, nicht Zugehoerigkeit. Das Archiv
+    fremder Mieter geht weder Gast noch Gastgeber etwas an — der Gastgeber
+    kommt ueber `_visible_event_folders` gezielt nur an seine *eigenen*
+    Events, nicht an alle. Der Owner kann die Galerie per
+    `gallery_guests_see_all` bewusst als Archiv oeffnen.
     """
     if config.cfg.get("gallery_guests_see_all"):
         return True
     return _session_role() == "admin"
 
 
+def _visible_event_folders() -> Optional[set]:
+    """Welche Event-Ordner der Aufrufer sehen darf. `None` = alle.
+
+    Eine Quelle fuer Galerie, Event-Liste, Bildauslieferung und ZIP — sonst
+    laufen die vier Stellen frueher oder spaeter auseinander und eine davon
+    wird zum Schlupfloch.
+
+    Der Gastgeber sieht das laufende Event *und* die Events, die unter seiner
+    Gastgeber-PIN entstanden sind. Ohne den zweiten Teil verliert er seine
+    Bilder in dem Moment, in dem seine Feier endet: der Ordner ist dann nicht
+    mehr der aktive, und der Besitzer muesste ihm alles von Hand schicken.
+    """
+    if _may_see_all_events():
+        return None
+    folders = {events.current_event_folder(config.cfg)}
+    if _session_role() == "host":
+        folders.update(events.host_events(config.cfg))
+    return folders
+
+
 def _may_see_event(event: str) -> bool:
-    return _may_see_all_events() or event == events.current_event_folder(config.cfg)
+    visible = _visible_event_folders()
+    return visible is None or event in visible
 
 
 def _visible_photo_list(event_filter: Optional[str] = None) -> list:
@@ -969,12 +1053,16 @@ def _visible_photo_list(event_filter: Optional[str] = None) -> list:
     und die Admin-Uebersicht brauchen weiterhin *alle* Fotos — sonst raeumt der
     Cleanup vergangene Events nie wieder auf.
     """
-    if _may_see_all_events():
+    visible = _visible_event_folders()
+    if visible is None:
         return _photo_list(event_filter)
-    active = events.current_event_folder(config.cfg)
-    if event_filter and event_filter != active:
-        return []
-    return _photo_list(active)
+    if event_filter:
+        return _photo_list(event_filter) if event_filter in visible else []
+    if len(visible) == 1:
+        # Der Normalfall (Gast, und Gastgeber waehrend seiner Feier): nur den
+        # einen Ordner scannen statt die ganze Platte.
+        return _photo_list(next(iter(visible)))
+    return [(ev, f) for ev, f in _photo_list() if ev in visible]
 
 
 def _kind_predicate(kind: Optional[str]):
@@ -1124,8 +1212,42 @@ def api_download_zip():
     if not _may_see_event(event_filter):
         abort(404)
 
-    # Ohne kind-Parameter bleibt es beim kompletten Event — der Gast, der
-    # "ZIP" drueckt, will seine Bilder, nicht die Auswahl von irgendwem.
+    # Ab hier: Bulk-Download ist kein Gast-Feature mehr.
+    #
+    # Ein Event fasst bis zu `max_photos` (500) Originale von rund 4-5 MB —
+    # gut 2 GB in einem einzigen Stream, ueber einen 2,4-GHz-Hotspot etwa
+    # zwoelf Minuten, in denen sonst niemand mehr ein Bild geladen bekommt.
+    # Dazu haelt jeder laufende ZIP-Download einen der acht waitress-Threads
+    # fest. Zwei Gaeste gleichzeitig und der Abend ist vorbei. Gaeste sichern
+    # ihre Bilder einzeln ueber /download — das sind ein paar MB statt zwei GB.
+    role = _session_role()
+    if role not in ("admin", "host"):
+        return jsonify(
+            ok=False,
+            error="Der ZIP-Download ist dem Gastgeber vorbehalten. "
+                  "Einzelne Bilder kannst du direkt über das Foto speichern.",
+        ), 403
+
+    # Und auch fuer den Gastgeber erst nach der Feier: waehrend das Event
+    # laeuft, wuerde derselbe Download denselben Hotspot lahmlegen, an dem
+    # gerade dreissig Gaeste haengen. "Neues Event" im Admin-Panel
+    # (/api/admin/event/new) beendet die laufende Session und gibt den
+    # Download frei; wer die Originale sofort braucht, nimmt den USB-Weg
+    # (scripts/usb_export.py) und geht damit gar nicht erst uebers WLAN.
+    #
+    # Danach kommt der Gastgeber selbst an sein ZIP, ohne dass der Besitzer
+    # etwas verschicken muss: `_visible_event_folders` haelt sein Event fuer
+    # ihn offen, solange seine Gastgeber-PIN gilt (events.host_events).
+    if event_filter == events.current_event_folder(config.cfg):
+        return jsonify(
+            ok=False,
+            error="Solange die Feier läuft, gibt es kein Gesamt-ZIP — das "
+                  "würde das WLAN für alle Gäste blockieren. Nach dem Event "
+                  "(oder per „Neues Event“ im Admin-Panel) ist es freigegeben.",
+        ), 409
+
+    # Ohne kind-Parameter bleibt es beim kompletten Event — der Gastgeber, der
+    # "ZIP" drueckt, will die Bilder, nicht die Auswahl von irgendwem.
     # Erst ein aktiver Galerie-Filter schickt kind mit.
     kind = (request.args.get("kind") or "").strip().lower() or None
     keep = _kind_predicate(kind) if kind else (lambda _k: True)
@@ -1165,9 +1287,12 @@ def api_events():
     active = events.current_event_folder(config.cfg)
     all_events = events.list_events(config.cfg)
     # Gaeste bekommen die Event-Auswahl gar nicht erst zu sehen — sonst stuende
-    # in der Galerie eine Liste fremder Feiern, auch wenn die Fotos gesperrt sind.
-    visible = (all_events if _may_see_all_events()
-               else [e for e in all_events if e.get("folder") == active])
+    # in der Galerie eine Liste fremder Feiern, auch wenn die Fotos gesperrt
+    # sind. Der Gastgeber sieht zusaetzlich seine eigenen vergangenen Events,
+    # damit er nach der Feier selbst an sein ZIP kommt.
+    allowed = _visible_event_folders()
+    visible = (all_events if allowed is None
+               else [e for e in all_events if e.get("folder") in allowed])
     return jsonify({
         "active":             active,
         "events":             visible,
@@ -1606,7 +1731,15 @@ def api_admin_config():
                     ok=False,
                     error=f"PIN muss {config.PIN_MIN_LEN}–{config.PIN_MAX_LEN} "
                           "Zeichen lang sein"), 400
+            changed = config.cfg.get(pin_key) != new_pin
             config.cfg[pin_key] = new_pin
+            # Neue Gastgeber-PIN = neuer Mieter: das laufende Event gehoert ab
+            # jetzt ihm. Sonst haengt die Zuordnung an der Reihenfolge bei der
+            # Uebergabe (erst "Neues Event", dann PIN aendern — oder umgekehrt),
+            # und im falschen Fall saehe der vorige Mieter die Feier des
+            # naechsten. Siehe events.reclaim_active_for_host.
+            if pin_key == "host_pin" and changed:
+                events.reclaim_active_for_host(config.cfg)
 
     # Druckeinstellungen: admin-only. Der Drucker gehoert dem Box-Besitzer,
     # ein Mieter soll ihn nicht umstellen koennen.
