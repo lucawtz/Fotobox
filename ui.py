@@ -755,8 +755,7 @@ class UI:
         # Theme-Wechsel.
         payload = self._qr_payload()
         if payload != self._qr_payload_seen or theme_changed:
-            logger.info("Live-Reload: QR neu erzeugt (%s)",
-                        self._qr_log_safe(payload))
+            logger.info("Live-Reload: QR neu erzeugt (%s)", payload)
             self._qr_surf         = self._make_qr(
                 payload, size=self.QR_SIZE, border=0, **self._qr_colors())
             self._qr_payload_seen = payload
@@ -2592,33 +2591,13 @@ class UI:
         return (245, 245, 245)
 
     def _qr_payload(self) -> str:
-        """Inhalt des Sidebar-Codes — der WLAN-Zugang, siehe config.py.
+        """Inhalt des Sidebar-Codes: der Galerie-Link.
 
         Eigene Methode, weil Layout, Cache und Live-Reload alle danach
-        fragen.
+        fragen — und weil hier einmal mehr stand als ein Dict-Zugriff
+        (siehe den Kommentar in config.py zum ausgebauten WLAN-Payload).
         """
-        return config.box_qr_payload(self._cfg)
-
-    @staticmethod
-    def _qr_log_safe(payload: str) -> str:
-        """Wie ein Code-Inhalt in einer Logzeile erscheinen darf.
-
-        Der WIFI:-Payload traegt das WLAN-Passwort. Auf dem Boxschirm steht
-        es ohnehin gross, im Journal hat es trotzdem nichts verloren — Logs
-        werden weitergereicht, der Bildschirm nicht. Ausserdem liest sich
-        der maskierte Payload in einer Logzeile grauenhaft.
-
-        Hier statt beim Aufrufer, damit kein Pfad daran vorbeikommt:
-        _make_qr loggt an drei Stellen.
-        """
-        if not payload.startswith("WIFI:"):
-            return payload
-        # Reihenfolge im Payload ist T, S, P — hinter der SSID kommt kein
-        # zweites S mehr, das Passwort kann also nicht durchrutschen.
-        for field in payload[len("WIFI:"):].split(";"):
-            if field.startswith("S:") and len(field) > 2:
-                return f"WLAN '{field[2:]}'"
-        return "WLAN-Zugang"
+        return self._cfg.get("gallery_url", "")
 
     def _qr_colors(self) -> dict:
         """Theme-Farben für den Galerie-QR: Module im Sidebar-Ton, Grund in
@@ -2749,19 +2728,26 @@ class UI:
         self._draw_social_links(cx, hint_y + hint.get_height() + 16)
 
     def _qr_caption(self) -> str:
-        """Beschriftung unter dem Code — sie darf nichts versprechen, was
-        das Handy nicht einloest.
+        """Beschriftung unter dem Code — zugleich die Anleitung.
 
-        Mit WLAN-Payload macht der Scan den Beitritt; die Galerie schiebt
-        danach das Captive-Portal hinterher. Das ist der Normalfall, haengt
-        aber am Portal — deshalb steht hier der Schritt, den der Code
-        sicher leistet, und nicht das, was danach hoffentlich kommt.
+        Der Code traegt den Galerie-Link. Wer ihn scannt, ohne im WLAN zu
+        sein, bekommt eine Fehlerseite von Safari und keinen Hinweis, was
+        fehlt — deshalb steht die Reihenfolge hier, und zwar bevor er
+        scannt. Die Zeile zeigt nach unten auf die WLAN-Box, wo SSID und
+        Passwort stehen.
 
-        Ohne eigenen Hotspot traegt der Code den Galerie-Link und fuehrt
-        tatsaechlich allein zu den Fotos.
+        Eine Zeile, keine zwei: in der Sidebar sind 503 px verfuegbar und
+        503 px gebraucht (_qr_group_bounds). Was hier dazukommt, nimmt der
+        Instagram-Code seine 130 px — das ist heute schon zweimal
+        passiert. Die ausfuehrliche Fassung steht auf dem Ergebnis-Schirm,
+        der Platz hat (_wifi_hint).
+
+        Ohne eigenen Hotspot haengt die Box in einem fremden Netz, in dem
+        der Gast ohnehin schon steckt. Dann waere die Reihenfolge eine
+        Belehrung ohne Anlass.
         """
-        if self._qr_payload().startswith("WIFI:"):
-            return "Scannen: WLAN verbinden"
+        if self._cfg.get("hotspot_enabled", True):
+            return "Erst WLAN, dann scannen"
         return "Fotos auf's Handy"
 
     def _social_rows(self) -> list:
@@ -3317,10 +3303,9 @@ class UI:
         setzen, und ein hübscher, aber unscannbarer Code wäre am
         Eventabend teurer als ein hässlicher.
         """
-        shown = UI._qr_log_safe(url)
         if not url:
-            logger.warning("QR-Code: leerer Inhalt — weder WLAN-Daten noch "
-                           "gallery_url in der config?")
+            logger.warning("QR-Code: keine Adresse — gallery_url leer in "
+                           "der config?")
             return None
         try:
             import qrcode
@@ -3366,7 +3351,7 @@ class UI:
                     "QR-Code für %s: nur %d px je Modul (%d Module auf "
                     "%d px) — kürzerer Inhalt oder grössere Kachel machen "
                     "das Muster gröber und damit besser scannbar",
-                    shown, scale, total, px)
+                    url, scale, total, px)
 
             img, styled = UI._qr_pil(qr, fg, bg, eye)
             # Runde Module leben von geglätteten Kanten, eckige von harten
@@ -3385,12 +3370,12 @@ class UI:
             if not UI._qr_readable(test):
                 logger.warning(
                     "QR-Code für %s ist bei %d px nicht decodierbar — "
-                    "QR-Card vergrössern oder Theme-Farben prüfen", shown, px)
+                    "QR-Card vergrössern oder Theme-Farben prüfen", url, px)
 
             surf = pygame.image.frombuffer(
                 img.tobytes("raw", "RGB"), (px, px), "RGB").copy()
             logger.info("QR-Code erstellt für %s (%d Module → %dx%d px, %s)",
-                        shown, total, px, px, "gestaltet" if styled else "eckig")
+                        url, total, px, px, "gestaltet" if styled else "eckig")
             return surf
         except ImportError as exc:
             logger.warning("qrcode/pillow fehlt: %s — QR deaktiviert", exc)

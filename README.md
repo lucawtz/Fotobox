@@ -330,41 +330,59 @@ Die Box selbst erreicht ihre Galerie **nicht** über den Namen: ihr Resolver
 hängt am Uplink, nicht am dnsmasq des Hotspots. `scripts/smoke_test.py` prüft
 deshalb über die IP und meldet den Namen nur zusätzlich.
 
-### Warum der Sidebar-Code das WLAN trägt
+### Warum die Codes zu den Fotos führen und nicht ins WLAN
 
-Die Box erzeugt zwei Codes, und sie haben verschiedene Aufgaben:
+Beide selbst erzeugten Codes der Box zeigen in die Galerie: der in der Sidebar
+auf `gallery_url`, der auf dem Ergebnis-Schirm auf das einzelne Foto. Das
+WLAN steht daneben als Text, zum Abtippen.
 
-| | trägt | Zweck |
-|---|---|---|
-| Sidebar | `WIFI:T:WPA;S:…;P:…;;` | rein ins Netz — die Galerie kommt danach vom Captive-Portal |
-| Ergebnis-Schirm | `…/photo/<event>/<datei>` | dein Bild im echten Browser, wo Speichern geht |
+Das war einmal anders, und der Umweg lohnt sich zu kennen. Der Sidebar-Code
+trug zeitweise die WLAN-Zugangsdaten als `WIFI:T:WPA;S:…;P:…;;`. Die Idee:
+ein Scan trägt das Handy ins Netz, und das Captive-Portal schiebt die Galerie
+unmittelbar hinterher — ein Scan statt „abtippen, verbinden, dann scannen".
 
-Der Grund für die Aufteilung ist eine Grenze, an der jeder Entwurf endet:
-**ein Link kann kein WLAN aufbauen**, und **ein WLAN-Code kann keine Seite
-öffnen**. Es braucht also beides, und die Frage ist nur, welcher Code wo
-steht.
+**Am Gerät ist das durchgefallen.** iOS tritt dem Netz zwar bei — der volle
+DHCP-Handshake steht im Log der Box —, blendet bei einem Netz ohne Internet
+aber weder das WLAN-Symbol ein noch öffnet es etwas, solange keine App das
+Netz anfasst. Für den Gast passiert nach dem Scan sichtbar **gar nichts**: er
+steht weiter in der Kamera-App und hat keinen Hinweis, wie es weitergeht.
 
-Der Einstieg gehört ans WLAN. Wer den Galerie-Link scannt, ohne verbunden zu
-sein, bekommt eine Fehlerseite von Safari — kein Hinweis, was fehlt, keine
-Möglichkeit weiterzukommen. Das ist der einzige Weg, der in einer Sackgasse
-endet. Der WLAN-Code dagegen führt immer irgendwohin: das Handy tritt bei,
-und das Portal schiebt die Galerie hinterher.
+**Und zwar zweimal.** Beim ersten Mal lag der Verdacht auf der
+Captive-Freigabe: sie galt drei Stunden, das Testgerät stand dauerhaft darauf,
+und die Box beantwortete jeden Verbindungstest mit „du bist online". Dieser
+Fehler war echt und ist behoben (`_CAPTIVE_RELEASE_TTL_S`, jetzt 15 Minuten) —
+das Anmeldefenster geht seitdem nachweislich von selbst auf. Der WLAN-Code
+wurde daraufhin zurückgeholt und **fiel trotzdem wieder durch**. Die Freigabe
+war also nicht die Ursache, sondern nur ein zweiter Fehler auf demselben Weg.
 
-#### Der Irrweg, den es zu kennen lohnt
+Wer es ein drittes Mal versuchen will, sollte vorher wissen: der Beitritt
+funktioniert, das Portal funktioniert, gemessen ist beides. Was fehlt, ist der
+Moment dazwischen — iOS zeigt dem Gast nicht, dass etwas passiert ist, und
+lässt ihn in der Kamera-App stehen. Dagegen hilft kein Code.
 
-Genau dieser WLAN-Code war zwischenzeitlich ausgebaut, weil am Gerät nach dem
-Beitritt sichtbar nichts passierte. **Die Ursache war nicht der Code, sondern
-die Captive-Freigabe** (`_CAPTIVE_RELEASE_TTL_S`): sie galt drei Stunden, das
-Testgerät stand seit dem ersten „In Safari öffnen" dauerhaft darauf, und die
-Box beantwortete jeden Verbindungstest mit „du bist online". Also kein Portal,
-kein WLAN-Symbol, nichts. Im Log stand die Freigabe für dasselbe Gerät über
-zwei Tage hinweg siebenmal — jeder Durchlauf verlängerte sie.
+Die Rechnung dahinter ist einfach:
 
-Seit die Freigabe 15 Minuten gilt, geht das Anmeldefenster wieder von selbst
-auf. Wer den WLAN-Code ein weiteres Mal ausbauen will, sollte vorher im
-Zugriffslog nachsehen, ob die Probe wirklich einen `302` bekommt — ein `200`
-heisst, das Gerät steht auf der Freigabeliste, und dann ist wieder die
-Freigabe schuld und nicht der Code.
+* **Verbinden kann jeder.** SSID und Passwort stehen gross auf dem
+  Boxschirm, das kennt jeder aus jedem Café.
+* **Eine Adresse erraten kann niemand.** Wer das Anmeldefenster geschlossen
+  hat, steht ohne URL-Zeile, ohne Lesezeichen und ohne Verlauf da — das
+  Fenster ist ein abgespeckter WebView. „Wo finde ich das jetzt wieder?"
+
+Ein QR-Code ist die einzige Antwort auf die zweite Frage, die auch für Gäste
+funktioniert, die keine Adressen tippen wollen. Deshalb gehört er dorthin und
+nicht auf ein Problem, das keines war.
+
+Damit niemand in die eine Sackgasse läuft, die dieser Code hat — scannen, ohne
+im WLAN zu sein —, steht die Reihenfolge als Beschriftung darunter: **„Erst
+WLAN, dann scannen"** (`ui.py: _qr_caption`). Sie zeigt auf die WLAN-Box
+direkt darunter, wo SSID und Passwort stehen. Bewusst eine Zeile und nicht
+zwei: in der Sidebar sind 503 px verfügbar und 503 px gebraucht, jede weitere
+Zeile nimmt dem Instagram-Code seine 130 px. Die ausführliche Fassung steht
+auf dem Ergebnis-Schirm, der Platz hat (`_wifi_hint`).
+
+Dazu kommt ein Nebeneffekt, der den Ausschlag gibt: **ein mit der Kamera
+gescannter Code öffnet sich immer im echten Browser**, nie im
+Anmeldefenster — und nur dort kann der Gast ein Bild sichern.
 
 ### Der Code neben dem Foto
 
