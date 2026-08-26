@@ -196,22 +196,32 @@ _DEFAULTS: dict = {
     # Der Platz, den die Live-Vorschau hoechstens einnehmen darf — nicht
     # ihre Groesse: ui._live_geometry legt das Kamerabild
     # seitenverhaeltnistreu hinein und zieht den Rahmen um das Ergebnis.
-    # Die Zahlen sind der freie Bereich des Homescreens, ausgemessen gegen
-    # seine Nachbarn und beidseitig um gut 10 px Luft eingerueckt:
+    #
+    # Nachbarn, gegen die gemessen wurde:
     #
     #   links   Sidebar bis x=320          rechts  Action-Buttons ab x=1530
-    #   oben    Polaroids bis y=485        unten   Status-Bar ab y=1042
+    #   oben    Polaroids bis y=485        unten   Status-Leiste ab y=1042
     #
-    # (Polaroid-Unterkante inklusive Drehung und Schattenversatz, Status-Bar
-    # aus der Schrifthoehe — beides in ui.py, nicht frei waehlbar.)
-    # LIVE_OUTER_W=12 fuer den Rahmen ist in der Luft schon eingerechnet.
-    # Die Hoehe ist der bindende Wert, und sie ist bewusst NICHT bis an die
-    # Nachbarn aufgezogen: der Streifen gibt 533 px her, genommen sind 450.
-    # Ein 16:9-Signal wird damit 800x450 gross und behaelt oben wie unten
-    # gut 40 px Luft. Randvoll sah es gedraengt aus, obwohl nichts kollidiert
-    # — die Luft ist hier Absicht, kein uebrig gebliebener Platz.
-    # Die Breite bleibt Reserve fuer breitere Formate.
-    "live_view_rect": [345, 539, 1160, 450],
+    # Die Polaroid-Unterkante ist gerechnet, nicht geschaetzt: 346x373 px,
+    # um bis zu 12 Grad gedreht, ergibt eine 437 px hohe Huellbox um den
+    # Mittelpunkt bei y=257 — plus Schatten also rund 485. Die Status-Leiste
+    # steht in _status_bar_height und haengt an der Schrifthoehe.
+    #
+    # Es bleiben 557 px. Der Rahmen (LIVE_OUTER_W=12) liegt AUSSERHALB des
+    # Bildrechtecks und kostet 24 davon. Bei 3:2 bindet immer die Hoehe:
+    #
+    #   Hoehe 493  ->  Bild 739x493, Rahmen aussen 763x517
+    #   davon Luft oben und unten je 20 px
+    #
+    # Frueher standen hier 450 px Hoehe mit je 41 px Luft — bewusst nicht
+    # ausgereizt, weil randvoll gedraengt aussah. Das galt aber fuer ein
+    # 16:9-Fenster, das die Breite ohnehin besser fuellte. Seit die Vorschau
+    # das Fotoformat zeigt (live_view_aspect 3:2), ist die Hoehe der einzige
+    # Hebel: 675x450 wurden so zu 739x493, ein Fuenftel mehr Flaeche.
+    #
+    # Die Breite bleibt Reserve fuer breitere Formate — bei 3:2 wird sie nie
+    # gebraucht, das Bild sitzt mittig darin.
+    "live_view_rect": [335, 517, 1180, 493],
     # Format, auf das die Live-Vorschau zugeschnitten wird — NICHT das Format
     # des Fotos, das bleibt, was die Kamera aufnimmt.
     #

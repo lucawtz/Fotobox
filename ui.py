@@ -538,15 +538,86 @@ class UI:
                 "skaliert selbst hoch, Schrift wirkt dadurch weicher als auf "
                 "einem echten %dx%d-Schirm", *sizes[0], W, H, W, H)
 
+    # Wie lange beim Kaltstart auf eine nutzbare Desktop-Sitzung gewartet
+    # wird, bevor die UI aufgibt.
+    #
+    # Die Unit haengt an graphical.target. Das Target gilt als erreicht,
+    # sobald der Display-Manager gestartet wurde — nicht, wenn die
+    # Autologin-Sitzung steht. Beim Stromstecker-Test ist der Wayland-Socket
+    # (/run/user/<uid>/wayland-0) bzw. /tmp/.X11-unix/X0 deshalb regelmaessig
+    # erst Sekunden spaeter da. Vorher gab _open_display sofort auf, main.py
+    # endete mit 1, und nach fuenf solchen Versuchen in fuenf Minuten
+    # (StartLimitBurst in fotobox.service) blieb der Service endgueltig
+    # stehen: schwarzer Schirm, bis jemand per SSH nachhilft — genau das,
+    # was nach dem Einstecken niemand tun soll.
+    #
+    # Bewusst hier drin gewartet statt systemd oefter neu starten zu lassen:
+    # main.py baut Hotspot und Galerie VOR der UI auf, ein Neustart alle
+    # funf Sekunden risse den AP jedes Mal wieder ab.
+    DISPLAY_WAIT_S = 90.0
+    DISPLAY_RETRY_S = 2.0
+
     @staticmethod
-    def _open_display():
+    def _open_display(should_abort=None):
         """Oeffnet das Vollbild — ueber Wayland oder X11, je nachdem was laeuft.
 
         Frueher stand hier ein blankes set_mode(), abhaengig vom fest in
         fotobox.service gesetzten DISPLAY=:0. Auf einem Bookworm mit
         Wayland-Compositor und ohne XWayland blieb der Schirm damit schwarz.
         Jetzt liefert display_env.prepare() eine Treiber-Reihenfolge, die
-        hier der Reihe nach durchprobiert wird.
+        hier der Reihe nach durchprobiert wird — und das so lange erneut, bis
+        die Desktop-Sitzung steht (siehe DISPLAY_WAIT_S).
+
+        `should_abort` bricht das Warten vorzeitig ab; main.py haengt dort
+        sein SIGTERM-Flag ein, damit ein 'systemctl stop' waehrend des
+        Wartens nicht in den Hard-Kill laeuft.
+        """
+        # Ein von aussen gesetzter Treiber (Tests, scripts/preview_layouts.py)
+        # gewinnt und wird nicht wiederholt: der ist entweder da oder falsch,
+        # Warten aendert daran nichts.
+        forced = os.environ.get("SDL_VIDEODRIVER")
+        deadline = time.monotonic() + (0.0 if forced else UI.DISPLAY_WAIT_S)
+        waited_since = None
+
+        while True:
+            screen, drivers, last_exc = UI._open_display_once(
+                verbose=waited_since is None)
+            if screen is not None:
+                if waited_since is not None:
+                    logger.info("Display: Sitzung nach %.0f s da",
+                                time.monotonic() - waited_since)
+                return screen
+            if time.monotonic() >= deadline or (should_abort and should_abort()):
+                break
+            if waited_since is None:
+                waited_since = time.monotonic()
+                logger.info(
+                    "Display: noch keine Sitzung (%s) — bis zu %.0f s warten, "
+                    "die Autologin-Sitzung kommt beim Kaltstart spaeter als "
+                    "graphical.target", last_exc, UI.DISPLAY_WAIT_S)
+            time.sleep(UI.DISPLAY_RETRY_S)
+            # Zuruecksetzen, sonst haelt display_env.detect den zuletzt
+            # probierten Treiber fuer eine bewusste Vorgabe ("erzwungen") und
+            # sieht einen inzwischen aufgetauchten Wayland-Socket nie.
+            if forced is None:
+                os.environ.pop("SDL_VIDEODRIVER", None)
+            else:
+                os.environ["SDL_VIDEODRIVER"] = forced
+
+        raise RuntimeError(
+            f"Kein nutzbarer SDL-Videotreiber (probiert: {', '.join(drivers)}). "
+            f"Letzter Fehler: {last_exc}"
+        )
+
+    @staticmethod
+    def _open_display_once(verbose: bool = True):
+        """Ein Durchlauf durch die vorgeschlagene Treiber-Reihenfolge.
+
+        Rueckgabe: (screen oder None, probierte Treiber, letzter Fehler).
+
+        `verbose=False` ab dem zweiten Versuch: sonst stuenden waehrend des
+        Wartens zwei Warnungen alle zwei Sekunden im Log, und die eine Zeile,
+        auf die es ankommt, ginge darin unter.
         """
         drivers = display_env.prepare()
         last_exc = None
@@ -567,20 +638,18 @@ class UI:
                 logger.info("Display: SDL-Treiber '%s' aktiv (%dx%d%s)",
                             driver, W, H,
                             ", skaliert" if flags & pygame.SCALED else "")
-                return screen
+                return screen, drivers, None
             except pygame.error as exc:
-                logger.warning("Display: Treiber '%s' scheitert (%s)", driver, exc)
+                (logger.warning if verbose else logger.debug)(
+                    "Display: Treiber '%s' scheitert (%s)", driver, exc)
                 last_exc = exc
-        raise RuntimeError(
-            f"Kein nutzbarer SDL-Videotreiber (probiert: {', '.join(drivers)}). "
-            f"Letzter Fehler: {last_exc}"
-        )
+        return None, drivers, last_exc
 
-    def __init__(self, cfg: dict, capture_device: int):
+    def __init__(self, cfg: dict, capture_device: int, should_abort=None):
         self._cfg = cfg
 
         pygame.init()
-        self._screen = self._open_display()
+        self._screen = self._open_display(should_abort)
         pygame.display.set_caption("Fotobox")
         pygame.mouse.set_visible(False)
 
