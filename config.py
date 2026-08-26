@@ -215,19 +215,20 @@ _DEFAULTS: dict = {
     # Format, auf das die Live-Vorschau zugeschnitten wird — NICHT das Format
     # des Fotos, das bleibt, was die Kamera aufnimmt.
     #
-    # Ohne Zuschnitt bestimmt die Quelle die Breite, und weil die Hoehe bindet,
-    # blieb von den 1160 px der Box viel ungenutzt: ein 3:2-Signal kam auf
-    # 675x450 und liess 485 px liegen. Mit 16:9 sind es 800x450.
+    # 3:2 heisst: gar kein Zuschnitt. Die Vorschau zeigt genau den Ausschnitt,
+    # der auch auf dem Foto landet — wer am Objektiv zoomt oder die Kamera
+    # schwenkt, sieht das Ergebnis eins zu eins. Das ist die Vorgabe.
     #
-    # Beschnitten wird nur die VORSCHAU, nie das Foto: der Gast sieht weniger,
-    # als die Kamera aufnimmt. Der Zuschnitt geht damit in die sichere
-    # Richtung — wer in die Vorschau passt, passt garantiert aufs Bild.
-    # Umgekehrt waere es fatal.
+    # Frueher stand hier 16:9, um die Breite des Vorschaufensters besser zu
+    # fuellen: bei 450 px Hoehe sind das 800 statt 675 px. Der Preis war, dass
+    # oben und unten etwas fehlte, was das Foto sehr wohl zeigt. Der damalige
+    # Kommentar nannte das "die sichere Richtung" — wer in die Vorschau passt,
+    # passt garantiert aufs Bild. Sicher ist das, ehrlich nicht: es beantwortet
+    # die Frage "wie wird mein Bild" mit einem anderen Bild.
     #
-    # Breiter geht, kostet aber Vorschauhoehe: bei 2:1 sind es 900x450 und
-    # ein Viertel der Bildhoehe. Bei Ganzkoerper-Aufnahmen sieht der Gast dann
-    # wenig von sich. null = kein Zuschnitt, die Quelle bestimmt das Format.
-    "live_view_aspect": [16, 9],
+    # Wer die Breite zurueck will, vergroessert live_view_rect in der Hoehe,
+    # statt hier zu schneiden — bei 533 px Hoehe sind es wieder 800 px Breite.
+    "live_view_aspect": [3, 2],
     # Was das Live-Signal GEOMETRISCH zeigt, nachdem die schwarzen Raender
     # weg sind — nicht, wie viele Pixel es hat.
     #

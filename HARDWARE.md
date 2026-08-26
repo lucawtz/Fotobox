@@ -143,41 +143,50 @@ nicht wirklich aus.
 | Compositor | **labwc** (Wayland), Session-Typ `tty` |
 | SDL-Treiber | `wayland` |
 
-### Auflösung — der Monitor kann kein Full HD
+### Auflösung
 
-Vom Kernel gemeldete Modi:
+`wlr-randr` meldet **1920×1080 @ 60 Hz** als bevorzugten und aktuellen Modus.
+Renderauflösung der Box und Panel stimmen also überein, es wird nichts
+skaliert.
 
+> **Korrektur (26.08.):** Hier stand zuerst, der Monitor könne höchstens
+> 1024×768, und daraus abgeleitet die Sorge, der Galerie-QR-Code lande
+> physisch bei rund 67 px. Beides war falsch. Die Zahl kam aus
+> `/sys/class/drm/card1-HDMI-A-1/modes`, das zu dem Zeitpunkt eine
+> Notfall-Modusliste auswarf — vermutlich weil die EDID beim Booten nicht
+> sauber gelesen wurde (`wlr-randr` nennt das Gerät „Invalid Vendor Codename
+> - RTK"). Ein Screenshot mit `grim` zeigt den QR-Code groß und scharf.
+>
+> Beim Startvorgang kann die Box denselben Fehleindruck bekommen — dann steht
+> im Log `1920x1080 ist kein nativer Modus … SCALED aktiv`. Sichtbaren
+> Schaden hat das nicht, weil SDL seitenverhältnistreu skaliert; falls der
+> Bildschirm doch einmal unscharf wirkt, ist diese Zeile die erste Adresse.
+
+Kontrolle:
+
+```bash
+XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 wlr-randr
+XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 grim /tmp/screen.png
 ```
-1024x768     ← Maximum
-800x600
-848x480
-640x480
-```
 
-Die Box rendert intern fest auf **1920×1080** (`ui.W, ui.H`) und lässt SDL
-herunterskalieren:
+### Anamorphes Live-Signal
 
-```
-Display: 1920x1080 ist kein nativer Modus (verfuegbar: [(1024, 768), …]) — SCALED aktiv
-Display: SDL-Treiber 'wayland' aktiv (1920x1080, skaliert)
-```
+Die Kamera gibt ihr Live-Bild über HDMI **gestreckt** aus. Nach dem
+Randschnitt misst der Inhalt 1771×890 (Seitenverhältnis 1,99), zeigt darin
+aber den 3:2-Sensor — alles ist rund ein Drittel zu breit.
 
-Das funktioniert, hat aber zwei Folgen:
+Gemessen über eine affine Schätzung (ORB + `estimateAffine2D`) zwischen einem
+Live-Frame und einem Foto derselben Szene: **sx/sy = 1,359**. Aus dem
+Randschnitt gerechnet 1,327.
 
-1. **Alles ist weicher als entworfen.** Schrift, QR-Codes und Live-Bild
-   verlieren beim Herunterrechnen auf 1024×768 mehr als die Hälfte der Pixel.
-2. **Das Seitenverhältnis passt nicht.** 1920×1080 ist 16:9, 1024×768 ist 4:3.
+Das Foto ist davon unberührt (5184×3456, exakt 3:2). Korrigiert wird in
+`ui._source_stretch` anhand von `live_source_aspect`; der Faktor wird je Frame
+aus dem Bild abgeleitet, nicht fest eingetragen.
 
-Die QR-Codes sind davon am stärksten betroffen: der Galerie-Code wird mit
-125×125 px gezeichnet und landet auf dem Panel bei rund 67×67 px. Ob er in
-dieser Größe noch zuverlässig scannt, ist **nicht geprüft** und gehört auf die
-Generalprobe.
-
-Die Dauer-Warnung *„Sidebar zu eng für 3 Codes"* hat damit **nichts** zu tun
-— das hatte ich zuerst vermutet und beim Nachlesen widerlegt. Sie rechnet in
-der logischen 1920×1080-Fläche gegen `SIDEBAR_W = 320` und meldet fehlende
-**Höhe** (`605 px gebraucht, 547 px verfügbar`). Der Buchungs-Code fällt
-deshalb auf Glyph und Text zurück, unabhängig davon, was der Monitor kann.
+Die Sichtfelder von Vorschau und Foto stimmen überein — die Messung zeigt nach
+Herausrechnen der Streckung nur 2,4 % Abweichung. Seit `live_view_aspect` auf
+3:2 steht, wird die Vorschau auch nicht mehr beschnitten: was auf dem
+Boxschirm zu sehen ist, landet auf dem Foto.
 
 ### Bildschirmschoner
 
@@ -330,7 +339,7 @@ bewiesen**: dafür müsste nach dem Umstecken über längere Zeit Ruhe sein.
 | Punkt | Schwere | Nachweis fehlt |
 |---|---|---|
 | Pi bei 79,8 °C, weiche Temperaturgrenze schon erreicht | hoch | Verhalten unter Event-Dauerlast |
-| Monitor kann nur 1024×768, Box rendert 1920×1080 | hoch | ob QR-Codes bei ~67 px noch scannen |
+| ~~Monitor kann nur 1024×768~~ — widerlegt, Panel läuft nativ auf 1920×1080 | — | erledigt |
 | `xset` gegen Bildschirmschoner unter Wayland | hoch | ob der Monitor über Stunden anbleibt |
 | Zwei USB-Ausfälle an einem Vormittag | mittel | ob Umstecken es behebt |
 | WLAN-Stick belegt einen Port ohne Funktion | niedrig | — |
