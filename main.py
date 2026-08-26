@@ -443,8 +443,14 @@ def main():
     show_hints = not btns.has_gpio
 
     # UI
+    #
+    # should_abort: die UI wartet beim Kaltstart bis zu UI.DISPLAY_WAIT_S auf
+    # die Autologin-Sitzung. Ein 'systemctl stop' waehrend dieses Wartens soll
+    # nicht erst in den Hard-Kill laufen — der SIGTERM-Handler oben setzt
+    # running=False, und das bricht das Warten ab.
     try:
-        ui = UI(cfg, cfg.get("capture_device", 0))
+        ui = UI(cfg, cfg.get("capture_device", 0),
+                should_abort=lambda: not running)
         ui.show_key_hints = show_hints
         ui.wired_buttons  = frozenset(
             n for n in Buttons.NAMES if btns.wired(n))

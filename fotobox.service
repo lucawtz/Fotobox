@@ -1,9 +1,22 @@
 [Unit]
 Description=Fotobox
-After=graphical.target network.target
+# NetworkManager.service steht mit dabei, weil network.target nur sagt, dass
+# die Netzwerk-Einrichtung begonnen hat — nicht, dass NM laeuft und wlan0
+# kennt. Ohne die Ordnung gewann beim Kaltstart manchmal die Fotobox das
+# Rennen und der Hotspot fiel aus. Bewusst KEIN network-online.target:
+# NetworkManager-wait-online wartet auf eine aktivierte Verbindung, und die
+# gibt es hier per Definition erst, wenn wir selbst den AP aufspannen — das
+# Target liefe in seinen Timeout und verzoegerte jeden Boot.
+After=graphical.target network.target NetworkManager.service
 Wants=graphical.target
-# Bremse gegen Restart-Endlosschleifen bei dauerhaften Fehlern (z.B. kein
-# Display): nach 5 Fehlstarts in 5 Minuten bleibt der Service stehen.
+# Bremse gegen schnelle Absturz-Schleifen: 5 Fehlstarts in 5 Minuten, dann
+# bleibt der Service stehen. Sie greift gegen einen Prozess, der sofort wieder
+# stirbt (5 s RestartSec => 5 Starts in 25 s), nicht mehr gegen "kein
+# Display": darauf wartet die UI seit UI.DISPLAY_WAIT_S bis zu 90 s im
+# Prozess, ein Durchlauf dauert damit ~95 s und in kein 300-s-Fenster passen
+# 5 davon. Genau so gewollt — kommt die Desktop-Sitzung spaeter doch noch,
+# faengt die Box sich von selbst, statt bis zum naechsten SSH-Login
+# schwarz zu bleiben.
 # Gehoert seit systemd 229 in [Unit], nicht in [Service].
 StartLimitIntervalSec=300
 StartLimitBurst=5

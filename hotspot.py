@@ -7,6 +7,7 @@ zu nutzen — dadurch ist DHCP, IP-Range und Frequenz vorhersagbar.
 import logging
 import subprocess
 import sys
+import time
 from typing import Optional
 
 import config
@@ -287,7 +288,6 @@ def _read_interface_ip(ifname: str, retries: int = 20,
     deshalb großzügig (Default: bis zu 10 Sekunden warten) bevor wir
     aufgeben.
     """
-    import time
     last_stdout = ""
     for _ in range(max(1, retries)):
         try:
@@ -310,6 +310,60 @@ def _read_interface_ip(ifname: str, retries: int = 20,
         "Hotspot: Interface %s hat nach %.1fs keine IPv4 — letzte 'ip addr' "
         "Ausgabe: %r", ifname, retries * delay_s, last_stdout.strip()[:200])
     return None
+
+
+# Wie lange start() beim Kaltstart darauf wartet, dass NetworkManager das
+# WLAN-Interface kennt.
+#
+# fotobox.service startet mit graphical.target. network.target sagt nur, dass
+# die Netzwerk-Einrichtung *begonnen* hat — ob NetworkManager wlan0 schon
+# registriert hat (Treiber geladen, rfkill frei), ist damit nicht gesagt.
+# Vorher hiess "nmcli device kennt wlan0 nicht" sofort: Hotspot faellt aus,
+# eine Warnzeile im Log, und niemand merkt es, bis der erste Gast den QR-Code
+# scannt. Wiederholt wird nichts — die Box laeuft dann den ganzen Abend ohne
+# WLAN, bis jemand den Service neu startet.
+INTERFACE_WAIT_S = 30.0
+INTERFACE_RETRY_S = 2.0
+
+
+def _connection_up(label: str, attempts: int = 3, delay_s: float = 1.0) -> bool:
+    """'nmcli connection up' auf die Hotspot-Connection, mit Wiederholung.
+
+    Zwei Faelle brauchen denselben Retry: nach einem schnellen down/up ist
+    NetworkManager kurz busy und lehnt den ersten Versuch ab, und beim
+    Kaltstart ist das WLAN-Geraet zwar registriert, aber noch nicht nutzbar
+    (Firmware laedt, rfkill). Beides ist nach ein, zwei Sekunden vorbei —
+    ohne Wiederholung bliebe der AP bis zum naechsten Service-Neustart aus.
+    """
+    for attempt in range(1, attempts + 1):
+        r = _nmcli(["connection", "up", CONN_NAME], timeout=20)
+        if r is not None and r.returncode == 0:
+            return True
+        logger.warning("%s Versuch %d/%d fehlgeschlagen: %s", label, attempt,
+                       attempts, (r.stderr if r else "no result").strip()[:200])
+        if attempt < attempts:
+            time.sleep(delay_s)
+    return False
+
+
+def _wait_for_interface(ifname: str, timeout_s: float = INTERFACE_WAIT_S,
+                        delay_s: float = INTERFACE_RETRY_S) -> bool:
+    """Wartet bis NetworkManager `ifname` als WLAN-Geraet fuehrt.
+
+    Der Normalfall kostet nichts: ist das Interface da, kehrt die Funktion
+    beim ersten Blick zurueck. Gewartet wird nur im Rennen gegen den Boot.
+    """
+    if _interface_exists(ifname):
+        return True
+    logger.info("Hotspot: NetworkManager kennt '%s' noch nicht — bis zu "
+                "%.0f s warten (Kaltstart)", ifname, timeout_s)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        time.sleep(delay_s)
+        if _interface_exists(ifname):
+            logger.info("Hotspot: '%s' ist da, Hotspot wird aufgebaut", ifname)
+            return True
+    return False
 
 
 def start() -> bool:
@@ -335,10 +389,11 @@ def start() -> bool:
         logger.warning("Hotspot '%s' wird OHNE Passwort aufgespannt — jeder "
                        "in Funkreichweite kommt in die Galerie", ssid)
 
-    if not _interface_exists(ifname):
-        logger.warning(
-            "Hotspot-Interface '%s' nicht gefunden — Hotspot wird nicht gestartet",
-            ifname)
+    if not _wait_for_interface(ifname):
+        logger.error(
+            "Hotspot-Interface '%s' auch nach %.0f s nicht gefunden — Hotspot "
+            "wird nicht gestartet. Verfuegbare Interfaces zeigt 'nmcli device'.",
+            ifname, INTERFACE_WAIT_S)
         return False
 
     _purge_self_ssid_clients(ssid)
@@ -355,10 +410,9 @@ def start() -> bool:
     # triggert einen down/up-Cycle. dnsmasq nutzt für diese Up-Phase die
     # captive.conf aus dem letzten Lauf (oder install.sh beim 1. Boot),
     # was praktisch immer schon die richtige IP enthält.
-    r = _nmcli(["connection", "up", CONN_NAME], timeout=20)
-    if r is None or r.returncode != 0:
-        err = (r.stderr if r else "no result").strip()[:200]
-        logger.warning("Hotspot-Up fehlgeschlagen (%s): %s", ifname, err)
+    if not _connection_up("Hotspot-Up"):
+        logger.error("Hotspot-Up auf %s endgueltig fehlgeschlagen — es gibt "
+                     "kein Gaeste-WLAN", ifname)
         return False
 
     # Echte IP aus dem Interface auslesen — kann sich von hotspot_ip
@@ -379,22 +433,7 @@ def start() -> bool:
             logger.info("Captive-DNS angepasst — Hotspot wird kurz neu "
                         "gestartet damit dnsmasq die neue IP einliest")
             _nmcli(["connection", "down", CONN_NAME], timeout=10)
-            # Up-Retry: NetworkManager kann nach einem schnellen down/up
-            # kurz busy sein und den ersten Versuch ablehnen. Wir geben
-            # bis zu 3 Versuche, sonst bleibt der Hotspot tot.
-            up_ok = False
-            import time
-            for attempt in range(3):
-                r = _nmcli(["connection", "up", CONN_NAME], timeout=20)
-                if r is not None and r.returncode == 0:
-                    up_ok = True
-                    break
-                logger.warning(
-                    "Hotspot-Reload Versuch %d/3 fehlgeschlagen: %s",
-                    attempt + 1, (r.stderr if r else "no result").strip()[:200])
-                if attempt < 2:
-                    time.sleep(1)
-            if not up_ok:
+            if not _connection_up("Hotspot-Reload"):
                 logger.error(
                     "Hotspot konnte nach Captive-DNS-Update NICHT neu "
                     "gestartet werden — manueller Eingriff: "
