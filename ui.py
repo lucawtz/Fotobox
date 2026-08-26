@@ -274,9 +274,11 @@ class _LiveReader:
     # Capture-Card nicht beirren.
     _MOTION_WINDOW = 9
 
-    def __init__(self, device: int, size=(1920, 1080)):
+    def __init__(self, device: int, size=(1920, 1080), fourcc="MJPG", fps=12):
         self._device = device
         self._size = tuple(size or ()) or None
+        self._fourcc = (fourcc or "").strip().upper() or None
+        self._fps = max(1, int(fps or self._TARGET_FPS))
         self._cap = self._open()
         if not self._cap.isOpened():
             raise RuntimeError(f"Capture-Device {device} nicht verfügbar")
@@ -310,6 +312,12 @@ class _LiveReader:
         """
         cap = cv2.VideoCapture(self._device)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        # FOURCC VOR der Aufloesung: cv2 handelt beides beim Setzen mit dem
+        # Geraet aus, und ein spaeterer Formatwechsel wirft die eben gesetzte
+        # Groesse wieder um.
+        if self._fourcc:
+            cap.set(cv2.CAP_PROP_FOURCC,
+                    cv2.VideoWriter_fourcc(*self._fourcc[:4].ljust(4)))
         if self._size:
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._size[0])
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._size[1])
@@ -324,8 +332,24 @@ class _LiveReader:
                                "%dx%d — bei schwarzem Live-Bild hier ansetzen",
                                got[0], got[1], self._size[0], self._size[1])
             else:
-                logger.info("Capture-Card auf %dx%d", got[0], got[1])
+                logger.info("Capture-Card auf %dx%d %s, %d fps",
+                            got[0], got[1], self._fourcc_name(cap), self._fps)
         return cap
+
+    @staticmethod
+    def _fourcc_name(cap) -> str:
+        """Das ausgehandelte Format als lesbares Kuerzel.
+
+        Wichtig im Log, weil die Karte das angeforderte Format ablehnen kann
+        und dann still auf ihren Standard zurueckfaellt — bei YUYV sind das
+        5 statt 30 moegliche Bilder pro Sekunde, und das sieht man dem
+        Live-Bild als Ruckeln an, ohne dass irgendwo ein Fehler steht.
+        """
+        try:
+            v = int(cap.get(cv2.CAP_PROP_FOURCC))
+        except Exception:
+            return "?"
+        return "".join(chr((v >> (8 * i)) & 0xFF) for i in range(4)).strip() or "?"
 
     def _try_reconnect(self):
         now = time.monotonic()
@@ -344,7 +368,7 @@ class _LiveReader:
             logger.debug("LiveReader: Reconnect-Versuch fehlgeschlagen")
 
     def _loop(self):
-        interval = 1.0 / self._TARGET_FPS
+        interval = 1.0 / self._fps
         while self._running:
             t0 = time.monotonic()
             try:
@@ -650,7 +674,10 @@ class UI:
         self._live: Optional[_LiveReader] = None
         try:
             self._live = _LiveReader(
-                capture_device, cfg.get("capture_size") or (1920, 1080))
+                capture_device,
+                cfg.get("capture_size") or (1920, 1080),
+                cfg.get("capture_fourcc", "MJPG"),
+                cfg.get("capture_fps", 12))
         except Exception as exc:
             logger.warning("Kein Live-Feed: %s", exc)
 

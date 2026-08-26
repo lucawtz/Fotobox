@@ -42,6 +42,10 @@ class FakeCap:
             return self._reports[prop]
         return self.props.get(prop, 0)
 
+    # _fourcc_name liest CAP_PROP_FOURCC zurueck; ohne gesetzten Wert kommt
+    # 0 heraus und das Kuerzel ist leer — genau der Fall "Karte hat das
+    # Format abgelehnt".
+
     def isOpened(self):
         return self._opened
 
@@ -144,3 +148,61 @@ def test_closed_device_still_raises(caps):
 
     with pytest.raises(RuntimeError):
         ui_mod._LiveReader(0, (1920, 1080))
+
+
+# ── Bildformat und Bildrate ───────────────────────────────────────────────────
+# Auf der Box gemessen: YUYV 5,0 fps bei 21 MB/s USB-Last, MJPG 30,0 fps bei
+# ~2 MB/s. Der Standard der Karte ist YUYV — ohne Anforderung laeuft das
+# Live-Bild also mit 5 Bildern pro Sekunde und saettigt dabei einen Bus, den
+# sich Kamera und Drucker teilen. Beide USB-Ausfaelle vom 26.08. passen dazu.
+
+def test_fourcc_is_requested(caps):
+    """Ohne diese Anforderung faellt die Karte auf YUYV zurueck."""
+    ui_mod._LiveReader(0, (1920, 1080), "MJPG", 12)
+
+    want = ui_mod.cv2.VideoWriter_fourcc(*"MJPG")
+    assert caps[0].props[ui_mod.cv2.CAP_PROP_FOURCC] == want
+
+
+def test_fourcc_is_set_before_the_resolution(caps):
+    """Reihenfolge zaehlt: ein spaeterer Formatwechsel wirft die Groesse um.
+
+    FakeCap.props ist ein dict und behaelt seit Python 3.7 die
+    Einfuegereihenfolge — damit laesst sich das hier ueberhaupt pruefen.
+    """
+    ui_mod._LiveReader(0, (1920, 1080), "MJPG", 12)
+
+    order = list(caps[0].props)
+    assert order.index(ui_mod.cv2.CAP_PROP_FOURCC) < \
+           order.index(ui_mod.cv2.CAP_PROP_FRAME_WIDTH)
+
+
+def test_empty_fourcc_means_no_request(caps):
+    """Leer in der Config heisst: nimm, was die Karte von sich aus liefert."""
+    ui_mod._LiveReader(0, (1920, 1080), "", 12)
+
+    assert ui_mod.cv2.CAP_PROP_FOURCC not in caps[0].props
+
+
+def test_frame_rate_comes_from_the_config(caps):
+    """Nicht "so schnell wie moeglich": jedes Bild kostet rund 18 ms CPU.
+
+    Der Pi laeuft ohne aktive Kuehlung bei knapp 80 Grad — die Bildrate ist
+    deshalb ein Regler und keine Konstante.
+    """
+    reader = ui_mod._LiveReader(0, (1920, 1080), "MJPG", 12)
+
+    assert reader._fps == 12
+    assert reader._fps != ui_mod._LiveReader._TARGET_FPS, \
+        "sonst pruefte der Test nur den alten Festwert"
+
+
+def test_reconnect_keeps_format_and_rate(caps):
+    """Nach einem USB-Reset ist das Geraet frisch — beides muss wieder hin."""
+    reader = ui_mod._LiveReader(0, (1920, 1080), "MJPG", 12)
+    reader._last_reconnect = -999
+    reader._try_reconnect()
+
+    want = ui_mod.cv2.VideoWriter_fourcc(*"MJPG")
+    assert caps[1].props[ui_mod.cv2.CAP_PROP_FOURCC] == want
+    assert reader._fps == 12

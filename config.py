@@ -134,6 +134,30 @@ _DEFAULTS: dict = {
     #
     # [0, 0] = nichts anfordern (was das Geraet eben liefert).
     "capture_size": [1920, 1080],
+    # Bildformat, das von der Capture-Card angefordert wird. Leer = das
+    # nehmen, was sie von sich aus liefert.
+    #
+    # Auf der MacroSilicon-Karte ist ihr Standard YUYV, also unkomprimiert:
+    # 1920x1080 mal 2 Byte sind gut 4 MB je Bild. Ueber USB 2.0 passen damit
+    # nur 5 Bilder pro Sekunde durch — und die belegen 21 MB/s auf einem Bus,
+    # den sich Kamera und Drucker teilen. Gemessen auf der Box:
+    #
+    #   YUYV   5,0 fps   15,6 % CPU   21 MB/s
+    #   MJPG  30,0 fps   54,7 % CPU   ~2 MB/s
+    #
+    # MJPG ist je Bild sogar billiger (18,2 ms gegen 31,2 ms CPU) — die 54,7 %
+    # kommen allein aus der sechsfachen Bildrate. Deshalb MJPG UND ein Deckel
+    # per capture_fps.
+    "capture_fourcc": "MJPG",
+    # Bildrate, mit der der LiveReader liest. Nicht "so schnell wie moeglich":
+    # jedes Bild kostet rund 18 ms CPU, und der Pi laeuft ohne aktive Kuehlung
+    # bei knapp 80 Grad.
+    #
+    # 12 ist mehr als das Doppelte der frueheren 5 fps und liegt bei rund 22 %
+    # CPU — zusammen mit dem abgeschalteten VNC-Server (19 %) unter dem
+    # Ausgangswert. Zum Ausrichten vor der Kamera reicht das mit Abstand; es
+    # ist ein Spiegel, kein Video. Mit aktiver Kuehlung sind 20 bis 30 drin.
+    "capture_fps": 12,
     "theme": {
         "bg_top":         "#D5BB99",
         "bg_bottom":      "#B89A75",
