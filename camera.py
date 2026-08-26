@@ -1,6 +1,7 @@
 import contextlib
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -196,18 +197,79 @@ class Camera:
         damit auf 'PC' statt auf 'TFT + PC' — das Live-Bild ging also nur
         ueber USB und nie auf HDMI, wo die Capture-Card haengt.
         """
+        return self._try_config(assignment, timeout, by_index)[0]
+
+    # Fehlertext von gphoto2, wenn ein anderer Prozess das USB-Geraet haelt.
+    _BUSY_MARKER = "could not claim"
+
+    def _try_config(self, assignment: str, timeout: int = 5,
+                    by_index: bool = False) -> tuple:
+        """Wie _set_config, gibt aber (ok, Fehlertext) zurueck.
+
+        Den Text braucht _init: "Could not claim the USB device" ist kein
+        Kamerafehler, sondern die Ansage, dass jemand anders das Geraet hat —
+        und darauf laesst sich etwas tun, statt es nur zu protokollieren.
+        """
         flag = "--set-config-index" if by_index else "--set-config"
         try:
             r = self._gphoto([flag, assignment], timeout=timeout)
         except Exception as exc:
             logger.debug("  → %s Exception: %s", assignment, exc)
-            return False
+            return False, str(exc)
         if r.returncode == 0:
             logger.info("  → %s OK", assignment)
-            return True
-        err = (r.stderr or "").strip()[:120] or "(kein Fehlertext)"
-        logger.info("  → %s fehlgeschlagen: %s", assignment, err)
-        return False
+            return True, ""
+        err = (r.stderr or "").strip()
+        logger.info("  → %s fehlgeschlagen: %s",
+                    assignment, err[:120] or "(kein Fehlertext)")
+        return False, err
+
+    @staticmethod
+    def _free_from_gvfs() -> bool:
+        """Haengt die Kamera aus dem Dateimanager aus. True, wenn etwas ging.
+
+        Auf einem Pi mit Desktop bietet gvfs eine angeschlossene Kamera als
+        Laufwerk an, und der Dateimanager haengt sie selbsttaetig ein
+        (gvfsd-gphoto2). Danach gehoert das USB-Geraet ihm: jeder
+        gphoto2-Aufruf scheitert mit "Could not claim the USB device".
+
+        Nach einem Kaltstart gewinnt der Desktop dieses Rennen regelmaessig —
+        die Kamera meldet sich am USB erst, wenn die Fotobox ihren Detect
+        laengst hinter sich hat. Startet die Box dagegen zuerst, haelt SIE
+        das Geraet und gvfs kommt nicht mehr dran. Genau daher kommt das
+        "mal geht sie, mal nicht" nach dem Einschalten.
+
+        Ausgehaengt wird ueber gio, nicht per kill: gvfsd-gphoto2 wird per
+        D-Bus nachgestartet und haette das Geraet gleich wieder.
+        """
+        try:
+            listing = subprocess.run(["gio", "mount", "-l"],
+                                     capture_output=True, text=True, timeout=10)
+        except Exception as exc:
+            logger.debug("gio mount -l: %s", exc)
+            return False
+
+        uris = list(dict.fromkeys(re.findall(r"gphoto2://\S+", listing.stdout)))
+        if not uris:
+            return False
+
+        freed = False
+        for uri in uris:
+            try:
+                r = subprocess.run(["gio", "mount", "-u", uri],
+                                   capture_output=True, text=True, timeout=10)
+            except Exception as exc:
+                logger.debug("gio mount -u %s: %s", uri, exc)
+                continue
+            if r.returncode == 0:
+                logger.warning("Kamera war als Laufwerk eingehaengt (%s) — "
+                               "ausgehaengt, damit gphoto2 sie bekommt", uri)
+                freed = True
+        if freed:
+            # gvfsd-gphoto2 gibt das Geraet nicht in derselben Millisekunde
+            # frei, in der gio zurueckkehrt.
+            time.sleep(1.0)
+        return freed
 
     # ── Init / Detect ──────────────────────────────────────────────────────────
 
@@ -228,7 +290,29 @@ class Camera:
 
         # Bildkontrolle aus: sonst blendet die Kamera nach jeder Aufnahme das
         # Foto ins Display und damit auch auf HDMI.
-        self._set_config("reviewtime=0", timeout=10)
+        #
+        # Das ist zugleich die Probe, ob wir das Geraet ueberhaupt bekommen.
+        # _detect() beantwortet das NICHT: --auto-detect listet die Kamera
+        # auch dann, wenn ein anderer Prozess sie haelt — es fragt den
+        # USB-Bus, nicht die Kamera. Frueher lief _init deshalb glatt durch,
+        # jeder set-config scheiterte mit "Could not claim the USB device",
+        # und am Ende stand trotzdem "Kamera bereit (Live-View aktiviert)".
+        # Auf dem Schirm hiess das: kein Live-Bild, kein Fehler, nichts.
+        ok, err = self._try_config("reviewtime=0", timeout=10)
+
+        if not ok and self._BUSY_MARKER in err.lower():
+            # Nicht die Kamera streikt, sondern der Desktop haelt sie.
+            if self._free_from_gvfs():
+                ok, err = self._try_config("reviewtime=0", timeout=10)
+
+        if not ok and self._BUSY_MARKER in err.lower():
+            self.available = False
+            self.error_message = ("Kamera von einem anderen Programm belegt – "
+                                  "bitte aus- und wieder einschalten")
+            _set_status(False, self.error_message)
+            logger.error("Kamera belegt und nicht freizubekommen: %s",
+                         err[:200] or "(kein Fehlertext)")
+            return
 
         # AF-Methode. Steht hier und nicht im Halter, weil sie — anders als
         # output — ueber das Prozessende hinaus in der Kamera stehen bleibt.
