@@ -42,6 +42,18 @@ def _setup_logging():
 logger = logging.getLogger(__name__)
 
 
+# Rueckgabewert fuer den bewusst herbeigefuehrten Ausstieg (Esc am Bildschirm
+# oder Fenster zu). Die systemd-Unit laesst die Box danach als EINZIGE Ausnahme
+# stehen — jeder andere Exit startet sie neu, siehe RestartPreventExitStatus
+# in fotobox.service.
+#
+# Der Grund: main.py endet auch dann mit 0, wenn die Display-Session
+# wegbricht. Mit dem frueheren Restart=on-failure blieb die Box danach tot
+# liegen, ohne dass es nach einem Fehler aussah. Am 26.08. zweimal passiert,
+# einmal ueber Nacht — neun Stunden Ausfall, die niemand bemerkt haette.
+EXIT_USER_QUIT = 42
+
+
 # ── Capture-Helfer ─────────────────────────────────────────────────────────────
 
 def _do_countdown(ui: UI, camera: Camera, cfg: dict,
@@ -296,6 +308,7 @@ def main():
     cfg = config.cfg
 
     running = True
+    user_quit = False
 
     def shutdown(signum=None, frame=None):
         nonlocal running
@@ -406,6 +419,11 @@ def main():
     try:
         while running:
             if ui.check_quit():
+                # Nur DIESER Weg gilt als gewollt. Ein Abbruch per SIGTERM
+                # (systemctl stop/restart) laeuft ueber running=False und
+                # endet mit 0 — da startet systemd ohnehin nicht neu, weil es
+                # ein angeordneter Stop ist.
+                user_quit = True
                 break
 
             now = time.monotonic()
@@ -578,6 +596,12 @@ def main():
         if cfg.get("hotspot_enabled"):
             hotspot.stop()
         logger.info("Fotobox beendet")
+
+    if user_quit:
+        # Nach dem Aufraeumen, nicht davor: sonst bliebe der Hotspot stehen
+        # und die Kamera in ihrer Sitzung.
+        logger.info("Beendet auf Wunsch (Esc) — systemd startet nicht neu")
+        sys.exit(EXIT_USER_QUIT)
 
 
 if __name__ == "__main__":

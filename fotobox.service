@@ -14,8 +14,21 @@ ExecStart=__PYTHON__ __INSTALL_DIR__/main.py
 # tot liegen lassen. StartLimit* verhindert die Endlosschleife, wenn der
 # Fehler dauerhaft ist (z.B. kein Display) — dann bleibt sie nach 5 Versuchen
 # in 5 Minuten stehen, statt die Logs vollzuschreiben.
-Restart=on-failure
+#
+# "always" und nicht "on-failure": main.py endet auch dann mit 0, wenn die
+# Display-Session wegbricht — fuer systemd sieht das aus wie ein geordnetes
+# Ende, und mit on-failure blieb die Box danach tot liegen. Am 26.08. zweimal
+# passiert, einmal ueber Nacht: neun Stunden Ausfall, ohne eine einzige
+# Fehlerzeile im Log.
+#
+# Ein "systemctl stop" loest trotz "always" keinen Neustart aus — einen
+# angeordneten Stop respektiert systemd.
+Restart=always
 RestartSec=5
+# Die einzige Ausnahme: Esc am Boxbildschirm (main.EXIT_USER_QUIT). Wer dort
+# bewusst beendet, will die Box aus haben und nicht funf Sekunden spaeter
+# wieder anlaufen sehen.
+RestartPreventExitStatus=42
 User=__USER__
 Group=__USER__
 Environment=DISPLAY=:0
