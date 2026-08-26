@@ -274,10 +274,10 @@ class _LiveReader:
     # Capture-Card nicht beirren.
     _MOTION_WINDOW = 9
 
-    def __init__(self, device: int):
+    def __init__(self, device: int, size=(1920, 1080)):
         self._device = device
-        self._cap = cv2.VideoCapture(device)
-        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self._size = tuple(size or ()) or None
+        self._cap = self._open()
         if not self._cap.isOpened():
             raise RuntimeError(f"Capture-Device {device} nicht verfügbar")
         self._frame = None
@@ -290,6 +290,43 @@ class _LiveReader:
         threading.Thread(target=self._loop, daemon=True).start()
         logger.info("LiveReader gestartet (device=%d)", device)
 
+    def _open(self):
+        """Oeffnet das Capture-Device MIT angeforderter Aufloesung.
+
+        Ohne die Anforderung nimmt cv2 den Standard des Geraets. Bei der
+        MacroSilicon-Karte ist das nach einer frischen USB-Anmeldung
+        640x480, und dort liefert sie ein praktisch schwarzes Bild — auf der
+        Box gemessen: mittlere Helligkeit 4 von 255, waehrend dieselbe Karte
+        bei angeforderten 1920x1080 ein sauberes Raumbild ausgibt.
+
+        Die UI verwirft schwarze Frames (siehe _fresh_live_frame) und zeigt
+        "Bitte Display an der Kamera einschalten". Genau so sah es nach jedem
+        Stromzyklus aus — wie ein Kamera-Problem, obwohl Kamera und
+        Live-View liefen. Bis zum naechsten Neu-Einstecken blieb das einmal
+        gesetzte Format am Geraet stehen; deshalb ging es dazwischen wieder.
+
+        Auch im Reconnect-Pfad benutzt: nach einem USB-Reset ist das Geraet
+        frisch angemeldet und faellt sonst wieder auf den Standard zurueck.
+        """
+        cap = cv2.VideoCapture(self._device)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if self._size:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._size[0])
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._size[1])
+        if cap.isOpened():
+            got = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                   int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+            if self._size and got != tuple(self._size):
+                # Kein Abbruch: ein anderes Format kann brauchbar sein. Aber
+                # es gehoert ins Log, weil es die erste Frage ist, wenn das
+                # Live-Bild schwarz bleibt.
+                logger.warning("Capture-Card liefert %dx%d statt angeforderter "
+                               "%dx%d — bei schwarzem Live-Bild hier ansetzen",
+                               got[0], got[1], self._size[0], self._size[1])
+            else:
+                logger.info("Capture-Card auf %dx%d", got[0], got[1])
+        return cap
+
     def _try_reconnect(self):
         now = time.monotonic()
         if now - self._last_reconnect < self._RECONNECT_INTERVAL_S:
@@ -299,8 +336,7 @@ class _LiveReader:
             self._cap.release()
         except Exception:
             pass
-        self._cap = cv2.VideoCapture(self._device)
-        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self._cap = self._open()
         if self._cap.isOpened():
             logger.info("LiveReader: Capture-Device wieder geöffnet")
             self._fail_count = 0
@@ -613,7 +649,8 @@ class UI:
         self._live_aspect: float = self._LIVE_FALLBACK_ASPECT
         self._live: Optional[_LiveReader] = None
         try:
-            self._live = _LiveReader(capture_device)
+            self._live = _LiveReader(
+                capture_device, cfg.get("capture_size") or (1920, 1080))
         except Exception as exc:
             logger.warning("Kein Live-Feed: %s", exc)
 

@@ -120,6 +120,20 @@ _DEFAULTS: dict = {
     # Veranstaltung. Nur der Admin sieht unabhaengig davon immer alles.
     "gallery_guests_see_all": False,
     "capture_device": 0,
+    # Aufloesung, die von der Capture-Card angefordert wird. NICHT optional:
+    # ohne Anforderung nimmt cv2 den Standard des Geraets, und der ist bei der
+    # MacroSilicon-Karte nach einer frischen USB-Anmeldung 640x480 — dort
+    # liefert sie ein praktisch schwarzes Bild (gemessen: mittlere Helligkeit
+    # 4 von 255, gegenueber einem sauberen Raumbild bei 1920x1080).
+    #
+    # Die UI verwirft schwarze Frames und zeigt "Bitte Display an der Kamera
+    # einschalten" — obwohl Kamera und Live-View laufen. Genau dieser Zustand
+    # trat nach jedem Stromzyklus auf: bis zum naechsten Neu-Einstecken blieb
+    # das Format auf dem Geraet stehen, deshalb sah es aus wie ein
+    # Kamera-Problem.
+    #
+    # [0, 0] = nichts anfordern (was das Geraet eben liefert).
+    "capture_size": [1920, 1080],
     "theme": {
         "bg_top":         "#D5BB99",
         "bg_bottom":      "#B89A75",
