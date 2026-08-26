@@ -653,6 +653,9 @@ class UI:
         self._SLIDE_FADE_MS = 800
 
         # Result-Screen Cache — gecappt, sonst Memory-Leak nach hunderten Fotos
+        # Fertig gezeichneter Homescreen-Hintergrund (alles ausser Live-Bild,
+        # Polaroids, Knoepfen und Status-Leiste). Siehe _static_layer.
+        self._static_surf: Optional[pygame.Surface] = None
         self._result_cache: dict = {}
         # Unterkante des zuletzt gezeichneten Ergebnis-Fotos — Timer und
         # Buttons haengen daran (_draw_result_buttons).
@@ -692,6 +695,9 @@ class UI:
         self._live_hold_at: float = 0.0
         self._live_wake_last: float = 0.0
         self._autowake_paused = False
+        # Laeuft gerade eine Aufnahmefolge? Verlaengert die Haltezeit des
+        # Standbilds — siehe hold_live_frame_longer.
+        self._live_hold_extended = False
 
         # Crop-Cache: Letterbox-Ränder ändern sich praktisch nie, deshalb
         # nur alle CROP_REFRESH_S neu vermessen statt auf jedem Frame.
@@ -785,6 +791,7 @@ class UI:
             self._cfg_mtime = cfg_mt
             if config.reload_persisted(self._cfg):
                 logger.info("Live-Reload: config.json neu eingelesen")
+                self._static_surf = None
 
         # Logo — Path und/oder mtime können sich ändern (Upload überschreibt
         # die gleiche Datei, daher reicht Path-Vergleich allein nicht).
@@ -799,6 +806,7 @@ class UI:
             )
             self._logo_path_seen = logo_path
             self._logo_mtime     = logo_mt
+            self._static_surf = None
 
         # Instagram-QR — gleiches Spiel wie beim Logo: der Owner kann die
         # Datei austauschen, ohne den Pfad zu ändern.
@@ -811,6 +819,7 @@ class UI:
                                                           "Instagram-QR")
             self._insta_qr_seen   = insta_path
             self._insta_qr_mtime  = insta_mt
+            self._static_surf = None
 
         # Buchungs-QR — identisch, nur ein anderer Pfad.
         book_path = self._cfg.get("booking_qr_path", "")
@@ -822,12 +831,17 @@ class UI:
                                                             "Buchungs-QR")
             self._booking_qr_seen   = book_path
             self._booking_qr_mtime  = book_mt
+            self._static_surf = None
 
         # Theme — bei Änderung Hintergrund-Gradient + Theme-Farben neu bauen.
         theme_now     = dict(self._cfg.get("theme") or {})
         theme_changed = theme_now != self._theme_seen
         if theme_changed:
             logger.info("Live-Reload: Theme geändert")
+            # _apply_theme verwirft die Standebene ohnehin. Hier steht es
+            # trotzdem, damit die Regel ohne Fernwirkung gilt: jeder Zweig,
+            # der etwas aendert, verwirft sie selbst.
+            self._static_surf = None
             self._apply_theme(self._cfg)
             self._theme_seen = theme_now
 
@@ -841,18 +855,58 @@ class UI:
             self._qr_surf         = self._make_qr(
                 payload, size=self.QR_SIZE, border=0, **self._qr_colors())
             self._qr_payload_seen = payload
+            self._static_surf = None
 
     # ── Homescreen ─────────────────────────────────────────────────────────────
+
+    # Was auf dem Homescreen zwischen zwei Bildern gleich bleibt. Wird einmal
+    # gezeichnet und danach nur noch geblittet — siehe _static_layer.
+    _STATIC_PARTS = ("_draw_sidebar_bg", "_draw_logo_sidebar",
+                     "_draw_event_header", "_draw_qr_card", "_draw_wifi_box")
+
+    def _static_layer(self) -> pygame.Surface:
+        """Hintergrund, Sidebar, Logo, Header, QR-Karten und WLAN-Box.
+
+        Das alles wurde frueher bei JEDEM Bild neu gezeichnet, obwohl sich
+        nichts davon zwischen zwei Bildern aendert: Verlauf blitten, Schrift
+        rendern, QR-Karten setzen, Kacheln zeichnen. Ein Homescreen-Render
+        kostete damit rund 68 ms — bei 15 Bildern je Sekunde mehr als ein
+        ganzer Kern, auf einem Pi, der ohne aktive Kuehlung bei 80 Grad laeuft.
+
+        Jetzt entsteht das Bild einmal und wird danach mit einem einzigen
+        Blit aufgetragen. Neu gebaut wird es nur, wenn _check_config_reload
+        etwas geaendert hat (Logo, QR-Dateien, Theme, config.json) oder
+        _apply_theme die Farben ausgetauscht hat — beide setzen
+        _static_surf auf None.
+
+        Gezeichnet wird ueber einen kurzzeitigen Tausch von self._screen:
+        die _draw_*-Methoden schreiben alle dorthin, und sie dafuer
+        umzubauen waere ein groesserer Eingriff in gut ein Dutzend Stellen
+        als dieser eine Tausch.
+        """
+        if self._static_surf is not None:
+            return self._static_surf
+
+        surf = pygame.Surface((W, H))
+        surf.blit(self._bg, (0, 0))
+        real, self._screen = self._screen, surf
+        try:
+            for name in self._STATIC_PARTS:
+                getattr(self, name)()
+        finally:
+            self._screen = real
+
+        self._static_surf = surf
+        return surf
 
     def render_homescreen(self, camera_ok: bool, camera_msg: str,
                           free_mb: int, photo_count: int):
         self._check_config_reload()
-        self._screen.blit(self._bg, (0, 0))
-        self._draw_sidebar_bg()
-        self._draw_logo_sidebar()
-        self._draw_event_header()
-        self._draw_qr_card()
-        self._draw_wifi_box()
+        # Erst der Blit der Standebene, dann nur noch das, was sich wirklich
+        # aendert: das Live-Bild, die Polaroids (blenden nach einer Aufnahme
+        # 1,5 s lang ein), die Knoepfe (zeigen den gedrueckten Zustand) und
+        # die Status-Leiste (Zahlen und Ausblenden).
+        self._screen.blit(self._static_layer(), (0, 0))
         self._draw_live_view()
         self._draw_polaroids()
         self._draw_action_buttons()
@@ -914,6 +968,19 @@ class UI:
         spaeter nochmal von vorn.
         """
         self._autowake_paused = paused
+
+    def hold_live_frame_longer(self, active: bool) -> None:
+        """Waehrend einer Aufnahmefolge das Standbild nicht ablaufen lassen.
+
+        Gesetzt von main._capture_sequence, fuer genau die Dauer der Folge —
+        und im finally derselben Funktion wieder zurueckgenommen. Ein
+        gehaltenes Bild darf die Folge nicht ueberleben.
+
+        Warum ueberhaupt: die normale Haltezeit ist gegen ein einzelnes Foto
+        gerechnet und reicht nicht ueber vier. Die Herleitung der laengeren
+        steht bei _LIVE_HOLD_CAPTURE_S.
+        """
+        self._live_hold_extended = active
 
     def _note_live_signal(self, ok: bool) -> None:
         """Bucht das Ergebnis eines Frame-Versuchs und weckt notfalls.
@@ -1042,6 +1109,30 @@ class UI:
     # waere es eine Luege: ein eingefrorenes Bild sieht aus wie ein lebendes.
     _LIVE_HOLD_S = 8.0
 
+    # Waehrend einer Aufnahmefolge gilt eine andere Zahl. Die 8 s sind gegen
+    # EIN Foto gerechnet; eine Collage sind vier, und zwischen ihnen liegt
+    # jedes Mal dieselbe Luecke. Kam das Live-Bild nach einem Shot nicht
+    # zurueck, lief die Haltezeit ab, waehrend der naechste Countdown schon
+    # zaehlte — und der Gast sah ihn auf schwarzem Grund.
+    #
+    # 45 s decken eine ganze Collage ab, deren Live-Bild gar nicht mehr
+    # wiederkommt: drei verbleibende Shots zu je gut zwoelf Sekunden
+    # (Countdown, Aufnahme, zwei Anlaeufe auf das Bild) plus das
+    # Zusammenrechnen am Ende. Mit dem Ende der Folge faellt sie weg, das
+    # gehaltene Bild ist dann sofort ueberfaellig und die Meldung kommt.
+    #
+    # Ja, ein 30 s altes Standbild behauptet etwas, das nicht mehr stimmt —
+    # der Einwand bei _LIVE_HOLD_S gilt weiter. In genau diesem Fenster ist
+    # die Alternative aber kein ehrlicheres Bild, sondern gar keins: auf die
+    # Meldung kann der Gast mitten im Countdown ohnehin nicht reagieren, und
+    # das eingefrorene Bild ist das Letzte, woran er sieht, wo er steht.
+    _LIVE_HOLD_CAPTURE_S = 45.0
+
+    def _hold_seconds(self) -> float:
+        """Wie lange das gehaltene Standbild jetzt gerade gilt."""
+        return (self._LIVE_HOLD_CAPTURE_S if self._live_hold_extended
+                else self._LIVE_HOLD_S)
+
     def _live_frame_rgb(self):
         """(RGB-Frame, Meldung) — genau eins von beiden ist None.
 
@@ -1068,7 +1159,7 @@ class UI:
 
         self._note_live_signal(False)
         if (self._live_hold is not None
-                and time.monotonic() - self._live_hold_at < self._LIVE_HOLD_S):
+                and time.monotonic() - self._live_hold_at < self._hold_seconds()):
             self._live_is_held = True
             return self._live_hold, None
         return None, "Bitte Display an der Kamera einschalten"
@@ -1300,6 +1391,8 @@ class UI:
             "panel_alpha":    int(t.get("panel_alpha", 255)),
         }
         self._bg = self._build_gradient_bg()
+        # Farben haben sich geaendert — die Standebene muss neu.
+        self._static_surf = None
         # Polaroid-Cache invalidieren — Frame-Farbe ist Theme-abhängig.
         rot_cache = getattr(self, "_rot_cache", None)
         if rot_cache is not None:
