@@ -147,3 +147,49 @@ def test_static_part_names_exist():
     """Ein Tippfehler in _STATIC_PARTS wuerde erst zur Laufzeit auffallen."""
     for name in ui_mod.UI._STATIC_PARTS:
         assert callable(getattr(ui_mod.UI, name, None)), f"{name} gibt es nicht"
+
+
+# ── Admin-Panel und Box im selben Prozess ────────────────────────────────────
+
+def test_admin_change_in_the_same_process_drops_the_layer(tmp_path, monkeypatch):
+    """Aendert das Admin-Panel die Config, muss die Standebene weg.
+
+    Auf der Box laufen beide im selben Prozess und teilen sich EIN Dict
+    (main.py: `cfg = config.cfg`, dann `UI(cfg, ...)`). gallery_server
+    schreibt direkt hinein und speichert danach. reload_persisted vergleicht
+    die frisch geschriebene Datei mit genau diesem Dict, findet erwartungs-
+    gemaess keinen Unterschied und meldet "nichts geaendert" — woraufhin die
+    Standebene haengenblieb. Auf dem Boxschirm stand weiter "Kein Passwort
+    noetig", obwohl das WLAN laengst eines hatte.
+    """
+    import json
+    import config
+
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps({"wifi_password": "geheim12"}),
+                        encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_PATH", str(cfg_file))
+
+    # Der Stand NACH dem Admin-POST: das Dict traegt den neuen Wert schon.
+    shared = {"wifi_password": "geheim12", "theme": {}, "logo_path": "",
+              "instagram_qr_path": "", "booking_qr_path": "",
+              "gallery_url": "http://fotobox.local/"}
+
+    inst = ui_mod.UI.__new__(ui_mod.UI)
+    inst._cfg = shared
+    inst._static_surf = object()
+    inst._last_reload_check = -100.0
+    inst._cfg_mtime = 0.0           # noch nie gesehen -> Zweig greift
+    inst._logo_path_seen = ""
+    inst._logo_mtime = 0.0
+    inst._insta_qr_seen = ""
+    inst._insta_qr_mtime = 0.0
+    inst._booking_qr_seen = ""
+    inst._booking_qr_mtime = 0.0
+    inst._theme_seen = {}
+    inst._qr_payload_seen = shared["gallery_url"]
+
+    inst._check_config_reload()
+
+    assert inst._static_surf is None, (
+        "config.json hat sich geaendert, aber die Standebene blieb stehen")

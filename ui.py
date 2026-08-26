@@ -884,9 +884,21 @@ class UI:
         cfg_mt = self._mtime(config.CONFIG_PATH)
         if cfg_mt != self._cfg_mtime:
             self._cfg_mtime = cfg_mt
-            if config.reload_persisted(self._cfg):
-                logger.info("Live-Reload: config.json neu eingelesen")
-                self._static_surf = None
+            # Der neue Zeitstempel ist das Signal — nicht die Differenz, die
+            # reload_persisted findet. Auf der Box sind Panel und Anzeige EIN
+            # Prozess mit EINEM cfg-Dict (main.py: cfg = config.cfg, dann
+            # UI(cfg, ...)). Der Admin-POST traegt seinen Wert dort ein und
+            # speichert erst danach; reload_persisted vergleicht die frische
+            # Datei also gegen den laengst neuen Stand und meldet voellig
+            # korrekt "nichts geaendert". Haengt die Invalidierung daran,
+            # bleibt die Standebene genau in dem Fall stehen, fuer den sie
+            # gedacht ist: nach "WLAN-Passwort gesetzt" stand auf dem
+            # Boxschirm weiter "Kein Passwort noetig", bis irgendetwas
+            # anderes den Cache verwarf. Ein Rebuild je Admin-Speichern
+            # kostet die 68 ms, die er im Dauerbetrieb spart.
+            config.reload_persisted(self._cfg)
+            logger.info("Live-Reload: config.json neu eingelesen")
+            self._static_surf = None
 
         # Logo — Path und/oder mtime können sich ändern (Upload überschreibt
         # die gleiche Datei, daher reicht Path-Vergleich allein nicht).
