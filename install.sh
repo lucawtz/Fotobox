@@ -228,6 +228,19 @@ else
     echo "      sudo systemctl set-default graphical.target"
 fi
 
+# Autologin gehoert mitgeprueft: graphical.target allein bringt nur den
+# Anmeldebildschirm. Bleibt die Box dort stehen, laeuft der Dienst zwar, findet
+# aber nie einen Bildschirm — und nach dem Stromausfall muesste jemand mit
+# Tastatur ran, genau das soll es nicht geben.
+if grep -qE '^\s*autologin-user\s*=' /etc/lightdm/lightdm.conf 2>/dev/null; then
+    echo "  ✓ Autologin ist eingerichtet"
+elif [ -f /etc/lightdm/lightdm.conf ]; then
+    echo "  ⚠ Kein autologin-user in /etc/lightdm/lightdm.conf."
+    echo "    Ohne Autologin bleibt die Box nach dem Einschalten am"
+    echo "    Anmeldebildschirm stehen. Einschalten mit:"
+    echo "      sudo raspi-config nonint do_boot_behaviour B4"
+fi
+
 echo ""
 echo "=== Installation abgeschlossen ==="
 echo ""

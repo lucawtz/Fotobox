@@ -41,6 +41,38 @@ Drucker, Hotspot, Kamera, Capture-Card, GPIO, Speicher und Abhängigkeiten
 durch und sagt zu jedem Fehler, was zu tun ist. Exit-Code 0 = keine Fehler.
 Es ändert nichts und fasst belegte Geräte nicht an.
 
+### Kaltstart-Probe: Stecker raus, Stecker rein
+
+Der Nachweis für „läuft ohne Tastatur an" lässt sich nicht simulieren — er
+braucht den echten Stromausfall. Ablauf:
+
+```bash
+sudo poweroff                        # nur beim ersten Mal sauber; danach
+                                     # zum Testen wirklich den Stecker ziehen
+# Stecker rein. Nichts anfassen. Keine Tastatur, keine Maus, kein SSH.
+# Stoppuhr: der Homescreen muss von selbst kommen.
+ssh pi@fotobox
+cd ~/Fotobox && venv/bin/python scripts/smoke_test.py
+```
+
+Sektion **10. Kaltstart** beantwortet danach genau die Fragen, die man dem
+Bildschirm allein nicht ansieht: Wie viele Sekunden nach dem Boot war der
+Dienst aktiv? Hat er sich zwischendurch selbst neu starten müssen? Kam die
+Autologin-Sitzung, oder hing die UI am Wayland-Socket fest? Ist die Karte nach
+dem harten Ausschalten schreibgeschützt? Stimmt das Datum ohne Netz, oder
+heißt der Event-Ordner falsch?
+
+Die Sektion liest nur — sie darf bei laufendem Dienst mitlaufen, und genau so
+ist sie gedacht: **nicht** vorher `systemctl stop fotobox`, sonst prüft man
+etwas anderes als den Kaltstart.
+
+Zweimal muss die Box das Rennen gegen den Boot gewinnen, und beide Male wartet
+sie inzwischen darauf, statt aufzugeben: auf die Autologin-Sitzung
+(`UI.DISPLAY_WAIT_S`, bis 90 s) und darauf, dass NetworkManager `wlan0` kennt
+(`hotspot.INTERFACE_WAIT_S`, bis 30 s). Meldet der Smoke-Test eine der beiden
+Wartezeilen als Warnung, war das Rennen real — dann lohnt der Blick ins Log,
+bevor die Zahlen beim nächsten Mal nicht mehr reichen.
+
 Stand 24.08.2026: alles umgesetzt, der Hardware-Durchlauf ist gemacht.
 **266 Tests, alle grün** — `venv/bin/python -m pytest`; `tsc -b` im
 `frontend/` ebenfalls grün.

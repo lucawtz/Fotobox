@@ -13,6 +13,7 @@ Betrieb das Gerät wegnehmen. Es wird nichts installiert und nichts geändert.
 
 Exit-Code 0 = keine FEHLER (Warnungen sind erlaubt), 1 = mindestens ein Fehler.
 """
+import datetime
 import os
 import re
 import shutil
@@ -71,6 +72,18 @@ def run(args, timeout=10):
         return None, str(exc)
 
 
+def _unit_value(text, key):
+    """Wert einer systemd-Direktive; Kommentarzeilen zaehlen nicht mit."""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        if name.strip() == key:
+            return value.strip()
+    return None
+
+
 def service_active(name="fotobox"):
     rc, _ = run(["systemctl", "is-active", "--quiet", name])
     return rc == 0
@@ -104,10 +117,14 @@ def check_display():
     # Weg, den die Box beim Start nimmt (inklusive Treiber-Reihenfolge und
     # SCALED-Entscheidung). Ein eigener set_mode-Aufruf hier wuerde etwas
     # anderes pruefen als das, was spaeter wirklich laeuft.
+    # DISPLAY_WAIT_S=0: die Box wartet beim Kaltstart bis zu 90 s auf die
+    # Autologin-Sitzung — hier laeuft sie laengst, und ein Fehlschlag soll
+    # sofort als solcher dastehen statt in den Subprozess-Timeout zu laufen.
     code = (
         "import sys; sys.path.insert(0, %r)\n"
         "import pygame; pygame.init()\n"
         "from ui import UI, W, H\n"
+        "UI.DISPLAY_WAIT_S = 0\n"
         "try:\n"
         "    s = UI._open_display()\n"
         "    print('OK %%dx%%d driver=%%s' %% (s.get_size()[0], s.get_size()[1],\n"
@@ -138,9 +155,20 @@ def check_systemd():
         return fail("Unit nicht installiert", f"{unit} fehlt — './install.sh' laufen lassen")
 
     text = open(unit, encoding="utf-8", errors="replace").read()
-    for key, want in (("Restart", "on-failure"), ("RuntimeDirectory", "fotobox")):
-        m = re.search(rf"^{key}=(.+)$", text, re.M)
-        got = m.group(1).strip() if m else None
+    # Sollwerte kommen aus fotobox.service im Repo, nicht aus einer Liste hier:
+    # eine zweite Kopie der Erwartungen veraltet still. Genau das war passiert —
+    # der Smoke-Test verlangte noch 'Restart=on-failure', lange nachdem die Unit
+    # auf 'always' stand, und meldete die richtige Installation als Fehler.
+    repo_unit = os.path.join(BASE, "fotobox.service")
+    repo_text = open(repo_unit, encoding="utf-8", errors="replace").read()
+    # Die Boot-Kette: startet sie neu, endet sie beim gewollten Esc, laeuft sie
+    # hinter Desktop und NetworkManager, wartet sie eine Aufnahme ab.
+    for key in ("Restart", "RestartPreventExitStatus", "After",
+                "TimeoutStopSec", "RuntimeDirectory", "WantedBy"):
+        want = _unit_value(repo_text, key)
+        got = _unit_value(text, key)
+        if want is None:
+            continue
         if got == want:
             ok(f"{key}={want}")
         else:
@@ -485,6 +513,222 @@ def check_deps():
             "\n".join(found[p] for p in want if p in found))
 
 
+# ── 10. Kaltstart (Strom raus, Strom rein) ─────────────────────────────────────
+
+def _boot_seconds():
+    """Sekunden seit dem Boot — dieselbe Uhr wie systemds *Monotonic-Felder."""
+    try:
+        with open("/proc/uptime", encoding="utf-8") as fh:
+            return float(fh.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _log_tail(path, kb=256):
+    """Letzte Kilobytes des Logs — die Datei darf bis 20 MB gross werden."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            fh.seek(max(0, size - kb * 1024))
+            return fh.read().splitlines()
+    except OSError:
+        return []
+
+
+def check_coldstart():
+    """Kam nach dem letzten Einschalten alles von allein hoch?
+
+    Diese Sektion prueft nur nach — ausgeloest wird der Test, indem man
+    wirklich den Stecker zieht, wieder einsteckt, nichts anfasst und danach
+    diesen Durchlauf startet. Sie liest ausschliesslich; nichts hier greift
+    in den laufenden Betrieb ein.
+    """
+    head("10. Kaltstart (Strom raus, Strom rein)")
+
+    uptime = _boot_seconds()
+    if uptime is None:
+        return skip("/proc/uptime nicht lesbar", "kein Linux?")
+    ok(f"Letzter Boot vor {uptime / 60:.0f} min",
+       "Fuer eine aussagekraeftige Pruefung: Stecker ziehen, wieder "
+       "einstecken, nichts anfassen, dann diesen Durchlauf starten.")
+
+    # ── Ist der Dienst von selbst hochgekommen, und wie schnell? ──────────
+    rc, out = run(["systemctl", "show", "fotobox",
+                   "--property=ActiveState", "--property=SubState",
+                   "--property=NRestarts",
+                   "--property=ActiveEnterTimestampMonotonic"])
+    props = (dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
+             if rc == 0 else {})
+
+    state = props.get("ActiveState", "unbekannt")
+    (ok if state == "active" else fail)(
+        f"Dienst-Zustand: {state} ({props.get('SubState', '?')})",
+        "" if state == "active" else
+        "Nach dem Einstecken muss der Dienst ohne Zutun laufen:\n"
+        "  systemctl status fotobox --no-pager\n"
+        "  journalctl -u fotobox -b --no-pager")
+
+    try:
+        ready_s = int(props.get("ActiveEnterTimestampMonotonic", "0")) / 1e6
+    except ValueError:
+        ready_s = 0.0
+    if ready_s <= 0:
+        skip("Zeit bis 'active'", "systemd nennt keinen Zeitpunkt")
+    elif ready_s > 300:
+        warn(f"'active' erst {ready_s / 60:.0f} min nach dem Boot",
+             "So spaet startet kein Boot — der Dienst wurde nach dem "
+             "Hochfahren noch einmal angefasst (Restart, Deploy, "
+             "Admin-Panel). Diese Zahl sagt dann nichts ueber den Kaltstart.")
+    else:
+        (ok if ready_s <= 120 else warn)(
+            f"Dienst war {ready_s:.0f} s nach dem Boot aktiv",
+            "" if ready_s <= 120 else
+            "Ungewoehnlich lange. Die UI wartet bis zu 90 s auf die "
+            "Autologin-Sitzung (UI.DISPLAY_WAIT_S) — wenn sie das ausreizt, "
+            "steht der Grund im Log.")
+
+    restarts = props.get("NRestarts")
+    if restarts is None:
+        skip("Selbstneustarts", "systemctl nennt keine Zahl")
+    else:
+        (ok if restarts == "0" else warn)(
+            f"Selbstneustarts seit dem Dienststart: {restarts}",
+            "" if restarts == "0" else
+            "Die Box hat sich mindestens einmal selbst gefangen — gut, dass "
+            "sie es konnte, aber der Grund gehoert angesehen:\n"
+            "  journalctl -u fotobox -b --no-pager")
+
+    # ── Kam die Autologin-Sitzung? ────────────────────────────────────────
+    # Der Beweis ist der Socket, an dem die UI ihr Vollbild aufmacht — nicht
+    # die Konfiguration, die das eigentlich haette bewirken sollen.
+    uid = os.getuid()
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{uid}"
+    try:
+        sockets = [n for n in os.listdir(runtime)
+                   if n.startswith("wayland-") and not n.endswith(".lock")]
+    except OSError:
+        sockets = []
+    if sockets:
+        ok(f"Desktop-Sitzung steht (Wayland: {', '.join(sockets)})", runtime)
+    elif os.path.exists("/tmp/.X11-unix/X0"):
+        ok("Desktop-Sitzung steht (X11: :0)")
+    else:
+        fail("Keine Desktop-Sitzung gefunden",
+             f"Gesucht in {runtime} und /tmp/.X11-unix/X0. Ohne sie bleibt "
+             "der Schirm schwarz, egal wie oft der Dienst neu startet:\n"
+             "  sudo raspi-config nonint do_boot_behaviour B4")
+
+    try:
+        with open("/etc/lightdm/lightdm.conf", encoding="utf-8",
+                  errors="replace") as fh:
+            lightdm = fh.read()
+    except OSError:
+        lightdm = ""
+    m = re.search(r"^\s*autologin-user\s*=\s*(\S+)", lightdm, re.M)
+    if m:
+        ok(f"Autologin konfiguriert auf '{m.group(1)}'", "/etc/lightdm/lightdm.conf")
+    elif lightdm:
+        warn("Kein autologin-user in lightdm.conf",
+             "Eine Sitzung laeuft zwar — die kann aber von einer Anmeldung "
+             "von Hand stammen. Nach dem naechsten Stromausfall bliebe die "
+             "Box dann am Anmeldebildschirm stehen:\n"
+             "  sudo raspi-config nonint do_boot_behaviour B4")
+    else:
+        skip("lightdm.conf nicht lesbar",
+             "Anderer Display-Manager? Dann zaehlt die Sitzungspruefung oben.")
+
+    # ── Hat das harte Ausschalten die Karte beschaedigt? ──────────────────
+    rc, out = run(["findmnt", "-no", "OPTIONS", "/"])
+    if rc is None:
+        skip("findmnt nicht verfügbar", out)
+    elif rc == 0 and "ro" in out.strip().split(","):
+        fail("Root-Dateisystem ist nur lesbar montiert",
+             "Typische Folge des harten Ausschaltens: der Kernel hat die "
+             "Karte nach einem Fehler schreibgeschuetzt. Die Box laeuft, "
+             "speichert aber kein einziges Foto. Karte an einem anderen "
+             "Rechner mit fsck pruefen.")
+    elif rc == 0:
+        ok("Root-Dateisystem beschreibbar montiert")
+
+    # ── Uhrzeit: der Pi hat keine gepufferte Uhr ──────────────────────────
+    # Sie entscheidet ueber den Ordnernamen des Events (events.py rechnet
+    # deshalb ausdruecklich mit einer rueckwaerts gestellten Uhr).
+    rc, out = run(["timedatectl", "show", "--property=NTPSynchronized"])
+    synced = "NTPSynchronized=yes" in out if rc == 0 else None
+    now = datetime.datetime.now()
+    label = f"Systemzeit: {now:%d.%m.%Y %H:%M}"
+    if synced:
+        ok(f"{label} — per NTP synchronisiert")
+    else:
+        warn(f"{label} — nicht per NTP synchronisiert",
+             "Ohne Netz stellt der Pi beim Boot nur die zuletzt gespeicherte\n"
+             "Zeit. Stimmt das Datum oben nicht, heisst der Event-Ordner\n"
+             "falsch — dann Datum von Hand setzen oder ein Netz geben.")
+    if os.path.isfile("/etc/fake-hwclock.data"):
+        try:
+            with open("/etc/fake-hwclock.data", encoding="utf-8") as fh:
+                ok("fake-hwclock rettet die Zeit ueber den Stromausfall",
+                   fh.read().strip())
+        except OSError:
+            pass
+
+    # ── Laeuft das Event nach dem Stromausfall im selben Ordner weiter? ───
+    try:
+        import config
+        import events
+    except ImportError as exc:
+        skip("Event-Ordner", str(exc))
+    else:
+        # Bewusst _read_pin und nicht current_event_folder: letzteres legt
+        # einen neuen Pin an, wenn keiner passt — der Smoke-Test aendert nichts.
+        pin = events._read_pin(config.cfg)
+        if not pin:
+            ok("Kein angeheftetes Event",
+               "Das naechste Foto beginnt einen Ordner mit dem heutigen Datum.")
+        else:
+            age_h = (datetime.datetime.now().timestamp()
+                     - float(pin.get("started", 0))) / 3600
+            max_h = float(config.cfg.get("event_session_hours", 18))
+            ok(f"Angeheftetes Event: {pin.get('folder', '?')}",
+               f"seit {age_h:.1f} h" + ("" if age_h < max_h else
+               f" — aelter als event_session_hours ({max_h:.0f} h), das "
+               "naechste Foto beginnt einen neuen Ordner"))
+            ok("Die Anheftung liegt auf der Karte, nicht in /run",
+               "Ein Stromausfall mitten im Event fuehrt die Fotos danach im "
+               "selben Ordner weiter.")
+
+    # ── Was das Log vom letzten Start erzaehlt ────────────────────────────
+    lines = _log_tail(os.path.join(BASE, "logs", "fotobox.log"))
+    if not lines:
+        return skip("logs/fotobox.log", "leer oder nicht lesbar")
+
+    def _last(needle):
+        return next((l for l in reversed(lines) if needle in l), None)
+
+    drv = _last("Display: SDL-Treiber")
+    (ok if drv else warn)("Vollbild laut Log geoeffnet",
+                          drv or "keine Treiber-Zeile im Log-Ende gefunden")
+    ready = _last("Fotobox bereit")
+    (ok if ready else warn)("Startlauf bis 'Fotobox bereit' durchgelaufen",
+                            ready or "Zeile fehlt — Log ansehen")
+    waited = _last("noch keine Sitzung")
+    if waited:
+        warn("Die UI musste auf die Desktop-Sitzung warten", waited +
+             "\nGefangen wie vorgesehen — aber es zeigt, dass das Rennen "
+             "zwischen graphical.target und Autologin auf dieser Karte real "
+             "ist. Wird die Wartezeit knapp, UI.DISPLAY_WAIT_S erhoehen.")
+    hotspot_wait = _last("NetworkManager kennt")
+    if hotspot_wait:
+        warn("Der Hotspot musste auf NetworkManager warten", hotspot_wait +
+             "\nAuch das ist gefangen — es heisst nur, dass die Ordnung "
+             "'After=NetworkManager.service' allein nicht reicht.")
+    for needle, label in (("Hotspot-Up", "Hotspot-Up meldet einen Fehlschlag"),
+                          ("Galerie: Port", "Galerie musste den Port wechseln")):
+        line = _last(needle)
+        if line and ("fehlgeschlagen" in line or "kann nicht" in line):
+            fail(label, line)
+
+
 def main():
     print(f"Fotobox — Hardware-Gegenprüfung\n{DIM}{BASE}{RESET}")
     if service_active():
@@ -495,7 +739,7 @@ def main():
 
     for check in (check_display, check_systemd, check_blanking, check_logrotate,
                   check_printer, check_network, check_hardware, check_config,
-                  check_deps):
+                  check_deps, check_coldstart):
         try:
             check()
         except Exception as exc:                      # noqa: BLE001
