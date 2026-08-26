@@ -748,6 +748,9 @@ class UI:
         self._SLIDE_FADE_MS = 800
 
         # Result-Screen Cache — gecappt, sonst Memory-Leak nach hunderten Fotos
+        # (Schluessel, Surface) des fertig komponierten Vollbilds fuer den
+        # Countdown — siehe _draw_live_fullscreen.
+        self._fullscreen_cache: Optional[tuple] = None
         # Fertig gezeichneter Homescreen-Hintergrund (alles ausser Live-Bild,
         # Polaroids, Knoepfen und Status-Leiste). Siehe _static_layer.
         self._static_surf: Optional[pygame.Surface] = None
@@ -2776,16 +2779,81 @@ class UI:
         noch im Countdown liegt. Faellt sie zurueck hinter "Lächeln!", ist
         das Argument wieder da.
         """
-        self._screen.fill(C_BLACK)
         frame, _ = self._live_frame_rgb()
         if frame is None:
+            self._screen.fill(C_BLACK)
             return
+
+        # Gerechnet wird nur, wenn ein neues Bild da ist. _live_hold_at
+        # springt genau dann — waehrend einer Aufnahme steht es still, und
+        # der Countdown laeuft mit rund 33 Bildern je Sekunde gegen ein
+        # Live-Bild, das mit sechs kommt. Ohne den Cache entstuende dasselbe
+        # Vollbild fuenfmal umsonst.
+        key = (self._live_hold_at, frame.shape[:2])
+        cached = self._fullscreen_cache
+        if cached is not None and cached[0] == key:
+            self._screen.blit(cached[1], (0, 0))
+            return
+
+        self._screen.blit(self._compose_live_fullscreen(frame), (0, 0))
+
+    def _compose_live_fullscreen(self, frame) -> pygame.Surface:
+        """Vollbild fuer den Countdown: scharfes Bild auf weichem Grund.
+
+        Zwei Dinge, die hier frueher fehlten.
+
+        ERSTENS die Entzerrung. Das kleine Vorschaufenster rechnet die
+        anamorphe Streckung der EOS seit langem heraus (_source_stretch),
+        dieser Pfad tat es nicht — im Countdown war der Gast also wieder ein
+        Drittel zu breit, und zwar genau in den Sekunden, in denen er sich
+        ausrichtet.
+
+        ZWEITENS die Raender. Ein 3:2-Bild auf einem 16:9-Schirm laesst
+        links und rechts je 150 px stehen. Die waren schwarz, was den Schirm
+        in drei Streifen zerlegte. Jetzt liegt dort dasselbe Bild
+        formatfuellend, stark weichgezeichnet und abgedunkelt — dieselbe
+        Machart wie der Hintergrund des Ergebnis-Schirms, damit beide
+        Screens zusammengehoeren.
+
+        Das ist KEINE Rueckkehr des Weichzeichners ueber dem Standbild
+        (siehe die Begruendung in _draw_live_fullscreen). Das Bild selbst
+        bleibt scharf; weich ist nur, was sonst schwarz waere.
+        """
         fh, fw = frame.shape[:2]
-        scale = min(W / fw, H / fh)
-        nw, nh = int(fw * scale), int(fh * scale)
-        frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
-        surf = pygame.image.frombuffer(frame.tobytes(), (nw, nh), "RGB")
-        self._screen.blit(surf, ((W - nw) // 2, (H - nh) // 2))
+        stretch = self._source_stretch(frame)
+        # Breite, die das Bild ohne die Streckung haette.
+        true_w = fw / stretch
+        scale = min(W / true_w, H / fh)
+        nw, nh = max(1, int(true_w * scale)), max(1, int(fh * scale))
+
+        canvas = pygame.Surface((W, H))
+
+        # Grund: auf ein Achtel verkleinern, echter Gauss darauf, wieder hoch.
+        # Nach dem Gauss steckt keine hohe Frequenz mehr im Bild, deshalb
+        # faellt die Vergroesserung nicht auf — und gerechnet wird auf dem
+        # Achtel statt auf 1920x1080, was auf dem Pi ein Vielfaches kostete.
+        # Dass der Grund dabei formatfuellend verzerrt wird, ist bei diesem
+        # Blur nicht zu sehen und spart einen zweiten Zuschnitt.
+        small = cv2.resize(frame, (W // 8, H // 8), interpolation=cv2.INTER_AREA)
+        small = cv2.GaussianBlur(small, (0, 0), sigmaX=7)
+        big = np.ascontiguousarray(
+            cv2.resize(small, (W, H), interpolation=cv2.INTER_LINEAR))
+        canvas.blit(pygame.image.frombuffer(big.tobytes(), (W, H), "RGB"),
+                    (0, 0))
+        shade = pygame.Surface((W, H))
+        shade.fill((0, 0, 0))
+        shade.set_alpha(120)
+        canvas.blit(shade, (0, 0))
+
+        # Vordergrund: entzerrt und scharf. Der Zielgroesse nach ist das eine
+        # ungleichmaessige Skalierung — genau darin steckt die Entzerrung.
+        sharp = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        canvas.blit(pygame.image.frombuffer(sharp.tobytes(), (nw, nh), "RGB"),
+                    ((W - nw) // 2, (H - nh) // 2))
+
+        self._fullscreen_cache = (
+            (self._live_hold_at, frame.shape[:2]), canvas)
+        return canvas
 
     # ── QR-Code ────────────────────────────────────────────────────────────────
 
