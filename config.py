@@ -228,6 +228,24 @@ _DEFAULTS: dict = {
     # ein Viertel der Bildhoehe. Bei Ganzkoerper-Aufnahmen sieht der Gast dann
     # wenig von sich. null = kein Zuschnitt, die Quelle bestimmt das Format.
     "live_view_aspect": [16, 9],
+    # Was das Live-Signal GEOMETRISCH zeigt, nachdem die schwarzen Raender
+    # weg sind — nicht, wie viele Pixel es hat.
+    #
+    # Die EOS 700D gibt ihr Live-Bild ueber HDMI anamorph aus: der Inhalt
+    # misst nach dem Randschnitt 1771x890 (1,99), zeigt aber den 3:2-Sensor.
+    # Alles darin ist damit um Faktor 1,33 in die Breite gezogen — auf der
+    # Box nachgemessen ueber eine affine Schaetzung zwischen Live-Frame und
+    # Foto derselben Szene: 1,36. Das Foto selbst ist unberuehrt davon und
+    # kommt als 5184x3456 (3:2) aus der Kamera.
+    #
+    # Die Box rechnet daraus je Frame den Korrekturfaktor
+    # (Quellformat / dieser Wert) und entzerrt beim ohnehin noetigen
+    # Skalieren mit — das kostet nichts extra. Abgeleitet statt fest
+    # eingetragen, damit eine andere Kamera oder ein anderer Randschnitt
+    # nicht wieder eine handgemessene Zahl braucht.
+    #
+    # [0, 0] oder leer = keine Entzerrung (was die Quelle liefert).
+    "live_source_aspect": [3, 2],
     "instagram_url": "https://www.instagram.com/lucawtz",
     # Instagrams eigener QR-Code, in der App im eigenen Profil exportierbar.
     # Leer = ui.py zeichnet stattdessen das Instagram-Glyph.

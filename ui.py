@@ -1090,17 +1090,62 @@ class UI:
             return (self._fit_rect(box, target or self._live_aspect),
                     None, msg)
 
+        # Streckung der Quelle: die EOS gibt ihr Live-Bild anamorph aus (siehe
+        # live_source_aspect). Der Faktor geht in den Zuschnitt ein, nicht in
+        # eine eigene Skalierung — das abschliessende cv2.resize entzerrt dann
+        # beim ohnehin noetigen Anpassen mit und kostet keinen Cent extra.
+        stretch = self._source_stretch(frame)
+
         if target is None:
             fh, fw = frame.shape[:2]
-            self._live_aspect = fw / fh
+            self._live_aspect = fw / fh / stretch
             rect = self._fit_rect(box, self._live_aspect)
+            frame = self._crop_to_aspect(frame, rect.w / rect.h * stretch)
         else:
             rect  = self._fit_rect(box, target)
-            frame = self._crop_to_aspect(frame, rect.w / rect.h)
+            frame = self._crop_to_aspect(frame, rect.w / rect.h * stretch)
 
         frame = cv2.resize(frame, (rect.w, rect.h),
                            interpolation=cv2.INTER_LINEAR)
         return rect, self._live_surface(frame, rect.w, rect.h), None
+
+    def _source_stretch(self, frame) -> float:
+        """Um wieviel das Live-Signal horizontal gezogen ist. 1.0 = gar nicht.
+
+        Die EOS 700D liefert ueber HDMI ein anamorphes Bild: nach dem
+        Randschnitt misst der Inhalt 1771x890 (1,99), zeigt aber den
+        3:2-Sensor. Ohne Korrektur steht der Gast breiter im Bild, als er
+        ist — und richtet sich nach einem Bild aus, das es so nicht gibt.
+        Das Foto selbst ist davon unberuehrt (5184x3456, exakt 3:2); verzerrt
+        war immer nur die Vorschau.
+
+        Abgeleitet statt fest eingetragen: gemessen wurde 1,36, aus dem
+        Randschnitt ergeben sich 1,33 — welcher der beiden Werte naeher an
+        der Wahrheit liegt, haengt daran, wie genau der Randschnitt die
+        Bildflaeche trifft. Aus dem tatsaechlichen Frame gerechnet passt sich
+        das von selbst an, statt bei jeder Aenderung eine handgemessene Zahl
+        zu brauchen.
+        """
+        raw = self._cfg.get("live_source_aspect")
+        if not raw:
+            return 1.0
+        try:
+            w, h = raw
+            if w <= 0 or h <= 0:
+                return 1.0
+            true_aspect = w / h
+        except (TypeError, ValueError):
+            logger.warning("live_source_aspect ist unbrauchbar (%r) — keine "
+                           "Entzerrung", raw)
+            return 1.0
+
+        fh, fw = frame.shape[:2]
+        if fh <= 0:
+            return 1.0
+        # Grenzen gegen Unsinn: ein halb schwarzer Frame oder ein
+        # fehlgeschlagener Randschnitt darf die Vorschau nicht zur Briefmarke
+        # zusammenziehen.
+        return min(2.0, max(0.5, (fw / fh) / true_aspect))
 
     @staticmethod
     def _crop_to_aspect(frame, target: float):
