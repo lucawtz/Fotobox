@@ -64,7 +64,29 @@ EXIT_USER_QUIT = 42
 #
 # Countdown, Blitz und Ergebnis-Ueberblendung haben ihre eigenen Schleifen mit
 # eigenem Takt — die bleiben schnell, dort zaehlt Fluessigkeit.
-STATE_FPS = 15
+#
+# Die Zahl ist auf der Box ausgemessen, nicht geschaetzt: ein Homescreen-Render
+# kostet rund 68 ms. Bei 15 fps waeren das 102 % eines Kerns, die Bremse kommt
+# also gar nicht zum Zug — der Hauptthread stand deshalb dauerhaft bei 99,3 %.
+# Bei 4 fps fiel er auf 27,2 %, der ganze Prozess von 155 auf 60,7 % und der
+# Pi von 78,4 auf 74,0 Grad.
+#
+#   fps      Hauptthread        Eingabeverzoegerung
+#    15        ~100 % (satt)          66 ms
+#     8          ~54 %               125 ms
+#     6          ~41 %               166 ms
+#     4          ~27 %               250 ms
+#
+# 8 ist gewaehlt, weil schneller zu rendern als das Live-Bild ankommt nichts
+# bringt: capture_fps steht auf 6. Die 125 ms Verzoegerung bis ein Tastendruck
+# bemerkt wird, sind vor einem funf Sekunden langen Countdown unerheblich.
+#
+# Der eigentliche Hebel waere, den Homescreen nicht jedes Bild komplett neu zu
+# zeichnen — Sidebar, QR-Karten und Polaroids aendern sich zwischen zwei
+# Bildern nicht, nur das Live-Bild darin. Dann waeren die 68 ms zweistellig
+# kleiner und hoehere Raten wieder bezahlbar. Das ist ein Umbau am Renderpfad
+# und steht hier bewusst nicht drin.
+STATE_FPS = 8
 
 
 # ── Capture-Helfer ─────────────────────────────────────────────────────────────
@@ -129,10 +151,25 @@ COLLAGE_SHOTS = 4
 
 # Wie lange zwischen zwei Collage-Shots auf das Live-Bild gewartet wird, bevor
 # der Halte-Prozess erzwungen neu aufgesetzt wird — und wie lange danach.
-# Die erste Zahl ist knapp: kam der Halter beim Neustart durch, steht das Bild
-# in Sekundenbruchteilen. Die zweite deckt den Neuaufbau ab, der gemessen rund
-# 1,5 s braucht.
-LIVEVIEW_GRACE_S = 1.2
+#
+# Die erste Zahl war 1,2 s und damit zu knapp gegen den falschen Startpunkt
+# gerechnet: der Halter, auf dessen Bild hier gewartet wird, ist gerade erst
+# gestartet — capture() tut das im finally von _usb(), noch bevor es
+# zurueckkehrt. Sein Neuaufbau braucht gemessen rund 1,5 s, dazu die gut
+# 0,3 s, die der LiveReader ueber sein Bewegungsfenster braucht, ehe er ein
+# Bild als lebend durchlaesst (ui._LiveReader._MOTION_WINDOW).
+#
+# Die 1,2 s liefen also regelmaessig ab, waehrend das Bild schon unterwegs
+# war. Der erzwungene Neustart riss dann einen Halter ab, der gleich
+# geliefert haette, und zahlte einen zweiten Neuaufbau — rund eine Sekunde je
+# Shot, genug um das gehaltene Standbild ueber seine Haltezeit zu heben und
+# den naechsten Countdown schwarz zu machen.
+#
+# 2,0 s decken Neuaufbau und Bewegungsfenster ab. Erst danach ist das
+# Ausbleiben des Bildes ein Befund und kein zu frueher Blick. Kommt es
+# vorher, kostet die groessere Zahl nichts: wait_for_liveview kehrt mit dem
+# ersten frischen Bild zurueck, nicht am Ende des Fensters.
+LIVEVIEW_GRACE_S = 2.0
 LIVEVIEW_FORCE_S = 3.0
 
 
@@ -151,11 +188,17 @@ def _capture_sequence(ui: UI, camera, cfg: dict, mode: str) -> Optional[str]:
     # Spiegelhub mittendrin waere genau der Ruckler, den der ganze Umbau
     # vermeiden soll.
     ui.pause_live_autowake(True)
+    # ...und das letzte echte Live-Bild bleibt fuer die ganze Folge stehen.
+    # Seine normale Haltezeit ist gegen ein einzelnes Foto gerechnet; bei
+    # vier lief sie mitten im naechsten Countdown ab. Siehe
+    # ui.hold_live_frame_longer.
+    ui.hold_live_frame_longer(True)
     try:
         return (_do_countdown(ui, camera, cfg, 1, 1) if mode == "single"
                 else _collage(ui, camera, cfg))
     finally:
         ui.pause_live_autowake(False)
+        ui.hold_live_frame_longer(False)
         # Live-View zurueckholen, sobald die Aufnahme durch ist — aber im
         # Hintergrund. Als naechstes kommt der Result-Screen, der zehn
         # Sekunden lang gar kein Live-Bild zeigt; bis der Homescreen wieder
@@ -209,9 +252,14 @@ def _restore_liveview(ui: UI, camera) -> None:
     und die Selbstheilung der UI ist waehrend der Aufnahme abgeschaltet.
 
     Beim Einzelfoto faellt das nicht auf, dort folgt der Result-Screen. In der
-    Collage folgen drei weitere Countdowns, und der Gast sah sie auf schwarzem
-    Grund: das gehaltene Standbild laeuft nach ui._LIVE_HOLD_S ab, und ein
-    Shot dauert gut sechs Sekunden.
+    Collage folgen drei weitere Countdowns, und ohne Live-Bild richtet sich
+    dort niemand mehr aus.
+
+    Dass diese Countdowns frueher zusaetzlich auf schwarzem Grund liefen, ist
+    inzwischen anderswo abgefangen: waehrend einer Aufnahmefolge laeuft das
+    gehaltene Standbild nicht mehr ab (ui.hold_live_frame_longer). Das nimmt
+    dem Fehlschlag hier seine schlimmste Folge, nicht seine Ursache — ein
+    Standbild ist kein Live-Bild, und zurueckholen muss es diese Funktion.
 
     Deshalb wird hier auf das Bild gewartet statt auf den Prozess. Kommt
     binnen LIVEVIEW_GRACE_S keins, wird der Halter erzwungen neu aufgesetzt.
