@@ -153,11 +153,20 @@ _DEFAULTS: dict = {
     # jedes Bild kostet rund 18 ms CPU, und der Pi laeuft ohne aktive Kuehlung
     # bei knapp 80 Grad.
     #
-    # 12 ist mehr als das Doppelte der frueheren 5 fps und liegt bei rund 22 %
-    # CPU — zusammen mit dem abgeschalteten VNC-Server (19 %) unter dem
-    # Ausgangswert. Zum Ausrichten vor der Kamera reicht das mit Abstand; es
-    # ist ein Spiegel, kein Video. Mit aktiver Kuehlung sind 20 bis 30 drin.
-    "capture_fps": 12,
+    # 12 waren zu viel — auf der Box nachgemessen statt geschaetzt: der
+    # LiveReader-Thread stieg von 15 % auf 37 % und der Pi von 78,8 auf
+    # 81,3 Grad. Meine Rechnung hatte nur das Lesen (18 ms) gezaehlt; je Bild
+    # kommt die Bewegungsmessung auf dem vollen 1080p-Frame dazu, zusammen
+    # rund 30 ms.
+    #
+    # 6 fps kosten damit rund 18 % und liegen unter den 20 % des alten
+    # YUYV-Betriebs — bei einem Bild mehr pro Sekunde und einem Zehntel der
+    # USB-Last. Der eigentliche Gewinn von MJPG ist der Bus, nicht die Rate.
+    #
+    # Zum Ausrichten vor der Kamera reicht das: es ist ein Spiegel, kein
+    # Video. Mit aktiver Kuehlung sind 15 bis 20 drin — der Regler dafuer ist
+    # genau diese Zahl.
+    "capture_fps": 6,
     "theme": {
         "bg_top":         "#D5BB99",
         "bg_bottom":      "#B89A75",

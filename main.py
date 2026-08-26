@@ -53,6 +53,19 @@ logger = logging.getLogger(__name__)
 # einmal ueber Nacht — neun Stunden Ausfall, die niemand bemerkt haette.
 EXIT_USER_QUIT = 42
 
+# Bildrate der Zustandsmaschine (Homescreen, Ergebnis, Slideshow).
+#
+# Waren 30, und der Hauptthread lag damit dauerhaft bei 99,8 % CPU — der mit
+# Abstand groesste Einzelposten auf einem Pi, der ohne aktive Kuehlung bei
+# 80 Grad laeuft. Gerendert wird dabei nichts, was 30 Bilder pro Sekunde
+# braucht: der Homescreen steht still, das Live-Bild darin kommt mit
+# capture_fps (6), und die einzige Animation ist das 1,5 s lange Einblenden
+# eines neuen Polaroids.
+#
+# Countdown, Blitz und Ergebnis-Ueberblendung haben ihre eigenen Schleifen mit
+# eigenem Takt — die bleiben schnell, dort zaehlt Fluessigkeit.
+STATE_FPS = 15
+
 
 # ── Capture-Helfer ─────────────────────────────────────────────────────────────
 
@@ -585,7 +598,7 @@ def main():
                 else:
                     ui.render_slideshow()
 
-            clock.tick(30)
+            clock.tick(STATE_FPS)
 
     except Exception as exc:
         logger.error("Unerwarteter Fehler: %s", exc, exc_info=True)
