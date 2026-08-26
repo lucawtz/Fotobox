@@ -142,12 +142,41 @@ def test_mismatch_is_logged_as_warning(caps, caplog):
     assert any("640x480" in r.getMessage() for r in caplog.records), caplog.text
 
 
-def test_closed_device_still_raises(caps):
-    """Ohne Karte bleibt es beim Fehler — die UI faengt ihn ab."""
+# ── Fehlende Karte beim Start ─────────────────────────────────────────────────
+#
+# Frueher warf _LiveReader hier, die UI setzte self._live auf None und
+# versuchte es NIE wieder: auf dem Boxschirm stand "Warte auf Kamera", auch
+# nachdem die Karte laengst wieder steckte. Am 26.08. dreimal passiert — die
+# Karte faellt mit "error -71" vom Bus und muss neu gesteckt werden.
+
+def test_a_missing_device_does_not_raise(caps):
+    """Kein Fehler mehr: die Leseschleife holt die Karte selbst zurueck."""
     caps.state["opened"] = False
 
-    with pytest.raises(RuntimeError):
-        ui_mod._LiveReader(0, (1920, 1080))
+    reader = ui_mod._LiveReader(0, (1920, 1080), "MJPG", 6)
+
+    assert reader.is_open() is False
+
+
+def test_a_missing_device_is_still_retried(caps):
+    """Der Reconnect-Pfad muss auch ohne Karte beim Start erreichbar sein."""
+    caps.state["opened"] = False
+    reader = ui_mod._LiveReader(0, (1920, 1080), "MJPG", 6)
+
+    caps.state["opened"] = True          # Karte wieder eingesteckt
+    reader._last_reconnect = -999
+    reader._try_reconnect()
+
+    assert reader.is_open() is True, "die zurueckgekehrte Karte muss greifen"
+    assert len(caps) == 2
+
+
+def test_is_open_reflects_the_device(caps):
+    """Woran die UI ihre Meldung unterscheidet."""
+    assert ui_mod._LiveReader(0, (1920, 1080), "MJPG", 6).is_open() is True
+
+    caps.state["opened"] = False
+    assert ui_mod._LiveReader(0, (1920, 1080), "MJPG", 6).is_open() is False
 
 
 # ── Bildformat und Bildrate ───────────────────────────────────────────────────

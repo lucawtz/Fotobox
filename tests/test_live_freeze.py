@@ -116,12 +116,19 @@ class FakeReader:
     def __init__(self):
         self.frame = None
         self.is_moving = True
+        # Ob die Capture-Card ueberhaupt am USB haengt. Daran unterscheidet
+        # die UI ihre Meldung: ohne Karte ist "Bitte Display an der Kamera
+        # einschalten" falsch — die Kamera kann nichts dafuer.
+        self.device_open = True
 
     def latest(self):
         return self.frame
 
     def moving(self):
         return self.is_moving
+
+    def is_open(self):
+        return self.device_open
 
 
 class HoldProbe:
@@ -304,3 +311,33 @@ def test_a_fresh_frame_restarts_the_clock_during_a_capture(hold):
 
     assert msg is None
     assert np.array_equal(frame, fresh)
+
+
+# ── Fehlende Capture-Card ─────────────────────────────────────────────────────
+#
+# Die Karte faellt gelegentlich vom USB-Bus ("error -71", am 26.08. dreimal)
+# und muss neu gesteckt werden. Der Gast soll dabei nicht aufgefordert werden,
+# etwas an der Kamera zu tun — die ist in Ordnung, es fehlt die Karte
+# dazwischen.
+
+def test_without_the_capture_card_the_message_is_about_waiting(hold):
+    """Ohne Karte: "Warte auf Kamera", nicht "Display einschalten"."""
+    hold.reader.frame = None
+    hold.reader.device_open = False
+
+    frame, msg = hold._live_frame_rgb()
+
+    assert frame is None
+    assert "Display" not in msg, \
+        "ohne Karte ist eine Aufforderung an der Kamera irrefuehrend"
+
+
+def test_with_the_card_the_camera_hint_stays(hold):
+    """Karte da, aber kein Bild — dann ist die Kamera tatsaechlich dran."""
+    hold.reader.frame = None
+    hold.reader.device_open = True
+
+    frame, msg = hold._live_frame_rgb()
+
+    assert frame is None
+    assert "Display" in msg

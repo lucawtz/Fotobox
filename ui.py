@@ -281,7 +281,20 @@ class _LiveReader:
         self._fps = max(1, int(fps or self._TARGET_FPS))
         self._cap = self._open()
         if not self._cap.isOpened():
-            raise RuntimeError(f"Capture-Device {device} nicht verfügbar")
+            # BEWUSST kein Fehler: der Leseschleife ist ein geschlossenes
+            # Geraet egal, sie zaehlt Fehlversuche und ruft _try_reconnect.
+            # Genau dieser Weg fehlte, wenn die Karte beim Start nicht da war
+            # — dann setzte die UI self._live auf None und versuchte es NIE
+            # wieder. Auf dem Boxschirm stand "Warte auf Kamera", auch
+            # nachdem die Karte laengst wieder steckte, bis jemand den Dienst
+            # neu startete.
+            #
+            # Beobachtet am 26.08.: die Capture-Card faellt mit "error -71"
+            # vom Bus und muss neu gesteckt werden. Waehrend eines Events ist
+            # das der Unterschied zwischen zehn Sekunden Aussetzer und einem
+            # toten Bildschirm bis zum naechsten SSH-Login.
+            logger.warning("Capture-Device %d nicht verfügbar — der Leser "
+                           "versucht es weiter", device)
         self._frame = None
         self._lock = threading.Lock()
         self._running = True
@@ -419,6 +432,19 @@ class _LiveReader:
             # sonst faengt jede Box mit einem eingefrorenen Bild an.
             return bool(self._motion)
         return float(np.median(self._motion)) > self._MOTION_THRESHOLD
+
+    def is_open(self) -> bool:
+        """Ob das Capture-Device gerade offen ist.
+
+        Die UI unterscheidet danach ihre Meldung: fehlt das Geraet, ist die
+        Aufforderung "Bitte Display an der Kamera einschalten" schlicht
+        falsch — die Kamera kann nichts dafuer, es fehlt die Karte
+        dazwischen.
+        """
+        try:
+            return bool(self._cap.isOpened())
+        except Exception:
+            return False
 
     def latest(self):
         with self._lock:
@@ -1162,6 +1188,9 @@ class UI:
                 and time.monotonic() - self._live_hold_at < self._hold_seconds()):
             self._live_is_held = True
             return self._live_hold, None
+        if not self._live.is_open():
+            # Nicht die Kamera fehlt, sondern die Capture-Card dazwischen.
+            return None, "Warte auf Kamera…"
         return None, "Bitte Display an der Kamera einschalten"
 
     def _fresh_live_frame(self):
