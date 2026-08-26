@@ -128,6 +128,9 @@ class HoldProbe:
     """Nur die Frame-Auswahl der UI, ohne Fenster."""
 
     _LIVE_HOLD_S = ui_mod.UI._LIVE_HOLD_S
+    _LIVE_HOLD_CAPTURE_S = ui_mod.UI._LIVE_HOLD_CAPTURE_S
+    _hold_seconds = ui_mod.UI._hold_seconds
+    hold_live_frame_longer = ui_mod.UI.hold_live_frame_longer
     _live_frame_rgb = ui_mod.UI._live_frame_rgb
     _fresh_live_frame = ui_mod.UI._fresh_live_frame
 
@@ -135,6 +138,7 @@ class HoldProbe:
         self._live = live
         self._live_hold = None
         self._live_hold_at = 0.0
+        self._live_hold_extended = False
         self._autowake_paused = True     # Wecken ist hier nicht das Thema
         self._live_dark_since = None
         self._live_wake_last = 0.0
@@ -223,3 +227,80 @@ def test_without_any_live_frame_there_is_nothing_to_hold(hold):
     assert frame is None
     assert msg
 
+
+# ── Vier Shots hintereinander ──────────────────────────────────────────────────
+#
+# Die Haltezeit oben ist gegen EIN Foto gerechnet. Eine Collage sind vier, und
+# zwischen zweien liegt jedes Mal dieselbe Luecke: Aufnahme, Auslesen, und der
+# Halte-Prozess, der den Live-View erst wieder aufbauen muss. Blieb das Bild
+# dabei laenger weg, lief das Standbild mitten im naechsten Countdown ab — und
+# der zaehlte dann auf schwarzem Grund weiter.
+
+
+def test_during_a_capture_the_hold_outlasts_the_gap_between_two_shots(hold):
+    """Genau der Fall, in dem der Gast frueher ins Schwarze sah."""
+    hold.reader.frame = _bright(120)
+    live, _ = hold._live_frame_rgb()
+    hold.hold_live_frame_longer(True)
+
+    hold.reader.frame = _menu_frame()
+    hold.reader.is_moving = False
+    hold.tick(hold._LIVE_HOLD_S + 4)
+    frame, msg = hold._live_frame_rgb()
+
+    assert msg is None
+    assert np.array_equal(frame, live), \
+        "im naechsten Countdown muss das Standbild noch stehen"
+
+
+def test_even_the_longer_hold_expires(hold):
+    """Auch waehrend einer Aufnahmefolge gilt sie nicht endlos — sie ist
+    gegen die Dauer einer Collage bemessen, nicht gegen den Abend."""
+    hold.reader.frame = _bright(120)
+    hold._live_frame_rgb()
+    hold.hold_live_frame_longer(True)
+
+    hold.reader.frame = _menu_frame()
+    hold.reader.is_moving = False
+    hold.tick(hold._LIVE_HOLD_CAPTURE_S + 1)
+    frame, msg = hold._live_frame_rgb()
+
+    assert frame is None
+    assert msg
+
+
+def test_after_the_sequence_the_normal_hold_is_back(hold):
+    """Die Verlaengerung gilt fuer die Folge, nicht fuer den Rest des Abends:
+    danach ist ein festgehaltenes Bild wieder nach Sekunden eine Luege."""
+    hold.reader.frame = _bright(120)
+    hold._live_frame_rgb()
+    hold.hold_live_frame_longer(True)
+    hold.hold_live_frame_longer(False)
+
+    hold.reader.frame = _menu_frame()
+    hold.reader.is_moving = False
+    hold.tick(hold._LIVE_HOLD_S + 1)
+    frame, msg = hold._live_frame_rgb()
+
+    assert frame is None
+    assert msg
+
+
+def test_a_fresh_frame_restarts_the_clock_during_a_capture(hold):
+    """Kommt das Live-Bild zwischen zwei Shots zurueck, zaehlt die Haltezeit
+    ab dort neu — sonst waere sie nach dem dritten Shot aufgebraucht."""
+    hold.reader.frame = _bright(120)
+    hold._live_frame_rgb()
+    hold.hold_live_frame_longer(True)
+
+    hold.tick(hold._LIVE_HOLD_CAPTURE_S - 1)
+    hold.reader.frame = _bright(130)
+    fresh, _ = hold._live_frame_rgb()
+
+    hold.reader.frame = _menu_frame()
+    hold.reader.is_moving = False
+    hold.tick(hold._LIVE_HOLD_S + 4)
+    frame, msg = hold._live_frame_rgb()
+
+    assert msg is None
+    assert np.array_equal(frame, fresh)

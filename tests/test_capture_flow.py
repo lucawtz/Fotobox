@@ -29,6 +29,8 @@ class FakeUI:
         self.shutter_set = []
         # Auto-Wake muss waehrend der Aufnahme aus und danach wieder an sein.
         self.autowake = []
+        # Ebenso die verlaengerte Haltezeit des Standbilds.
+        self.hold_extended = []
         self.liveview_waits = []
         self.liveview_returns = True
 
@@ -58,6 +60,9 @@ class FakeUI:
 
     def pause_live_autowake(self, paused):
         self.autowake.append(paused)
+
+    def hold_live_frame_longer(self, active):
+        self.hold_extended.append(active)
 
 
 class FakeCamera:
@@ -219,6 +224,43 @@ def test_liveview_is_woken_even_when_the_shot_fails(cfg, flow):
     main._capture_sequence(ui, cam, cfg, "single")
 
     assert cam.wakes == [1]
+
+
+def test_the_still_is_held_through_the_whole_sequence(cfg, flow):
+    """Die normale Haltezeit des Standbilds ist gegen EIN Foto gerechnet.
+
+    Eine Collage sind vier, und blieb das Live-Bild nach einem Shot weg, lief
+    sie mitten im naechsten Countdown ab — der zaehlte dann auf schwarzem
+    Grund weiter, und zwar fuer den Rest der Collage.
+    """
+    ui, _ = flow
+
+    main._capture_sequence(ui, FakeCamera(), cfg, "collage")
+
+    assert ui.hold_extended == [True, False], \
+        "waehrend der Folge verlaengert, danach wieder die normale Haltezeit"
+
+
+def test_the_extended_hold_ends_even_when_the_shot_fails(cfg, flow):
+    """Sonst behielte die Box ein beliebig altes Standbild fuer immer."""
+    ui, _ = flow
+
+    main._capture_sequence(ui, FakeCamera(fail_at=1), cfg, "single")
+
+    assert ui.hold_extended[-1] is False
+
+
+def test_the_grace_outlasts_a_holder_restart():
+    """Gewartet wird auf einen Halter, der gerade erst gestartet wurde.
+
+    capture() startet ihn im finally von _usb(), noch bevor es zurueckkehrt.
+    Wer kuerzer wartet als sein Neuaufbau dauert, reisst ihn ab, kurz bevor
+    er liefert — und zahlt einen zweiten Neuaufbau. Genau daran lagen die
+    frueheren 1,2 s.
+    """
+    import camera as camera_mod
+
+    assert main.LIVEVIEW_GRACE_S > camera_mod.Camera.HOLD_GRACE_S
 
 
 # ── Collage ────────────────────────────────────────────────────────────────────
