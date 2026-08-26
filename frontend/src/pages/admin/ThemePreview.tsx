@@ -109,6 +109,9 @@ export interface PreviewProps {
   /** Ob ein fertiger Code hinterlegt ist. Ohne zeichnet die Box Glyph+Text. */
   hasInstagramQr: boolean;
   hasBookingQr: boolean;
+  /** Ob die Box selbst der Access-Point ist (Owner-Setting hotspot_enabled).
+   *  Nur dann traegt die WLAN-Box den Hinweis auf ein offenes Netz. */
+  hotspotEnabled: boolean;
 }
 
 /** ui.py: _event_initials */
@@ -264,6 +267,18 @@ const headerBlocks = (name: string, sub: string): HeaderBlock[] => {
   return out;
 };
 
+// ── WLAN-Box ──────────────────────────────────────────────────────────────
+/** Eine Zeile der WLAN-Box, ui.py: _wifi_rows liefert (Label, Wert, Font).
+ *  `label: null` ist kein Sonderfall, sondern die Notiz zur Zeile darueber —
+ *  ohne Beschriftung und in kleinerer Schrift. */
+interface WifiRow {
+  label: string | null;
+  value: string;
+  sizePt: number;
+  lineH: number;
+  weight: number;
+}
+
 // ── Social-Reihen ─────────────────────────────────────────────────────────
 interface SocialRow {
   kind: "instagram" | "calendar";
@@ -327,7 +342,7 @@ function SocialIcon({ kind, color }: { kind: "instagram" | "calendar"; color: st
 
 export default function ThemePreview(props: PreviewProps) {
   const { theme, eventName, subtitle, logoUrl,
-          wifiSsid, wifiPassword, instagramUrl, bookingUrl,
+          wifiSsid, wifiPassword, hotspotEnabled, instagramUrl, bookingUrl,
           bookingLabel, hasInstagramQr, hasBookingQr } = props;
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -364,15 +379,31 @@ export default function ThemePreview(props: PreviewProps) {
   // Zwei Zeilen, nicht drei: die Galerie-Adresse stand hier einmal und kostete
   // die QR-Gruppe darueber die 69 px, die der Instagram-Code braucht. Jede
   // Zeile, die hier dazukommt, nimmt sie ihm wieder weg.
-  const wifiRowDefs = (
-    [
-      ["WLAN", wifiSsid, F_NORMAL_PT, F_NORMAL_H, 700],
-      ["Passwort", wifiPassword, F_NORMAL_PT, F_NORMAL_H, 700],
-    ] as const
-  ).filter(([, value]) => !!String(value).trim());
+  const wifiRowDefs: WifiRow[] = [];
+  if (wifiSsid.trim()) {
+    wifiRowDefs.push({ label: "WLAN", value: wifiSsid.trim(),
+                       sizePt: F_NORMAL_PT, lineH: F_NORMAL_H, weight: 700 });
+  }
+  if (wifiPassword.trim()) {
+    wifiRowDefs.push({ label: "Passwort", value: wifiPassword.trim(),
+                       sizePt: F_NORMAL_PT, lineH: F_NORMAL_H, weight: 700 });
+  } else if (hotspotEnabled) {
+    // Ohne diesen Hinweis sucht der Gast nach einem Passwort, das es nicht
+    // gibt. Er darf aber auch nicht aussehen wie eines — deshalb ohne Label
+    // und in der kleinen Schrift, als Notiz zur Zeile darueber. Genau so
+    // steht es in ui.py:_wifi_rows, und genau diese Zeile fehlte der
+    // Vorschau: bei offenem WLAN zeigte sie gar nichts.
+    wifiRowDefs.push({ label: null, value: "Kein Passwort nötig",
+                       sizePt: F_SUB_PT, lineH: F_SUB_H, weight: 400 });
+  }
   const wifiRows = wifiRowDefs.length;
+  // Zeilen ohne Label tragen auch dessen Hoehe nicht — sonst saesse die Box
+  // hoeher als auf der Box, und die QR-Gruppe darueber bekaeme in der
+  // Vorschau Platz, den sie in Wirklichkeit nicht hat (ui.py:
+  // _wifi_box_metrics, _qr_group_bounds).
   const wifiBoxH = wifiRows
-    ? 22 + wifiRowDefs.reduce((h, [, , , rowH]) => h + F_LABEL_H + 4 + rowH + 14, 0)
+    ? 22 + wifiRowDefs.reduce(
+        (h, r) => h + (r.label ? F_LABEL_H + 4 : 0) + r.lineH + 14, 0)
     : 0;
   // ui.py rechnet den Rand aus der Status-Bar statt ihn zu verdrahten.
   const wifiTop  = wifiRows ? H - (STATUS_H + 12) - wifiBoxH : H;
@@ -783,32 +814,33 @@ export default function ThemePreview(props: PreviewProps) {
                 px: "16px",
               }}
             >
-              {wifiRowDefs
-                .map(([label, value, sizePt, lineH, weight]) => (
-                  <Box key={label} sx={{ mb: "12px" }}>
+              {wifiRowDefs.map((row, i) => (
+                  <Box key={row.label ?? `unlabelled-${i}`} sx={{ mb: "12px" }}>
+                    {row.label && (
+                      <Box
+                        sx={{
+                          fontSize: F_LABEL_PT,
+                          fontWeight: 700,
+                          lineHeight: `${F_LABEL_H}px`,
+                          color: c("sidebar_dim"),
+                          mb: "2px",
+                        }}
+                      >
+                        {row.label}
+                      </Box>
+                    )}
                     <Box
                       sx={{
-                        fontSize: F_LABEL_PT,
-                        fontWeight: 700,
-                        lineHeight: `${F_LABEL_H}px`,
-                        color: c("sidebar_dim"),
-                        mb: "2px",
-                      }}
-                    >
-                      {label}
-                    </Box>
-                    <Box
-                      sx={{
-                        fontSize: sizePt,
-                        fontWeight: weight,
-                        lineHeight: `${lineH}px`,
+                        fontSize: row.sizePt,
+                        fontWeight: row.weight,
+                        lineHeight: `${row.lineH}px`,
                         color: c("sidebar_text"),
                         whiteSpace: "nowrap",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                       }}
                     >
-                      {value}
+                      {row.value}
                     </Box>
                   </Box>
                 ))}

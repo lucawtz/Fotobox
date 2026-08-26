@@ -1690,6 +1690,12 @@ def api_admin_config():
                                    ).split("://")[-1].rstrip("/"),
             "has_instagram_qr":   os.path.isfile(config.cfg.get("instagram_qr_path", "")),
             "has_booking_qr":     os.path.isfile(config.cfg.get("booking_qr_path", "")),
+            # Auch fuer die Vorschau: ohne Passwort schreibt die Box "Kein
+            # Passwort noetig" in die WLAN-Box (ui.py: _wifi_rows) — aber nur,
+            # solange sie selbst der Access-Point ist. Ohne diesen Wert muesste
+            # die Vorschau raten und zeigte im Setup-Betrieb eine Zeile, die
+            # auf dem Boxschirm nicht steht.
+            "hotspot_enabled":    bool(config.cfg.get("hotspot_enabled", True)),
             # Warnung, solange Auslieferungs-PINs aktiv sind. Der Admin-PIN
             # gibt "alle Fotos loeschen" frei — auf einem offenen Gaeste-WLAN
             # ist "1234" faktisch kein Schutz.

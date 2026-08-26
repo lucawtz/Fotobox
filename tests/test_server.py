@@ -259,6 +259,25 @@ def test_invalid_wifi_does_not_corrupt_config(app):
     assert config.cfg["wifi_password"] == before
 
 
+@pytest.mark.parametrize("role", ["admin", "host"])
+def test_config_reports_hotspot_state(app, role):
+    """Die Theme-Vorschau zeichnet die Sidebar so, wie die Box sie zeichnet.
+
+    Bei leerem Passwort schreibt ui.py "Kein Passwort noetig" in die WLAN-Box
+    — aber nur, solange die Box selbst der Access-Point ist. Fehlt der Wert
+    hier, muesste die Vorschau raten, und im Setup-Betrieb stuende dort eine
+    Zeile, die es auf dem Boxschirm nicht gibt. Beide Rollen sehen ihn: die
+    Vorschau haengt an der Branding-Seite, und die gehoert auch dem Host.
+    """
+    config.cfg["hotspot_enabled"] = False
+    assert _login(app, role).get("/api/admin/config").get_json()[
+        "hotspot_enabled"] is False
+
+    config.cfg["hotspot_enabled"] = True
+    assert _login(app, role).get("/api/admin/config").get_json()[
+        "hotspot_enabled"] is True
+
+
 # ── Rollentrennung ─────────────────────────────────────────────────────────────
 
 def test_printers_endpoint_is_admin_only(app):

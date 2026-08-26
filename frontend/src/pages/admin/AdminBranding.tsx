@@ -82,6 +82,8 @@ export default function AdminBranding() {
     wifiSsid: "", wifiPassword: "",
     instagramUrl: "", bookingUrl: "", bookingLabel: "",
     hasInstagramQr: false, hasBookingQr: false,
+    // Wie ui.py: ohne gegenteilige Angabe ist die Box der Access-Point.
+    hotspotEnabled: true,
   });
 
   // Theme-Section
@@ -111,6 +113,7 @@ export default function AdminBranding() {
         bookingLabel: c.booking_label ?? "",
         hasInstagramQr: !!c.has_instagram_qr,
         hasBookingQr:   !!c.has_booking_qr,
+        hotspotEnabled: c.hotspot_enabled ?? true,
       });
 
       // Wir laden ALLE bekannten Theme-Felder (nicht nur die 6 UI-Picker),
@@ -494,6 +497,7 @@ export default function AdminBranding() {
                     bookingLabel={preview.bookingLabel}
                     hasInstagramQr={preview.hasInstagramQr}
                     hasBookingQr={preview.hasBookingQr}
+                    hotspotEnabled={preview.hotspotEnabled}
                   />
                 </Box>
               </Box>

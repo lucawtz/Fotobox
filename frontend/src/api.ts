@@ -141,6 +141,10 @@ export interface AdminConfig {
   /** Galerie-Adresse ohne Schema, wie sie auf dem Boxschirm steht
    *  (z. B. "fotobox.internal"). Nur zum Anzeigen. */
   gallery_address?: string;
+  /** Ob die Box selbst der Access-Point ist. Owner-Setting, nur lesbar —
+   *  die Theme-Vorschau braucht es, weil die Box den Hinweis "Kein Passwort
+   *  noetig" nur dann schreibt (ui.py: _wifi_rows). */
+  hotspot_enabled?: boolean;
   admin_pin?: string;
   host_pin?: string;
 }
