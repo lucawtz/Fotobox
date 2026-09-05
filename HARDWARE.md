@@ -271,6 +271,19 @@ Ohne den linken Taster weckt **trigger + rechts gleichzeitig** die Kamera, und
 Das README nennt weiterhin „3× Taster mit Pull-up" — das ist die Anforderung,
 nicht der Ist-Zustand.
 
+**Verdrahtung am 05.09.2026 ausgemessen und angeschlossen:**
+
+| Taster | Ader | Kontakt | Pin |
+|---|---|---|---|
+| **Blau** (Auslösen) | schwarz | `C` | 9 (GND) |
+| | blau | `NO` | 13 (GPIO27) |
+| **Grau** (Collage/Drucken) | weiß | `C` | 14 (GND) |
+| | grün | `NO` | 15 (GPIO22) |
+
+Die Adernfarben der beiden Stecker bedeuten **nicht** dasselbe — blau ist
+einmal `NO` und einmal `NC`. Vollständige Belegung, die Messmethode für einen
+unbekannten Taster und die Fallstricke dabei: [TASTER.md](TASTER.md).
+
 ---
 
 ## Netzwerk
