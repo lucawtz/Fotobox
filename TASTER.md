@@ -17,8 +17,17 @@ festhält. Hier steht der Weg dorthin.
 | **Grau** — Collage / Drucken | **weiß** | `C` | **14** | GND |
 | | **grün** | `NO` | **15** | GPIO22 |
 
-Alles andere bleibt frei. Die Zielbelegung `trigger=27`, `right=22` steht in
-`config.py` unter `gpio_pins`.
+Und die LED-Ringe, als Dauerlicht ohne Code:
+
+| Taster | Ader | | Pin |
+|---|---|---|---|
+| **Blau** | **grün** | LED **+** | **1** (3,3 V) |
+| | gelb | LED − | **6** (GND) |
+| **Grau** | **schwarz** | LED **+** | **17** (3,3 V) |
+| | rot | LED − | **20** (GND) |
+
+Der `NC`-Kontakt bleibt bei beiden frei — rot am blauen, blau am grauen. Die
+Zielbelegung `trigger=27`, `right=22` steht in `config.py` unter `gpio_pins`.
 
 ---
 
@@ -41,7 +50,8 @@ Adern: gelb, schwarz, rot, blau, grün. Kontaktblock beschriftet `1 NO 2` / `3 N
 | schwarz | **`C`** |
 | blau | **`NO`** |
 | rot | `NC` |
-| gelb, grün | LED |
+| **grün** | LED **+** |
+| gelb | LED − |
 
 ### Taster Grau
 
@@ -52,7 +62,8 @@ Adern: weiß, schwarz, rot, blau, grün. Beschriftung wirkt spiegelbildlich.
 | weiß | **`C`** |
 | grün | **`NO`** |
 | blau | `NC` |
-| schwarz, rot | LED |
+| **schwarz** | LED **+** |
+| rot | LED − |
 
 ---
 
@@ -68,11 +79,8 @@ Eine LED braucht 5–20 mA, also einen Faktor von mehreren hundert mehr.
 
 Dazu kommt: **die Software steuert überhaupt keine LED an.** In `hardware.py`
 werden ausschließlich `Button`-Objekte angelegt, LED-Code gibt es im Repo
-nirgends. Wer Dauerlicht will, hängt die LED an 3,3 V (Pin 1 oder 17) und GND
-— vorher die Nennspannung auf dem Taster prüfen, diese Ringe gibt es als
-3–6 V, 12 V und 24 V. Erst 3,3 V versuchen: fehlt der Vorwiderstand, zerstören
-5 V die LED. GPIO17 (Pin 11) wäre frei, falls die LED einmal geschaltet werden
-soll; ein GPIO liefert bis ~16 mA, darüber braucht es einen Transistor.
+nirgends. Als Dauerlicht gehören die LEDs an die Versorgung, nicht an einen
+GPIO — siehe unten.
 
 ---
 
@@ -104,6 +112,54 @@ venv/bin/pinout
 
 Spalte 1 und 2 der äußeren Reihe sind **5 V**. Eine Ader, die dort landet und
 über den Taster auf einen GPIO trifft, speist 5 V in einen 3,3-V-Eingang.
+
+---
+
+## LED-Ringe
+
+Am **05.09.2026** angeschlossen und in Betrieb gesehen. **Beide leuchten an
+3,3 V**, es sind also Niedervolt-Typen (3–6 V), keine 12- oder 24-V-Ringe.
+
+| Taster | LED **+** | LED − | Pins |
+|---|---|---|---|
+| **Blau** | **grün** | gelb | 1 / 6 |
+| **Grau** | **schwarz** | rot | 17 / 20 |
+
+Pin 1 und 17 sind die einzigen beiden 3,3-V-Pins am Header — jeder Taster
+bekommt einen, so muss keine Ader gespleißt werden. **Pin 1 hat 5 V als
+direkten Nachbarn** (Pin 2, dieselbe Spalte, äußere Reihe); eine verrutschte
+Hülse legt dort 5 V an die LED.
+
+Die LEDs leuchten damit, sobald der Pi Strom hat — auch beim Booten und nach
+dem Herunterfahren, solange das Netzteil steckt. Nebeneffekt: ein brauchbarer
+Betriebsindikator.
+
+**Ein Vorwiderstand ist eingebaut, extern sitzt keiner.** Der Nachweis ist der
+graue Taster: er *glimmt* an 3,3 V. Ohne internen Widerstand wäre eine LED
+direkt zwischen 3,3 V und GND nicht schwach, sondern grell — und bei roter
+Flussspannung (~2 V) hätte sie den Einschaltmoment kaum überlebt.
+
+**Der blaue leuchtet deutlich kräftiger als der graue.** Es sind zwei
+verschiedene Modelle — unterschiedliche Adernfarben, spiegelbildliche
+Beschriftung, also auch unterschiedlich ausgelegte Vorwiderstände. Der graue
+ist offensichtlich für mehr als 3,3 V gedacht.
+
+Zwei Folgerungen daraus:
+
+- **Grau darf auf 5 V** (Pin 2 oder 4), falls er zu dunkel ist. Reserve ist
+  nachgewiesen.
+- **Blau nicht.** Dass er an 3,3 V schon kräftig leuchtet, heißt: kleiner
+  Vorwiderstand, wenig Reserve. Er tut ohnehin, was er soll.
+
+Beim blauen lohnt eine Kontrolle, weil die Box abends stundenlang läuft und
+eine überfahrene LED über Stunden degradiert, nicht in Sekunden: eine
+Viertelstunde leuchten lassen, dann die Metallfront anfassen. Kühl oder
+handwarm ist in Ordnung. Deutlich warm heißt, es gehören 100–220 Ω in Reihe.
+
+Geschaltet werden könnten die LEDs über GPIO17 (Pin 11) und einen zweiten
+freien GPIO — dann aber mit Code in `hardware.py` und `main.py`, und ab etwa
+10 mA mit einem Transistor davor, weil der Pi-Pad standardmäßig nur 8 mA
+treibt.
 
 ---
 

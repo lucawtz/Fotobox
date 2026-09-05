@@ -280,6 +280,18 @@ nicht der Ist-Zustand.
 | **Grau** (Collage/Drucken) | weiß | `C` | 14 (GND) |
 | | grün | `NO` | 15 (GPIO22) |
 
+Die LED-Ringe liegen als Dauerlicht an der Versorgung, beide leuchten an 3,3 V:
+
+| Taster | Ader | | Pin |
+|---|---|---|---|
+| **Blau** | grün | LED + | 1 (3,3 V) |
+| | gelb | LED − | 6 (GND) |
+| **Grau** | schwarz | LED + | 17 (3,3 V) |
+| | rot | LED − | 20 (GND) |
+
+Der Vorwiderstand sitzt im Taster, extern keiner. Der graue leuchtet
+schwächer — zwei verschiedene Modelle, unterschiedlich ausgelegt.
+
 Die Adernfarben der beiden Stecker bedeuten **nicht** dasselbe — blau ist
 einmal `NO` und einmal `NC`. Vollständige Belegung, die Messmethode für einen
 unbekannten Taster und die Fallstricke dabei: [TASTER.md](TASTER.md).
