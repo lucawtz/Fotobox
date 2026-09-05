@@ -80,6 +80,15 @@ export interface HandoverSteps {
   new_event: boolean;
 }
 
+/** Antwort auf den Neustart-Knopf. `eta_s` ist die geschaetzte Wartezeit bis
+ *  die Box wieder da ist, `retry_after` bei 429 die Restsperre in Sekunden. */
+export interface RestartResult {
+  ok: boolean;
+  error?: string;
+  eta_s?: number;
+  retry_after?: number;
+}
+
 export interface HandoverResult {
   ok: boolean;
   error?: string;
@@ -331,5 +340,10 @@ export const api = {
     newEvent: () =>
       xfetch("/api/admin/event/new", { method: "POST" })
         .then(json<{ ok: boolean; error?: string; folder: string; previous: string }>),
+    // Beendet die Box absichtlich — systemd startet sie neu. Die Antwort
+    // kommt noch vor dem SIGTERM raus; danach ist der Server fuer ein paar
+    // Sekunden weg, und mit ihm der Hotspot.
+    restart: () =>
+      postJson("/api/admin/restart", {}).then(json<RestartResult>),
   },
 };

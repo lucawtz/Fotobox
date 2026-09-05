@@ -162,6 +162,7 @@ http://<pi-ip>/admin             (bei LAN/WLAN-Verbindung)
 - Admin-PIN ändern
 - Alle Fotos löschen (mit Bestätigung)
 - Box für die nächste Vermietung vorbereiten (Wartung → "Box vorbereiten")
+- Fotobox neu starten (Übersicht → "Neu starten")
 
 **Foto löschen (einzeln):** Foto in der Galerie öffnen → "Löschen" → Admin-PIN eingeben.
 
@@ -174,6 +175,22 @@ WLAN-Zugangsdaten und PINs bleiben dabei **unberührt** — ein Reset würde sie
 die Auslieferungswerte zurücksetzen, vor denen das Panel zu Recht warnt. Beides
 gehört also weiterhin von Hand neu vergeben, sonst kommt der Vormieter in
 Funkreichweite wieder ins Admin-Panel.
+
+**Neustart aus der Ferne:** Unter **Übersicht → Neu starten** beendet sich die
+Box selbst; `Restart=always` in `fotobox.service` holt sie nach rund 15 Sekunden
+zurück. Gedacht für die haengende Kamera oder einen Bildschirm, der nicht mehr
+reagiert — an der Box selbst gibt es keinen Weg dorthin, Esc beendet bewusst
+*ohne* Neustart, und eine Tastatur haengt beim Event nicht dran.
+
+Der Knopf steht **Admin und Gastgeber** offen: wer vor der stehenden Box steht,
+ist der Gastgeber, und der hat nur sein Handy im Hotspot. Dem Gastgeber wird
+allerdings zuerst ein Hinweis vorgelegt, dass er dem Box-Besitzer Bescheid geben
+soll — erst nach „Weiter" kommt die eigentliche Rückfrage. Wer es trotzdem tut,
+steht im Log: `Neustart angefordert (Rolle: host)`. Fotos, Event und
+Einstellungen bleiben unangetastet — aber **der Hotspot geht kurz mit weg**, das
+Handy muss sich also neu verbinden. Zwei Neustarts hintereinander sperrt der
+Server 90 Sekunden lang ab: `StartLimitBurst=5` würde den Dienst sonst nach fünf
+Versuchen in fünf Minuten ganz stilllegen, und dann hülfe nur noch SSH.
 
 **Eigenes Logo hinterlegen:** Jeder Upload aus dem Admin-Panel überschreibt
 `Layout/logo.png` — das ist der Mieter-Slot. Lege dein eigenes Logo einmalig

@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import threading
 import time
 from collections import deque
@@ -2267,6 +2268,103 @@ def api_admin_handover():
     logger.info("Uebergabe vorbereitet (%s), %d Fotos geloescht",
                 ", ".join(k for k, v in steps.items() if v), removed)
     return jsonify(ok=True, done=steps, removed=removed, folder=folder)
+
+
+# ── Neustart ───────────────────────────────────────────────────────────────────
+
+# Sperrfrist zwischen zwei Neustarts.
+#
+# Grund ist StartLimitBurst=5 / StartLimitIntervalSec=300 in fotobox.service:
+# wer fuenfmal in fuenf Minuten neu startet, legt den Dienst still — und dann
+# hilft nur noch SSH, also genau das, was dieser Knopf ersparen soll. Ein
+# Durchlauf kostet RestartSec (5 s) + ~6 s Startzeit; ein ungeduldiger
+# Gastgeber, der nach 15 s nochmal drueckt, haette die fuenf muehelos
+# zusammen. 90 s lassen hoechstens vier Starts ins 300-s-Fenster.
+_RESTART_COOLDOWN_S = 90
+
+# Wo der Zeitstempel liegt, ist hier die halbe Miete: /run/fotobox legt
+# systemd bei jedem Start an (RuntimeDirectory=fotobox) und raeumt es beim
+# Neustart NICHT weg (RuntimeDirectoryPreserve=yes). Der Stempel ueberlebt
+# also genau den Neustart, den er begrenzen soll, und ist nach einem echten
+# Reboot von selbst wieder weg. Ein Zaehler im Prozessspeicher koennte das
+# nicht — der stirbt mit dem Prozess, und die Sperre waere wirkungslos.
+_RESTART_STAMP = "/run/fotobox/last_restart"
+
+# Kurzer Aufschub, damit die HTTP-Antwort das Handy noch verlaesst, bevor der
+# Prozess abraeumt. Ohne ihn sieht der Gastgeber einen Netzwerkfehler statt
+# einer Bestaetigung und drueckt nochmal — siehe Sperrfrist oben.
+_RESTART_SIGNAL_DELAY_S = 0.7
+
+# Was die UI als Wartezeit anzeigt: RestartSec (5 s) + gemessene ~6 s bis
+# "Fotobox bereit", plus Reserve fuers Wiederverbinden ins WLAN.
+_RESTART_ETA_S = 15
+
+
+def _restart_blocked_for() -> int:
+    """Verbleibende Sekunden der Sperrfrist, 0 wenn ein Neustart erlaubt ist."""
+    try:
+        with open(_RESTART_STAMP) as fh:
+            last = float(fh.read().strip())
+    except (OSError, ValueError):
+        return 0                    # kein Stempel oder Unsinn drin — freie Bahn
+
+    remaining = int(last + _RESTART_COOLDOWN_S - time.time())
+    # Deckel gegen die fehlende RTC: springt die Uhr per NTP mitten im Betrieb
+    # zurueck, laege der Stempel in der Zukunft und die Sperre haenge stunden-
+    # lang fest. Mehr als die Sperrfrist selbst kann nie offen sein.
+    return max(0, min(remaining, _RESTART_COOLDOWN_S))
+
+
+def _restart_stamp() -> None:
+    """Neustart-Zeitpunkt festhalten. Fehler sind kein Abbruchgrund — ohne
+    Stempel greift nur die Sperrfrist nicht, der Neustart bleibt richtig."""
+    try:
+        with open(_RESTART_STAMP, "w") as fh:
+            fh.write(str(time.time()))
+    except OSError as exc:
+        logger.warning("Neustart-Stempel '%s' nicht geschrieben: %s",
+                       _RESTART_STAMP, exc)
+
+
+def _restart_now() -> None:
+    """Sich selbst das SIGTERM schicken. Eigene Funktion, damit Tests sie
+    ersetzen koennen, ohne os.kill im ganzen Interpreter zu verbiegen."""
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+@app.route("/api/admin/restart", methods=["POST"])
+@_api_login_required
+def api_admin_restart():
+    """Die Fotobox-App neu starten — ohne SSH und ohne Tastatur an der Box.
+
+    Bewusst fuer Admin UND Gastgeber (_api_login_required statt
+    _api_admin_required): wer beim Event vor der haengenden Box steht, ist der
+    Gastgeber, und der hat nur sein Handy im Hotspot. Ein Gast kommt nicht
+    heran — dafuer braucht es eine PIN.
+
+    Den Neustart macht systemd, nicht wir. Wir beenden uns nur sauber: das
+    SIGTERM geht an den eigenen Prozess, main.shutdown setzt running=False,
+    die Box raeumt Kamera und Hotspot ab und endet mit 0 — Restart=always holt
+    sie nach RestartSec zurueck. Nur die 42 waere gesperrt, und die gehoert
+    Esc.
+
+    Kein sys.exit(): das wuerde hier im Waitress-Thread bloss diesen einen
+    Thread beenden, waehrend die Box unbeeindruckt weiterlaeuft.
+    """
+    blocked = _restart_blocked_for()
+    if blocked:
+        return jsonify(
+            ok=False,
+            error=f"Gerade erst neu gestartet — bitte noch {blocked} s warten.",
+            retry_after=blocked,
+        ), 429
+
+    _restart_stamp()
+    logger.info("Neustart angefordert (Rolle: %s) — SIGTERM an PID %d in %.1f s",
+                _session_role(), os.getpid(), _RESTART_SIGNAL_DELAY_S)
+
+    threading.Timer(_RESTART_SIGNAL_DELAY_S, _restart_now).start()
+    return jsonify(ok=True, eta_s=_RESTART_ETA_S)
 
 
 # ── Server starten ─────────────────────────────────────────────────────────────

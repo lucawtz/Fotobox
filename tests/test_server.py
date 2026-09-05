@@ -1,5 +1,6 @@
 """Galerie-Server: Routing, Löschen, Rollentrennung, Bind-Entscheidung."""
 import os
+import threading
 import time
 
 import pytest
@@ -589,7 +590,6 @@ def test_concurrent_test_prints_pull_one_sheet(app, monkeypatch):
     """Zwei gleichzeitige Anfragen (Doppelklick auf einem Thread-Server) duerfen
     nicht beide durch die Zeitpruefung rutschen, bevor der Stempel steht."""
     import printing
-    import threading
     started = threading.Event()
     calls = []
 
@@ -613,3 +613,94 @@ def test_concurrent_test_prints_pull_one_sheet(app, monkeypatch):
 
     assert len(calls) == 1, "zwei Blatt statt einem"
     assert sorted(codes) == [200, 429]
+
+
+# ── Neustart ───────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def restart(app, monkeypatch, tmp_path):
+    """Neustart-Route mit abgefangenem Signal.
+
+    Ohne den Ersatz fuer _restart_now wuerde der Test pytest selbst das
+    SIGTERM schicken. Der Stempel wandert nach tmp_path, weil /run/fotobox auf
+    der Entwicklungsmaschine nicht existiert (und dort auch nichts zu suchen
+    hat).
+    """
+    fired = threading.Event()
+    monkeypatch.setattr(gallery_server, "_restart_now", fired.set)
+    monkeypatch.setattr(gallery_server, "_RESTART_SIGNAL_DELAY_S", 0.01)
+    monkeypatch.setattr(gallery_server, "_RESTART_STAMP",
+                        str(tmp_path / "last_restart"))
+    return app, fired
+
+
+def test_restart_needs_a_login(restart):
+    app, fired = restart
+    r = app.post("/api/admin/restart")
+    assert r.status_code == 401
+    assert not fired.wait(0.2), "abgemeldeter Aufrufer hat die Box beendet"
+
+
+@pytest.mark.parametrize("role", ["admin", "host"])
+def test_restart_is_open_to_both_roles(restart, role):
+    """Der Gastgeber steht beim Event vor der Box — er braucht den Knopf am
+    dringendsten. Deshalb _api_login_required und nicht _api_admin_required."""
+    app, fired = restart
+    r = _login(app, role).post("/api/admin/restart")
+    assert r.status_code == 200
+    assert r.get_json()["ok"] is True
+    assert fired.wait(2), f"Rolle {role} loeste kein SIGTERM aus"
+
+
+def test_restart_answers_before_it_signals(restart):
+    """Die Antwort muss raus sein, bevor der Prozess abraeumt — sonst sieht
+    der Gastgeber einen Netzwerkfehler und drueckt gleich nochmal."""
+    app, fired = restart
+    _login(app).post("/api/admin/restart")
+    # Der Client hat die Antwort schon; das Signal kommt erst danach.
+    assert fired.wait(2)
+
+
+def test_second_restart_is_blocked(restart):
+    """Fuenf Starts in fuenf Minuten legen den Dienst still
+    (StartLimitBurst) — genau davor schuetzt die Sperrfrist."""
+    app, _ = restart
+    client = _login(app)
+    assert client.post("/api/admin/restart").status_code == 200
+
+    r = client.post("/api/admin/restart")
+    assert r.status_code == 429
+    body = r.get_json()
+    assert body["ok"] is False
+    assert 0 < body["retry_after"] <= gallery_server._RESTART_COOLDOWN_S
+
+
+def test_cooldown_expires(restart, monkeypatch):
+    app, _ = restart
+    client = _login(app)
+    assert client.post("/api/admin/restart").status_code == 200
+
+    later = time.time() + gallery_server._RESTART_COOLDOWN_S + 1
+    monkeypatch.setattr(gallery_server.time, "time", lambda: later)
+    assert client.post("/api/admin/restart").status_code == 200
+
+
+def test_stamp_from_the_future_does_not_lock_the_box(restart, tmp_path):
+    """Der Pi hat keine RTC: springt die Uhr per NTP zurueck, liegt der
+    Stempel in der Zukunft. Ohne Deckel haenge die Sperre stundenlang."""
+    app, _ = restart
+    with open(gallery_server._RESTART_STAMP, "w") as fh:
+        fh.write(str(time.time() + 86400))
+
+    assert gallery_server._restart_blocked_for() <= gallery_server._RESTART_COOLDOWN_S
+
+
+def test_unwritable_stamp_still_restarts(restart, monkeypatch):
+    """Kein /run/fotobox? Dann greift die Sperrfrist nicht — der Neustart
+    selbst bleibt trotzdem richtig und muss durchgehen."""
+    app, fired = restart
+    monkeypatch.setattr(gallery_server, "_RESTART_STAMP",
+                        "/gibtsnicht/last_restart")
+    r = _login(app).post("/api/admin/restart")
+    assert r.status_code == 200
+    assert fired.wait(2)
