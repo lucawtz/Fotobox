@@ -16,6 +16,10 @@ Bis dahin bleibt sie hier.
 
 **Pflege:** Verworfene Ideen werden nicht gelöscht, sondern mit `~~Titel~~` und
 einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
+Umgesetzte genauso wenig: sie bekommen **✅ gebaut TT.MM.JJJJ** in die
+Titelzeile, behalten die getroffene Entscheidung und verweisen auf Code und
+README. Ein Eintrag, der „denkbar wäre…" schreibt, obwohl es das längst gibt,
+schickt den Nächsten auf eine Runde, die schon gedreht wurde.
 
 ---
 
@@ -301,6 +305,28 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
   `render_slideshow` auf den Homescreen zurück (`ui.py:2048-2050`) — eine leere
   Box startet keine leere Diashow.
 
+- **Pausemodus — „gleich wieder da"** — *notiert 09.09.2026, Ausgestaltung offen*
+  *Heute:* Die Box kennt genau einen Zustand: läuft. Der Halte-Prozess hält die
+  PTP-Sitzung und damit den Live-View dauerhaft offen (`camera.py`), und
+  `idle_timeout` steht per Default auf `0`, also aus (`config.py`). Beim Essen
+  und während der Reden steht sie deshalb eine Stunde mit laufendem Live-Bild,
+  offener USB-Sitzung und leerlaufendem Kamera-Akku da — für niemanden.
+  *Denkbar:* Ein Knopf im Admin-Panel schaltet auf Pause. Der Boxschirm zeigt
+  einen Hinweis statt des Live-Bildes, die Taster lösen nicht aus, die Kamera
+  darf schlafen. Zurück per Panel oder per Tastendruck an der Box.
+  *Der Haken, der die Idee zuschneidet:* Ob der Live-View wirklich fallen darf,
+  ist die eigentliche Frage. Ihn zurückzuholen dauert (`HARDWARE.md`,
+  „Live-Bild nach dem Stromzyklus"), und der erste Gast nach der Pause steht
+  dann vor einem schwarzen Schirm. Eine Pause, die den Live-View *hält* und nur
+  die Oberfläche umschaltet, ist die sichere Variante — spart dafür weder Akku
+  noch USB-Sitzung, also genau das, wofür sie gedacht war.
+  *Verhältnis zur Diashow darüber:* Beide beantworten dieselbe Stunde
+  verschieden — die Diashow füllt sie, die Pause räumt sie weg. Sie schließen
+  sich nicht aus (Pause könnte die Diashow zeigen), sollten aber zusammen
+  entschieden werden, sonst baut man zwei Ruhezustände nebeneinander.
+  *Offen:* Wer schaltet zurück? Was steht auf dem Schirm — ein Text des
+  Gastgebers oder eine feste Zeile? Soll die Pause von selbst enden?
+
 ## Gäste
 
 - **Mehrsprachigkeit**
@@ -428,34 +454,92 @@ einer Zeile Grund markiert — sonst kommen sie in einem halben Jahr wieder.
   (4) **Nicht druckbar.** Handybilder am Drucker freizugeben leert die
   Farbbandkassette vor Mitternacht — hängt am Nachdruck-Punkt darüber.
 
+- **Papierkorb statt Sofortlöschen** — *notiert 09.09.2026, bewusst klein gehalten*
+  *Heute — und das korrigiert die Annahme, aus der die Idee entstand:* Gäste
+  können **gar nichts löschen**. `api_delete` verlangt eine offene Session oder
+  Admin-/Host-PIN im Formular (`gallery_server.py:1367-1390`); ohne PIN kommt
+  403. Der Löschknopf ist zwar für jeden sichtbar, der Dialog fragt dann aber
+  nach der PIN (`DeleteDialog.tsx`). Die Idee war ursprünglich mit „ein Gast
+  vertippt sich" begründet — das kann nicht passieren.
+  *Was bleibt:* Der Fehlgriff des Gastgebers. Spätabends auf dem Handy, beim
+  Aufräumen, das falsche Bild erwischt. `os.remove` ist endgültig
+  (`gallery_server.py:1401`), Thumbnail und Preview gehen im selben Zug mit.
+  *Denkbar:* Ein `.trash`-Unterordner im Event-Verzeichnis statt `os.remove`,
+  sichtbar nur für den Admin, geleert bei der Übergabe
+  (`api_admin_handover`) und vom Alters-Cleanup miterfasst
+  (`disk_monitor.enforce_photo_max_age`) — sonst wächst ein Ordner, den
+  niemand ansieht.
+  *Warum das klein bleiben soll:* Der Fall ist selten und trifft genau die
+  Person, die weiß, was sie getan hat. Ein sichtbarer Papierkorb in der Galerie
+  wäre die falsche Antwort — er zeigt gelöschte Bilder wieder her, und
+  „gelöscht" soll für Gäste gelöscht heißen. Niedrige Priorität, nach Oktober.
+
 ## Betrieb
 
-- **Papierzähler und Druckkontingent**
-  *Heute:* Nichts zählt mit. `printing.refresh_status` fragt CUPS nur nach dem
-  Zustand (`idle` / `printing` / `disabled`, `printing.py:61-77`) — einen
-  Füllstand liefert das nicht, und der Selphy meldet über USB auch keinen.
-  Das Ende der Kassette merkst du am Eventabend also genau dann, wenn es
-  eintritt.
-  *Denkbar:* Kassettengröße in die Config, ein Zähler, den `print_photo`
-  hochzählt, Restanzeige im Admin-Panel und eine Warnung ab einer Schwelle.
-  Zurückgesetzt wird beim Kassettenwechsel per Knopf im Panel.
-  *Der Haken, der das Feature prägt:* `print_photo` gibt `True` zurück, sobald
-  **CUPS den Job angenommen hat** — nicht wenn das Blatt gedruckt ist; der
-  Docstring sagt das ausdrücklich (`printing.py:308-313`). Ein Zähler zählt
-  also angenommene Aufträge, keine Blätter. Papierstau, abgebrochener Job oder
-  ein Neustart mit Jobs in der Warteschlange lassen ihn driften. Daraus folgt:
-  **Die Zahl ist eine Schätzung und muss im Panel von Hand korrigierbar sein**
-  — sonst ist sie schlimmer als keine Zahl, weil man sich auf sie verlässt.
-  Ein Zähler, der „37 übrig" behauptet, während die Kassette leer ist, hilft
-  niemandem.
-  *Nicht vergessen:* `print_copies` erlaubt bis zu 9 Kopien pro Auftrag
-  (`printing.py:294-296`), der Zähler muss also die Kopienzahl addieren, nicht
-  eins. Und wenn der Gästebuch-Doppeldruck je kommt, verdoppelt sich der
-  Verbrauch pro Aufnahme — beide Punkte hängen zusammen.
-  *Offene Frage:* Soll ein erreichtes Kontingent das Drucken **sperren** oder
-  nur warnen? Sperren schützt den Vorrat für den späteren Abend, nimmt dem
-  Gastgeber aber die Entscheidung aus der Hand. Warnen ist der sanftere
-  Anfang.
+- **Papierzähler und Druckkontingent** — ✅ **gebaut 09.09.2026** (Zähler;
+  Kontingent bewusst nicht)
+  *Was daraus wurde:* `paper.py` zählt jeden Auftrag mit, den CUPS annimmt,
+  angestoßen aus `printing.print_photo`. Stand in `.paper_state.json` neben der
+  `config.json`, Anzeige im Admin-Panel (Drucken → Papiervorrat) und in der
+  Statusleiste der Box, Warnschwelle `paper_warn_at`. Beschrieben im README
+  unter „Papiervorrat".
+  *Die Haken von damals sind so eingebaut, wie sie hier standen:* Der Zähler
+  addiert die **Kopienzahl**, nicht eins (`printing._copies` liefert dieselbe
+  Zahl an lp und an den Zähler). Er ist als **Schätzung** ausgewiesen — überall
+  steht „ca." — und im Panel von Hand korrigierbar („Nachgezählt"), weil
+  Papierstau und abgebrochene Aufträge ihn driften lassen.
+  *Die offene Frage ist entschieden: nur warnen, nicht sperren.* Ob wirklich
+  Papier da ist, weiß allein der Drucker (`media-empty`); ein Zähler, der auf 0
+  steht, während die Kassette voll ist, darf den Drucken-Knopf nicht wegnehmen.
+  *Was offen blieb:* (1) Das **Kontingent** selbst — eine Obergrenze pro Abend
+  oder pro Gast gibt es nicht, und damit auch die Sperrfrage nicht. (2) Ob der
+  Drucker doch einen echten Füllstand liefert (`marker-levels`), ist ungeprüft;
+  die Prüfbefehle stehen in `HARDWARE.md` im Abschnitt Drucker. (3) Die Anzeige
+  auf dem Boxmonitor blendet mit der Statusleiste nach 30 s aus — dauerhaft
+  sichtbar ist sie nicht.
+
+- **Zweitkopie auf die Speicherkarte der Kamera** — *Wunsch 09.09.2026 (Luca):
+  vorhandene 16-GB-Karte als Backup, Bilder dort nach einem Monat automatisch
+  weg*
+  *Heute:* `capturetarget` steht auf **Internal RAM** (`HARDWARE.md`, Abschnitt
+  Kamera) — die Karte wird nicht beschrieben, `--capture-image-and-download`
+  holt das Bild aus dem internen Speicher (`camera.py:568`). Das einzige Backup
+  ist der manuelle USB-Export (`scripts/usb_export.py`); die Roadmap führt
+  „Automatisches Backup (rsync/NAS)" als offenen P3-Punkt.
+  *Was es brächte:* Eine Kopie, die weder Pi noch Netz noch diese Software
+  braucht. 16 GB fassen bei Large Fine JPEG der 700D grob 2000 Bilder, also
+  mehrere Events — Platz ist nicht das Thema. Der Wert ist die Unabhängigkeit:
+  stirbt die SD-Karte des Pi zwischen Feier und Übergabe, ist der Abend
+  trotzdem da.
+  *Der Haken, direkt aus dem Code:* `camera.py:705-717` nennt „capturetarget
+  zeigt auf die Speicherkarte statt auf den internen Speicher" ausdrücklich als
+  eine der zwei bekannten Ursachen für *„Kamera hat kein Bild geliefert"* —
+  früher lief die Box damit in einen schwarzen Result-Screen ohne Erklärung.
+  Die Umstellung fasst also genau die Stelle an, an der die Aufnahme schon
+  einmal still gescheitert ist. **Vor der Generalprobe testen, nicht danach**,
+  und der Auslöser ist der eine Pfad, der niemals wackeln darf.
+  *Ungeprüft, gehört gemessen:* (a) ob `--capture-image-and-download` mit
+  Kartenziel die Datei auf der Karte liegen lässt oder sie nach dem Download
+  entfernt (gphoto2 kennt dafür `--keep`); (b) ob die Auslöseverzögerung steigt
+  — sie ist gemessen und `capture_lead_s` hängt daran.
+  *Löschen nach einem Monat — der schwierige Teil:* Die Karte ist nur über
+  dieselbe PTP-Sitzung erreichbar, die der Halte-Prozess offen hält. Ein
+  paralleler `gphoto2`-Aufruf kollidiert (`HARDWARE.md`: „Dienst vorher
+  stoppen, sonst hält der Halte-Prozess das Gerät"). Das Aufräumen muss also in
+  das Fenster, in dem der Halter ohnehin neu startet — nicht als eigener Job
+  daneben. Werkzeug wäre `--list-files` / `--delete-file` je Kameraordner.
+  Fällt das Aufräumen aus, ist das kein Drama: die Karte läuft erst nach
+  Tausenden Bildern voll. Es darf nur nie die Aufnahme aufhalten.
+  *Bewusst hinzunehmen — die Asymmetrie:* Der Pi löscht nach
+  `photo_max_age_days` (7 Tage), die Karte soll vier Wochen halten. Das ist der
+  Sinn eines Backups, heißt aber auch: die Fotos einer fremden Feier liegen
+  drei Wochen länger in der Kameratasche als auf der Box, die sie aufgenommen
+  hat. Wer die Box vermietet, sollte das wissen.
+  *Offene Frage:* Bei der Übergabe an den nächsten Gastgeber die Karte
+  mitleeren (`api_admin_handover` hakt heute Fotos, Branding und Logo ab)? Das
+  wäre konsequent, verkürzt aber genau die Frist, für die das Backup da ist.
+  *Nebenfund:* Die Kamerauhr geht 3602 s nach (`HARDWARE.md`, Abschnitt Uhr).
+  Für eine Monatsgrenze egal, für die Sortierung der Kartendateien nicht.
 
 - **Druck-Warteschlange sichtbar machen**
   *Heute:* `printing.refresh_status` fragt `lpstat -p`, `-e` und `-d` ab
