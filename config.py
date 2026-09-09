@@ -36,6 +36,8 @@ _BOX_FIELDS = frozenset({
     "print_mode",
     "print_scale_pct",
     "print_bleed_mm",
+    "paper_pack_size",
+    "paper_warn_at",
 })
 
 # Alles was persistiert wird. Der Rest lebt ausschliesslich in _DEFAULTS und
@@ -348,6 +350,22 @@ _DEFAULTS: dict = {
     # Wie lange der Drucker fuer ein Bild braucht. Geht nur in die Schaetzung
     # ein, die der Box-Dialog anzeigt, wenn Auftraege in der Queue haengen.
     "print_seconds_per_photo": 60,
+    # ── Papiervorrat ───────────────────────────────────────────────────────
+    # Blatt je Papierpaket. Der Selphy meldet "Papier leer" erst, wenn das
+    # letzte Blatt durch ist — zum Nachlegen ist das zu spaet. paper.py zaehlt
+    # deshalb mit; hier steht, wovon abgezogen wird.
+    #
+    # Canon-Pakete: KP-108IN und RP-108 = 108 Blatt, KP-36IP = 36, KP-72IN =
+    # 72. Papier und Farbband reichen im Paket gleich weit, eine Zahl deckt
+    # also beides ab.
+    #
+    # 0 = aus. Das ist Absicht als Auslieferungswert: was in der Kassette
+    # liegt, weiss nur wer sie eingelegt hat. Eine geratene Zahl waere
+    # schlimmer als keine — danach glaubt man ihr.
+    "paper_pack_size": 0,
+    # Ab wieviel Restblatt gewarnt wird. 10 sind beim Selphy rund zehn
+    # Minuten Druckzeit — genug, um in Ruhe ein Paket zu holen.
+    "paper_warn_at": 10,
     "camera_keepalive_s": 25,
     # Index aus `gphoto2 --get-config output`, NICHT der Klartextwert. Welche
     # Nummer TFT+PC meint, unterscheidet sich je nach Modell — steht der

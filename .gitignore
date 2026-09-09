@@ -7,6 +7,9 @@ logs/
 *.log
 .flask_secret
 config.json
+# Papierzaehler (paper.py). Boxspezifischer Stand, so wie die config.json
+# daneben — ein `git pull` auf dem Pi darf ihn nicht anfassen.
+.paper_state.json
 
 # Frontend Build-Artefakte
 frontend/node_modules/

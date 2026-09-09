@@ -295,6 +295,42 @@ def test_host_cannot_change_printer(app):
     assert config.cfg["printer_name"] == "Selphy"
 
 
+def test_paper_endpoint_is_admin_only(app):
+    """Das Papier gehoert zur Hardware, so wie die Druckerauswahl daneben —
+    der Mieter soll den Zaehler nicht verstellen koennen."""
+    assert app.post("/api/admin/paper", json={"action": "refill"}).status_code == 401
+    assert _login(app, "host").post(
+        "/api/admin/paper", json={"action": "refill"}).status_code == 403
+    assert _login(app, "admin").post(
+        "/api/admin/paper", json={"action": "refill"}).status_code == 200
+
+
+def test_paper_refill_resets_the_count(app):
+    import paper
+    _login(app, "admin").post("/api/admin/config", json={
+        "wifi_ssid": "F", "wifi_password": "gueltig123", "paper_pack_size": 108})
+    paper.record(config.cfg, 12)
+    body = _login(app, "admin").post("/api/admin/paper",
+                                     json={"action": "refill"}).get_json()
+    assert body["ok"] is True and body["paper"]["left"] == 108
+
+
+def test_hand_correction_without_a_pack_size_says_why(app):
+    """Ohne Paketgroesse gibt es keinen Bezugswert. Still schlucken waere hier
+    das Schlimmste: dann tippt jemand eine Zahl ein und nichts passiert."""
+    _login(app, "admin").post("/api/admin/config", json={
+        "wifi_ssid": "F", "wifi_password": "gueltig123", "paper_pack_size": 0})
+    r = _login(app, "admin").post("/api/admin/paper", json={"action": "left", "left": 40})
+    assert r.status_code == 400 and "Paketgröße" in r.get_json()["error"]
+
+
+@pytest.mark.parametrize("value,expected", [(-5, 0), (5000, 999), ("108", 108)])
+def test_pack_size_clamped(app, value, expected):
+    _login(app, "admin").post("/api/admin/config", json={
+        "wifi_ssid": "F", "wifi_password": "gueltig123", "paper_pack_size": value})
+    assert config.cfg["paper_pack_size"] == expected
+
+
 @pytest.mark.parametrize("value,expected", [(0, 1), (99, 9), (4.7, 4)])
 def test_print_copies_clamped(app, value, expected):
     _login(app, "admin").post("/api/admin/config", json={

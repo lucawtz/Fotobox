@@ -123,6 +123,8 @@ Diese Tabelle wird aus `config.py` gepflegt — bei Änderungen dort bitte mitzi
 | `print_options` | Zusätzliche rohe `lp -o`-Optionen | `[]` |
 | `print_scale_pct` | Anteil der Seite, den das Bild einnimmt (50–100). Grobe Korrektur gegen den Bleed des randlosen Treibers, wirkt auf beide Achsen gleich | `100` |
 | `print_bleed_mm` | Überstand je Blattrand als `[lange Kante, kurze Kante]` in mm. Feine Korrektur, wirkt je Achse einzeln. Im Admin-Panel einstellbar | `[0, 0]` |
+| `paper_pack_size` | Blatt je Papierpaket für den Papierzähler. `0` = aus. Im Admin-Panel einstellbar | `0` |
+| `paper_warn_at` | Ab wieviel Restblatt gewarnt wird | `10` |
 | `camera_keepalive_s` | Intervall des Kamera-Watchdogs | `25` |
 | `camera_output_mode` | Index aus `gphoto2 --get-config output` | `"3"` |
 | `camera_preview_pull` | Preview-Frame nach jedem Live-View-Wake (siehe unten) | `true` |
@@ -523,6 +525,36 @@ die man einem gedruckten Gruppenfoto nicht ansieht:
 
 Der Testdruck nimmt immer genau ein Blatt, unabhängig von `print_copies`, und
 ist auf einen alle 30 s begrenzt.
+
+### Papiervorrat
+
+Der Selphy meldet über CUPS nur `media-empty`, und das erst, wenn das letzte
+Blatt durch ist — zum Nachlegen ist das zu spät. Einen Füllstand gibt das Gerät
+über den `usblp`-Treiber nicht heraus, also zählt `paper.py` selbst mit: jeder
+Auftrag, den CUPS annimmt, zieht so viele Blatt ab, wie er Kopien hat
+(Testdrucke eingeschlossen). Der Stand liegt in `.paper_state.json` neben der
+`config.json` und übersteht einen Neustart mitten im Event.
+
+Einrichten im Admin-Panel unter **Drucken → Papiervorrat**: Blattzahl des
+eingelegten Pakets eintragen und speichern. Canon-Pakete haben 108 Blatt
+(KP-108IN, RP-108), 72 (KP-72IN) oder 36 (KP-36IP); Papier und Farbband reichen
+im Paket gleich weit, eine Zahl deckt also beides ab. `0` schaltet die Anzeige
+ab — das ist der Auslieferungswert, denn was in der Kassette liegt, weiß nur
+wer sie eingelegt hat.
+
+Angezeigt wird der Stand an zwei Stellen: im Panel als „noch ca. X von Y", auf
+dem Boxschirm in der Statusleiste. Unterhalb von `paper_warn_at` wird beides
+gelb, bei rechnerisch leerem Paket rot.
+
+Zwei Knöpfe halten den Zähler ehrlich:
+
+* **Neues Paket eingelegt** — setzt auf voll zurück. Nach jedem Nachlegen.
+* **Nachgezählt** — setzt den Stand von Hand. Nach einem Papierstau, einem in
+  CUPS abgebrochenen Auftrag oder einer nachgelegten Handvoll Blatt.
+
+Das ist eine Schätzung, kein Messwert: gezählt werden angenommene Aufträge,
+nicht durchgelaufene Blatt. Deshalb steht überall „ca.", und deshalb sperrt der
+Zähler nichts — ob wirklich Papier da ist, weiß allein der Drucker.
 
 **Welche Optionen der Treiber akzeptiert**, zeigt:
 

@@ -24,6 +24,7 @@ import collage as collage_mod
 import config
 import disk_monitor
 import events
+import paper
 
 logger = logging.getLogger(__name__)
 
@@ -1711,6 +1712,8 @@ def api_admin_config():
             # in die config.json geschrieben hat.
             "print_scale_pct":    _print_scale_pct(),
             "print_bleed_mm":     list(_print_bleed_mm()),
+            "paper_pack_size":    paper.pack_size(config.cfg),
+            "paper_warn_at":      paper.warn_at(config.cfg),
             "role":               role,
             # Damit das Admin-Panel dieselben Grenzen anzeigt, die hier
             # abgeschnitten wird — statt sie ein zweites Mal zu verdrahten.
@@ -1862,6 +1865,21 @@ def api_admin_config():
                 pass
         if new_bleed is not None:
             config.cfg["print_bleed_mm"] = new_bleed
+        # Paketgroesse und Warnschwelle. Beide werden hier begrenzt und nicht
+        # in paper.py durchgereicht: der Zaehler soll mit dem rechnen, was
+        # gespeichert ist, und nicht jedes Mal einen Unsinnswert abfangen.
+        if "paper_pack_size" in data:
+            try:
+                config.cfg["paper_pack_size"] = max(
+                    0, min(paper.PACK_MAX, int(data.get("paper_pack_size") or 0)))
+            except (TypeError, ValueError):
+                pass
+        if "paper_warn_at" in data:
+            try:
+                config.cfg["paper_warn_at"] = max(
+                    0, min(paper.PACK_MAX, int(data.get("paper_warn_at") or 0)))
+            except (TypeError, ValueError):
+                pass
         # Zustand sofort neu ermitteln, damit die Oberflaeche nicht den alten
         # Cache-Wert zeigt und der Result-Screen den Knopf richtig setzt.
         try:
@@ -1923,7 +1941,13 @@ def api_admin_printers():
         return jsonify(ok=True,
                        printers=printing.list_printers(),
                        default=printing.default_printer(),
-                       status=printing.refresh_status(config.cfg))
+                       status=printing.refresh_status(config.cfg),
+                       # Faehrt hier mit, statt einen eigenen Endpunkt zu
+                       # bekommen: die Druckseite laedt das hier nach jedem
+                       # Speichern und nach jedem Testdruck neu — genau die
+                       # beiden Momente, in denen sich der Papierstand aendern
+                       # kann.
+                       paper=paper.state(config.cfg))
     except Exception as exc:
         logger.error("Druckerliste: %s", exc, exc_info=True)
         # Bewusst 200: die Admin-Seite soll "kein Drucksystem" anzeigen
@@ -1931,7 +1955,11 @@ def api_admin_printers():
         return jsonify(ok=False, error="Drucksystem nicht erreichbar",
                        printers=[], default=None,
                        status={"available": False, "printer": None,
-                               "message": "Drucksystem nicht erreichbar"}), 200
+                               "message": "Drucksystem nicht erreichbar"},
+                       # Der Zaehler haengt nicht an CUPS. Ohne Drucksystem
+                       # ist er das einzige, was ueber das Papier noch etwas
+                       # sagen kann — also nicht mit weglassen.
+                       paper=paper.state(config.cfg)), 200
 
 
 # Ein Testdruck kostet ein Blatt Thermosublimationspapier. Ein Doppelklick oder
@@ -1989,6 +2017,47 @@ def api_admin_print_test():
                        error=None if ok else message), 200
     finally:
         _test_print_lock.release()
+
+
+@app.route("/api/admin/paper", methods=["POST"])
+@_api_admin_required
+def api_admin_paper():
+    """Papierzaehler zuruecksetzen oder von Hand korrigieren.
+
+    Zwei Aktionen, weil es zwei verschiedene Vorgaenge sind: `refill` heisst
+    "neues Paket drin, faengt bei voll an", `left` heisst "ich habe gerade
+    nachgezaehlt". Das Panel unterscheidet sie auch in der Anzeige — ein
+    frisch eingelegtes Paket bekommt ein Datum, eine Handkorrektur nicht.
+
+    Nur fuer den Box-Besitzer, nicht fuer den Gastgeber: das Papier gehoert
+    zur Hardware, so wie die Druckerauswahl daneben.
+    """
+    data = request.get_json(silent=True) or request.form
+    action = str(data.get("action") or "").strip().lower()
+
+    if action == "refill":
+        st = paper.refill(config.cfg)
+        logger.info("Papier nachgelegt: Zaehler zurueckgesetzt (%d Blatt)", st["size"])
+        return jsonify(ok=True, paper=st)
+
+    if action == "left":
+        if paper.pack_size(config.cfg) <= 0:
+            # Ohne Paketgroesse gibt es keinen Bezugswert, aus dem sich ein
+            # Rest ergaebe. Bewusst 400 mit Klartext statt still zu schlucken:
+            # sonst tippt jemand eine Zahl ein und nichts passiert.
+            return jsonify(ok=False,
+                           error="Erst die Paketgröße eintragen und speichern — "
+                                 "ohne sie weiß der Zähler nicht, wovon er abzieht."), 400
+        try:
+            left = int(data.get("left"))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="Ungültige Blattzahl"), 400
+        st = paper.set_left(config.cfg, left)
+        logger.info("Papierstand von Hand gesetzt: noch %d von %d Blatt",
+                    st["left"], st["size"])
+        return jsonify(ok=True, paper=st)
+
+    return jsonify(ok=False, error="Unbekannte Aktion"), 400
 
 
 _ALLOWED_LOGO_FORMATS = {"PNG", "JPEG", "GIF", "WEBP", "BMP"}

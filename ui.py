@@ -725,6 +725,10 @@ class UI:
         # Von main.py gesetzt (gecachter CUPS-Zustand aus printing.status()).
         # Steuert, ob der Result-Screen einen Druck-Knopf anbietet.
         self.print_ready        = False
+        # Ebenfalls von main.py, aus paper.state(). Nur fuer die Statusleiste:
+        # der Zaehler ist eine Schaetzung und darf den Druck-Knopf nicht
+        # anfassen — ob wirklich Papier da ist, weiss allein der Drucker.
+        self.paper: dict        = {"tracked": False}
         self._last_reload_check = 0.0
 
         # Polaroid-Galerie
@@ -1864,8 +1868,15 @@ class UI:
             (cam_text, cam_color),
             (self._disk_label(free_mb), self._disk_color(free_mb)),
             (f"Fotos: {photo_count}", C_DIM),
-            ("Hotspot: aktiv" if self._cfg.get("hotspot_enabled") else "Hotspot: aus", C_DIM),
         ]
+        # Papier nur, wenn eine Paketgroesse hinterlegt ist. Ohne die ist der
+        # Zaehler bedeutungslos, und eine Zeile "Papier: 0" waere schlimmer
+        # als keine Zeile.
+        paper_item = self._paper_item()
+        if paper_item:
+            items.append(paper_item)
+        items.append(
+            ("Hotspot: aktiv" if self._cfg.get("hotspot_enabled") else "Hotspot: aus", C_DIM))
         ty = (bar_h - self._f_small.get_height()) // 2
         x = 20
         for text, color in items:
@@ -1874,6 +1885,25 @@ class UI:
             x += lbl.get_width() + 60
         bar.set_alpha(alpha)
         self._screen.blit(bar, (0, H - bar_h))
+
+    def _paper_item(self):
+        """Papierstand fuer die Statusleiste, oder None.
+
+        "ca." steht bewusst dabei: gezaehlt werden angenommene Druckauftraege,
+        nicht durchgelaufene Blatt (siehe paper.py). Ein Stau oder ein
+        abgebrochener Auftrag verschiebt den Stand, und eine glatte Zahl
+        wuerde eine Genauigkeit versprechen, die der Zaehler nicht hat.
+        """
+        st = self.paper or {}
+        if not st.get("tracked"):
+            return None
+        left = int(st.get("left", 0))
+        if st.get("empty"):
+            # Nicht "0 Blatt": der Zaehler weiss nicht, ob wirklich Schluss
+            # ist. Er weiss nur, dass ein Paket rechnerisch durch ist.
+            return ("Papier: Paket durch", C_RED)
+        color = C_YELLOW if st.get("low") else C_DIM
+        return (f"Papier: ca. {left}", color)
 
     def _disk_label(self, free_mb: int) -> str:
         if free_mb < 0:

@@ -15,13 +15,15 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  LinearProgress,
 } from "@mui/material";
 import PrintRoundedIcon from "@mui/icons-material/PrintRounded";
 import TuneRoundedIcon from "@mui/icons-material/TuneRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import FactCheckRoundedIcon from "@mui/icons-material/FactCheckRounded";
 import StraightenRoundedIcon from "@mui/icons-material/StraightenRounded";
-import { api, AdminConfig, Printer, PrinterInfo } from "../../api";
+import Inventory2RoundedIcon from "@mui/icons-material/Inventory2Rounded";
+import { api, AdminConfig, PaperState, Printer, PrinterInfo } from "../../api";
 import SettingsCard from "./SettingsCard";
 
 const MODES = [
@@ -102,6 +104,26 @@ const printerChip = (p: Printer): { label: string; color: ChipColor; title?: str
   return stateChip(p.state);
 };
 
+// Muss zu paper.PACK_MAX passen.
+const PACK_MAX = 999;
+
+/** Ganze Blatt aus einem Eingabefeld, begrenzt wie der Server sie begrenzt.
+ *  Unlesbares wird 0 — also "Zaehler aus" bzw. "leer". */
+const parseSheets = (v: string): number => {
+  const n = Math.round(Number(v.replace(",", ".").trim()));
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(PACK_MAX, n));
+};
+
+/** "vor 3 Tagen" statt eines Zeitstempels: die Frage vor dem Event ist nicht
+ *  "wann genau", sondern "war das noch dieselbe Feier". */
+const sinceLabel = (ts: number): string => {
+  const days = Math.floor((Date.now() / 1000 - ts) / 86400);
+  if (days <= 0) return "heute eingelegt";
+  if (days === 1) return "gestern eingelegt";
+  return `vor ${days} Tagen eingelegt`;
+};
+
 export default function AdminPrint() {
   const [cfg, setCfg] = useState<AdminConfig | null>(null);
   const [info, setInfo] = useState<PrinterInfo | null>(null);
@@ -114,6 +136,12 @@ export default function AdminPrint() {
   const [bleedLong, setBleedLong] = useState("0");
   const [bleedShort, setBleedShort] = useState("0");
   const [scale, setScale] = useState(100);
+  // Papier bewusst als Text wie die Millimeter: waehrend man tippt, ist das
+  // Feld zwischendurch leer, und als Zahl gehalten spraenge es auf 0.
+  const [packSize, setPackSize] = useState("0");
+  const [warnAt, setWarnAt] = useState("10");
+  const [counted, setCounted] = useState("");
+  const [paperBusy, setPaperBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
   const [testBusy, setTestBusy] = useState(false);
@@ -131,6 +159,8 @@ export default function AdminPrint() {
       setBleedLong(String(c.print_bleed_mm?.[0] ?? 0));
       setBleedShort(String(c.print_bleed_mm?.[1] ?? 0));
       setScale(c.print_scale_pct ?? 100);
+      setPackSize(String(c.paper_pack_size ?? 0));
+      setWarnAt(String(c.paper_warn_at ?? 10));
     });
     loadPrinters();
   }, []);
@@ -142,12 +172,16 @@ export default function AdminPrint() {
     mode !== (cfg.print_mode ?? "auto") ||
     parseMm(bleedLong) !== (cfg.print_bleed_mm?.[0] ?? 0) ||
     parseMm(bleedShort) !== (cfg.print_bleed_mm?.[1] ?? 0) ||
-    scale !== (cfg.print_scale_pct ?? 100)
+    scale !== (cfg.print_scale_pct ?? 100) ||
+    parseSheets(packSize) !== (cfg.paper_pack_size ?? 0) ||
+    parseSheets(warnAt) !== (cfg.paper_warn_at ?? 10)
   );
 
   const save = async () => {
     setBusy(true);
     const bleed: [number, number] = [parseMm(bleedLong), parseMm(bleedShort)];
+    const pack = parseSheets(packSize);
+    const warn = parseSheets(warnAt);
     try {
       await api.admin.config.save({
         print_enabled: enabled,
@@ -156,15 +190,20 @@ export default function AdminPrint() {
         print_mode: mode as AdminConfig["print_mode"],
         print_bleed_mm: bleed,
         print_scale_pct: scale,
+        paper_pack_size: pack,
+        paper_warn_at: warn,
       });
       // Die Felder auf das zurueckschreiben, was gespeichert wurde: aus "2,5"
       // wird "2.5", aus "abc" eine 0. Sonst stuende im Feld etwas anderes als
       // im Drucker, und das Formular waere sofort wieder "geaendert".
       setBleedLong(String(bleed[0]));
       setBleedShort(String(bleed[1]));
+      setPackSize(String(pack));
+      setWarnAt(String(warn));
       setCfg({ ...cfg!, print_enabled: enabled, printer_name: printer,
                print_copies: copies, print_mode: mode as AdminConfig["print_mode"],
-               print_bleed_mm: bleed, print_scale_pct: scale });
+               print_bleed_mm: bleed, print_scale_pct: scale,
+               paper_pack_size: pack, paper_warn_at: warn });
       setToast({ sev: "success", msg: "Druckeinstellungen gespeichert" });
       loadPrinters();
     } catch (e) {
@@ -190,7 +229,28 @@ export default function AdminPrint() {
     }
   };
 
+  /** Neues Paket eingelegt bzw. nachgezaehlt. Beide Wege liefern den neuen
+   *  Stand direkt zurueck — kein zweiter Ladelauf, damit die Zahl nicht kurz
+   *  auf dem alten Wert stehen bleibt. */
+  const paperAction = async (fn: () => ReturnType<typeof api.admin.paperRefill>,
+                             okMsg: string) => {
+    setPaperBusy(true);
+    try {
+      const r = await fn();
+      if (r.ok) {
+        setInfo((prev) => (prev ? { ...prev, paper: r.paper } : prev));
+        setCounted("");
+        setToast({ sev: "success", msg: okMsg });
+      } else {
+        setToast({ sev: "error", msg: r.error ?? "Papierzähler nicht geändert" });
+      }
+    } catch (e) {
+      setToast({ sev: "error", msg: e instanceof Error ? e.message : String(e) });
+    } finally { setPaperBusy(false); }
+  };
+
   const st = info?.status;
+  const paper: PaperState | undefined = info?.paper;
   // Was das Geraet selbst meldet, getrennt nach Gewicht: "Papier leer"
   // haelt den Druck auf, "Farbband fast leer" ist nur ein Hinweis und darf
   // nicht wie ein Fehler aussehen.
@@ -259,6 +319,27 @@ export default function AdminPrint() {
           {st?.message ?? "Drucksystem nicht erreichbar"}. Solange kein Drucker
           bereit ist, blendet die Box den „Drucken"-Knopf aus — ein Knopf, der
           nichts tut, verwirrt Gäste mehr, als dass er hilft.
+        </Alert>
+      )}
+
+      {/* Zweite Zeile neben dem Druckerzustand, nicht statt ihm: der Drucker
+          kann bereit sein und das Papier trotzdem gleich alle. Nur wenn eine
+          Paketgroesse hinterlegt ist — sonst ist die Zahl geraten. */}
+      {paper?.tracked && paper.low && (
+        <Alert severity={paper.empty ? "warning" : "info"}>
+          {paper.empty ? (
+            <>
+              Rechnerisch ist das Paket <strong>durch</strong> — seit dem
+              Einlegen wurden {paper.used} von {paper.size} Blatt gedruckt.
+              Nachlegen und unten auf „Neues Paket eingelegt" tippen.
+            </>
+          ) : (
+            <>
+              Noch etwa <strong>{paper.left} Blatt</strong> im Drucker. Jetzt
+              ein Paket bereitlegen — der Selphy meldet leeres Papier erst,
+              wenn das letzte Blatt durch ist.
+            </>
+          )}
         </Alert>
       )}
 
@@ -422,6 +503,118 @@ export default function AdminPrint() {
       </SettingsCard>
 
       <SettingsCard
+        icon={<Inventory2RoundedIcon />}
+        title="Papiervorrat"
+        description="Mitgezählt, weil der Drucker es nicht sagt."
+      >
+        {info === null ? <Skeleton variant="rounded" height={120} /> : (
+          <Stack spacing={2.5}>
+            {paper?.tracked ? (
+              <Box>
+                <Stack direction="row" alignItems="baseline" spacing={1}>
+                  <Typography variant="h4" sx={{ fontWeight: 500 }}>
+                    {paper.empty ? "0" : `ca. ${paper.left}`}
+                  </Typography>
+                  <Typography variant="body1" color="text.secondary">
+                    von {paper.size} Blatt
+                  </Typography>
+                </Stack>
+                <LinearProgress
+                  variant="determinate"
+                  value={Math.max(0, Math.min(100, (paper.left / paper.size) * 100))}
+                  color={paper.empty ? "error" : paper.low ? "warning" : "primary"}
+                  sx={{ mt: 1.5, height: 8, borderRadius: 4 }}
+                />
+                <Typography variant="caption" color="text.secondary"
+                            sx={{ display: "block", mt: 1 }}>
+                  {paper.used} gedruckt
+                  {paper.loaded_at
+                    ? ` · ${sinceLabel(paper.loaded_at)}`
+                    : " · noch nie zurückgesetzt — nach dem nächsten Nachlegen "
+                      + "stimmt der Stand"}
+                  {" · "}Warnung ab {paper.warn_at} Blatt
+                </Typography>
+              </Box>
+            ) : (
+              <Alert severity="info" variant="outlined">
+                Der Zähler ist aus. Blattzahl des eingelegten Pakets eintragen
+                und speichern, dann zählt die Box jeden Druck mit. Canon-Pakete:
+                KP-108IN und RP-108 = 108 Blatt, KP-72IN = 72, KP-36IP = 36.
+              </Alert>
+            )}
+
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <TextField
+                label="Blatt je Paket"
+                value={packSize}
+                onChange={(e) => setPackSize(e.target.value)}
+                sx={{ maxWidth: { sm: 220 } }}
+                inputProps={{ inputMode: "numeric" }}
+                helperText="0 = Zähler aus"
+              />
+              <TextField
+                label="Warnen ab (Blatt)"
+                value={warnAt}
+                onChange={(e) => setWarnAt(e.target.value)}
+                sx={{ maxWidth: { sm: 220 } }}
+                inputProps={{ inputMode: "numeric" }}
+                helperText="10 ≈ zehn Minuten Druckzeit"
+              />
+            </Stack>
+
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}
+                   alignItems={{ sm: "flex-start" }}>
+              <Button
+                variant="outlined"
+                disabled={paperBusy || dirty}
+                onClick={() => paperAction(api.admin.paperRefill,
+                                           "Zähler zurückgesetzt — Paket ist voll")}
+              >
+                Neues Paket eingelegt
+              </Button>
+              <Stack direction="row" spacing={1} alignItems="flex-start">
+                <TextField
+                  label="Nachgezählt"
+                  value={counted}
+                  onChange={(e) => setCounted(e.target.value)}
+                  disabled={!paper?.tracked}
+                  sx={{ width: 150 }}
+                  inputProps={{ inputMode: "numeric" }}
+                  helperText="Blatt, die wirklich drin liegen"
+                />
+                <Button
+                  sx={{ mt: 1 }}
+                  disabled={paperBusy || dirty || !paper?.tracked || counted.trim() === ""}
+                  onClick={() => paperAction(
+                    () => api.admin.paperSetLeft(parseSheets(counted)),
+                    `Stand gesetzt: noch ${parseSheets(counted)} Blatt`)}
+                >
+                  Übernehmen
+                </Button>
+              </Stack>
+            </Stack>
+            {dirty && (
+              <Typography variant="caption" color="text.secondary">
+                Erst speichern — der Zähler rechnet mit der gespeicherten
+                Paketgröße, nicht mit der im Formular.
+              </Typography>
+            )}
+
+            {/* Der Zaehler ist eine Schaetzung. Das gehoert dahin, wo die Zahl
+                steht, nicht in eine Fussnote: wer ihm blind glaubt, steht mit
+                leerer Kassette da. */}
+            <Typography variant="body2" color="text.secondary">
+              Gezählt wird jeder Druckauftrag, den der Drucker annimmt —
+              Testdrucke und mehrere Kopien eingeschlossen. Ein Papierstau oder
+              ein abgebrochener Auftrag geht daneben, deshalb steht überall
+              „ca.". Nach dem Nachzählen den Stand hier geradeziehen. Gesperrt
+              wird nichts: ob wirklich Papier da ist, meldet allein der Drucker.
+            </Typography>
+          </Stack>
+        )}
+      </SettingsCard>
+
+      <SettingsCard
         icon={<FactCheckRoundedIcon />}
         title="Testdruck"
         description="Ein Blatt zur Kontrolle, bevor der erste Gast davorsteht."
@@ -470,6 +663,8 @@ export default function AdminPrint() {
             setBleedLong(String(cfg.print_bleed_mm?.[0] ?? 0));
             setBleedShort(String(cfg.print_bleed_mm?.[1] ?? 0));
             setScale(cfg.print_scale_pct ?? 100);
+            setPackSize(String(cfg.paper_pack_size ?? 0));
+            setWarnAt(String(cfg.paper_warn_at ?? 10));
           }}
         >
           Verwerfen

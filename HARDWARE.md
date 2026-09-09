@@ -250,6 +250,22 @@ Daneben existiert `CUPS-BRF-Printer`, ein virtueller Braille-Drucker aus der
 Debian-Grundinstallation. `printing.list_printers()` markiert ihn korrekt als
 `virtual: True`.
 
+**Papierstand:** ungeprüft, ob der CP1500 einen Füllstand herausgibt. Über
+`usblp` und den Standard-USB-Backend ist das nicht zu erwarten — CUPS reicht
+dann weder `marker-levels` noch `printer-impressions-completed` weiter. Am Pi
+nachzuprüfen mit:
+
+```bash
+lpstat -l -p Canon_SELPHY_CP1500 | grep -i marker
+ipptool -tv ipp://localhost/printers/Canon_SELPHY_CP1500 \
+        get-printer-attributes.test | grep -iE "marker|impressions"
+```
+
+Kommt dabei etwas Brauchbares heraus, ist es in `printing._IPP_REQUEST`
+nachzutragen — dieselbe Abfrage, keine zusätzlichen Kosten. Bis dahin zählt
+`paper.py` die angenommenen Druckaufträge selbst (siehe README, „Papiervorrat");
+das ist eine Schätzung und ersetzt keinen ausgelesenen Füllstand.
+
 ---
 
 ## Taster (GPIO)

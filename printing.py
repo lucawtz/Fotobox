@@ -26,6 +26,8 @@ import time
 from typing import Optional
 from urllib.parse import unquote
 
+import paper
+
 logger = logging.getLogger(__name__)
 
 # Wie lange ein ermittelter Druckerzustand als frisch gilt. Die UI fragt in
@@ -754,11 +756,25 @@ def prepare(path: str, cfg: dict) -> str:
 
 # ── Druckauftrag ───────────────────────────────────────────────────────────────
 
+def _copies(cfg: dict) -> int:
+    """Kopien je Auftrag, so wie lp sie bekommt.
+
+    Eigene Funktion, weil die Zahl an zwei Stellen gebraucht wird: auf der
+    lp-Kommandozeile und beim Abziehen vom Papiervorrat. Zwei Kopien sind zwei
+    Blatt — mit einer zweiten Umrechnung an der Zaehlstelle waere genau das
+    irgendwann auseinandergelaufen.
+    """
+    try:
+        return max(1, min(9, int(cfg.get("print_copies", 1) or 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
 def _lp_args(printer: str, cfg: dict, path: str) -> list:
     args = ["lp", "-d", printer]
-    copies = int(cfg.get("print_copies", 1) or 1)
+    copies = _copies(cfg)
     if copies > 1:
-        args += ["-n", str(max(1, min(9, copies)))]
+        args += ["-n", str(copies)]
     media = (cfg.get("print_media") or "").strip()
     if media:
         args += ["-o", f"media={media}"]
@@ -804,6 +820,15 @@ def print_photo(path: str, cfg: dict) -> tuple[bool, str]:
             logger.error("Druckauftrag abgelehnt: %s", detail)
             return False, detail[:80]
         job = (proc.stdout or "").strip()
+        # Papier abziehen, sobald CUPS den Auftrag angenommen hat. Frueher
+        # geht nicht — ein abgelehnter Auftrag kostet kein Blatt —, und einen
+        # spaeteren Zeitpunkt gibt es nicht: dass ein Blatt wirklich durch
+        # ist, meldet der Selphy nirgends. Ein Fehler im Zaehler darf den
+        # Druck nicht kippen, deshalb faengt das hier alles ab.
+        try:
+            paper.record(cfg, _copies(cfg))
+        except Exception as exc:
+            logger.warning("Papierzaehler nicht fortgeschrieben: %s", exc)
         # Erst JETZT zaehlen: der eigene Auftrag haengt schon mit drin, und
         # vorher gezaehlt waere die Auskunft um eins daneben.
         pending = pending_jobs(printer)

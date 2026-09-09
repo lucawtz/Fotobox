@@ -137,6 +137,11 @@ export interface AdminConfig {
    *  [lange Kante, kurze Kante] in mm — die feinere der beiden Schrauben. */
   print_scale_pct: number;
   print_bleed_mm: [number, number];
+  /** Blatt je Papierpaket, 0 = Zaehler aus. Canon: KP-108IN und RP-108 = 108,
+   *  KP-72IN = 72, KP-36IP = 36. */
+  paper_pack_size: number;
+  /** Ab wieviel Restblatt gewarnt wird. */
+  paper_warn_at: number;
   /** Zeichengrenzen fuer event_name / subtitle, ausgemessen gegen die
    *  Sidebar-Breite der Box (config.py: EVENT_NAME_MAX_CHARS / SUBTITLE_MAX_CHARS).
    *  Kommen vom Server, damit das Panel sie nicht ein zweites Mal verdrahtet. */
@@ -181,11 +186,30 @@ export interface Printer {
   virtual: boolean;
 }
 
+/** Geschaetzter Papiervorrat (paper.py). Bewusst eine Schaetzung: gezaehlt
+ *  werden angenommene Druckauftraege, nicht durchgelaufene Blatt — ein Stau
+ *  oder ein abgebrochener Auftrag verschiebt den Stand. Darum steht in der
+ *  Oberflaeche "ca." und darum gibt es die Handkorrektur. */
+export interface PaperState {
+  /** false = keine Paketgroesse hinterlegt. Dann ist `left` bedeutungslos
+   *  und es wird gar nichts angezeigt. */
+  tracked: boolean;
+  size: number;
+  used: number;
+  left: number;
+  warn_at: number;
+  low: boolean;
+  empty: boolean;
+  /** Unix-Zeit des letzten "Neues Paket eingelegt", null = noch nie. */
+  loaded_at: number | null;
+}
+
 export interface PrinterInfo {
   ok: boolean;
   error?: string;
   printers: Printer[];
   default: string | null;
+  paper: PaperState;
   /** `state` ist der CUPS-Zustand des aufgeloesten Druckers oder null.
    *  Noetig, weil `available` bei 'unknown' bewusst true ist — die UI soll
    *  "geprueft bereit" trotzdem von "angeboten, aber nicht auslesbar"
@@ -313,6 +337,14 @@ export const api = {
     },
     printers: () =>
       xfetch("/api/admin/printers").then(json<PrinterInfo>),
+    // Papierzaehler: "refill" = neues Paket, faengt bei voll an.
+    // "left" = nachgezaehlt, Stand von Hand setzen.
+    paperRefill: () =>
+      postJson("/api/admin/paper", { action: "refill" })
+        .then(json<{ ok: boolean; paper: PaperState; error?: string }>),
+    paperSetLeft: (left: number) =>
+      postJson("/api/admin/paper", { action: "left", left })
+        .then(json<{ ok: boolean; paper: PaperState; error?: string }>),
     // Druckt eine Testseite mit den GESPEICHERTEN Einstellungen.
     printTest: () =>
       xfetch("/api/admin/print-test", { method: "POST" }, PRINT_TEST_TIMEOUT_MS)

@@ -15,6 +15,7 @@ import disk_monitor
 import events
 import gallery_server
 import hotspot
+import paper
 import printing
 import usb_status
 from camera import Camera
@@ -328,6 +329,7 @@ class _StatusCache:
         self.free_mb = 0
         self.photo_count = 0
         self.print_ready = False
+        self.paper: dict = {"tracked": False}
 
     def maybe_refresh(self, now_monotonic: float):
         if now_monotonic - self._last < self.REFRESH_S:
@@ -338,6 +340,9 @@ class _StatusCache:
         # printing.status() cacht intern nochmal (20 s TTL) — hier wird also
         # nicht jede Sekunde ein lpstat geforkt.
         self.print_ready = printing.available(self._cfg)
+        # paper.state() liest eine kleine JSON-Datei und cacht ueber deren
+        # mtime — der Sekundentakt kostet damit einen stat(), keinen Read.
+        self.paper = paper.state(self._cfg)
 
 
 def _cleanup_orphans(paths):
@@ -505,6 +510,7 @@ def main():
             photo_cnt = status_cache.photo_count
             # Der Result-Screen blendet den Druck-Knopf danach ein oder aus.
             ui.print_ready = status_cache.print_ready
+            ui.paper       = status_cache.paper
 
             # ── USB-Export hat absolute Priorität ─────────────────────────────
             # Wird vom udev-getriggerten scripts/usb_export.py geschrieben.
